@@ -338,6 +338,9 @@ private fun videoSortKey(chatId: Long) = stringPreferencesKey("vsort_$chatId")
 /** Which of a chat's videos are listed, per chat. See [VideoFilter]. */
 private fun videoFilterKey(chatId: Long) = stringPreferencesKey("vfilter_$chatId")
 
+/** Which of a chat's videos are listed by duration, per chat. See [VideoDurationFilter]. */
+private fun videoDurationFilterKey(chatId: Long) = stringPreferencesKey("vdur_$chatId")
+
 /** The subtitle and audio offsets the viewer set for one file. See [SyncDelays]. */
 private fun delayKey(chatId: Long, messageId: Long) =
     stringPreferencesKey("delay_${chatId}_$messageId")
@@ -640,6 +643,13 @@ class SettingsStore(private val prefs: DataStore<Preferences>) : AllowedChatsSou
 
     suspend fun setVideoFilter(chatId: Long, filter: VideoFilter) {
         prefs.edit { if (filter == VideoFilter.DEFAULT) it.remove(videoFilterKey(chatId)) else it[videoFilterKey(chatId)] = filter.name }
+    }
+
+    /** Which of [chatId]'s videos are listed by running time: [VideoDurationFilter.All] by default. */
+    fun videoDurationFilter(chatId: Long): Flow<VideoDurationFilter> = read { VideoDurationFilter.decode(it[videoDurationFilterKey(chatId)]) }
+
+    suspend fun setVideoDurationFilter(chatId: Long, filter: VideoDurationFilter) {
+        prefs.edit { if (filter == VideoDurationFilter.DEFAULT) it.remove(videoDurationFilterKey(chatId)) else it[videoDurationFilterKey(chatId)] = filter.name }
     }
 
     /**

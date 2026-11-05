@@ -340,19 +340,30 @@ fun MediaGridScreen(
     var sorting by remember { mutableStateOf(false) }
     // Which of the chat's videos are listed (see VideoFilter), remembered per chat beside its order.
     val filter by remember(chatId) { recentStore.videoFilter(chatId) }.collectAsStateWithLifecycle(initialValue = com.tmplayer.data.VideoFilter.DEFAULT)
-    val clearFilter: () -> Unit = { recentScope.launch { recentStore.setVideoFilter(chatId, com.tmplayer.data.VideoFilter.All) } }
-    // One menu for the order and the Show filter, the same groups on every device. The size limits
-    // have their own "n hidden" button (sizeHidden below) and the full pair is in Settings.
+    val durationFilter by remember(chatId) { recentStore.videoDurationFilter(chatId) }.collectAsStateWithLifecycle(initialValue = com.tmplayer.data.VideoDurationFilter.DEFAULT)
+    val clearFilter: () -> Unit = {
+        recentScope.launch {
+            recentStore.setVideoFilter(chatId, com.tmplayer.data.VideoFilter.All)
+            recentStore.setVideoDurationFilter(chatId, com.tmplayer.data.VideoDurationFilter.All)
+        }
+    }
+    // One menu for the order, the Show filter and the Duration filter, the same groups on every device.
     val menu = VideoMenuState(
         sort = sort,
         filter = filter,
+        durationFilter = durationFilter,
         onSort = { picked ->
             sorting = false
-            if (picked != sort) recentScope.launch { recentStore.setVideoSort(chatId, picked) }
+            val target = if (picked == sort) sort.reversed() else picked
+            recentScope.launch { recentStore.setVideoSort(chatId, target) }
         },
         onFilter = { picked ->
             sorting = false
             if (picked != filter) recentScope.launch { recentStore.setVideoFilter(chatId, picked) }
+        },
+        onDurationFilter = { picked ->
+            sorting = false
+            if (picked != durationFilter) recentScope.launch { recentStore.setVideoDurationFilter(chatId, picked) }
         },
     )
     // Videos outside the size limits, said by an "n hidden" button for as long as the chat is open
@@ -501,6 +512,24 @@ fun MediaGridScreen(
     // What "Select all" means, which is every video the listing has fetched so far. The bar lives
     // above the listing and cannot see inside it, so the loaded page is passed out to here.
     var listedItems by remember(chatId) { mutableStateOf<List<MediaItem>>(emptyList()) }
+    val shelfVideos = remember(shelfShown) {
+        shelfShown.flatMap { entry ->
+            when (entry) {
+                is ShelfEntry.File -> listOf(entry.item)
+                is ShelfEntry.Show -> entry.series.episodes.map { it.item }
+            }
+        }
+    }
+    val availableVideos = shelfVideos.ifEmpty { listedItems }
+    val playInChat: (MediaItem, Boolean) -> Unit = { item, shuffle ->
+        val queue = if (availableVideos.any { it.chatId == item.chatId && it.messageId == item.messageId }) {
+            availableVideos
+        } else {
+            listOf(item) + availableVideos
+        }
+        com.tmplayer.data.PlayQueue.set(queue, shuffle = shuffle, loop = true)
+        onPlay(item)
+    }
     val scope = rememberCoroutineScope()
     val settings = remember(context) { SettingsStore(context) }
     val detailFirst by settings.detailFirst.collectAsState(initial = true)
@@ -592,17 +621,18 @@ fun MediaGridScreen(
             val order = if (query.isBlank()) sort else com.tmplayer.data.VideoSort.Newest
             // Filtered too, outside a search and outside ticking, where every video has to be reachable.
             val shownFilter = if (grouping) filter else com.tmplayer.data.VideoFilter.All
+            val shownDuration = if (grouping) durationFilter else com.tmplayer.data.VideoDurationFilter.All
             // A chat opened again from the page cache lists what it listed last time: the shelf laid
             // out from those same videos then is used for the first frame, rather than a frame or
             // two of skeleton while it is worked out again.
-            val shelfInputs = listOf(list.items, watchProgress, grouping, order, corrections, watchedVideos, shownFilter)
+            val shelfInputs = listOf(list.items, watchProgress, grouping, order, corrections, watchedVideos, shownFilter, shownDuration)
             val shelfBefore = remember(chatId) { ShelfMemo.match(chatId, shelfInputs) }
-            val arrangedShelf by produceState(shelfBefore, list.items, watchProgress, grouping, order, corrections, watchedVideos, shownFilter) {
+            val arrangedShelf by produceState(shelfBefore, list.items, watchProgress, grouping, order, corrections, watchedVideos, shownFilter, shownDuration) {
                 value = withContext(Dispatchers.Default) {
                     // Each tile's online question read here, off the main thread, where the tiles
                     // would otherwise each read it as they scroll in ([MediaItem.metaQuery]).
                     if (com.tmplayer.online.OnlineMetadata.current != null) list.items.forEach { it.metaQuery }
-                    arrangeShelf(list.items, watchProgress, grouping, order, watchedVideos.keys, corrections, shownFilter)
+                    arrangeShelf(list.items, watchProgress, grouping, order, watchedVideos.keys, corrections, shownFilter, shownDuration)
                 }.also { ShelfMemo.keep(chatId, shelfInputs, it) }
             }
             val (shelf, repeatedCaptions, posterKeys) = arrangedShelf ?: run {
@@ -624,15 +654,19 @@ fun MediaGridScreen(
             val loadedOnly = com.tmplayer.data.VideoSorting.sortsLoadedOnly(order, list.endReached)
             // A filter in force says so over the listing, with the way out, so a chat that seems to
             // have lost half its videos never reads as TMPlayer losing them.
-            val filterNote = shownFilter != com.tmplayer.data.VideoFilter.All
+            val filterNote = shownFilter != com.tmplayer.data.VideoFilter.All || shownDuration != com.tmplayer.data.VideoDurationFilter.All
             val filterTotal = arrangedShelf?.total ?: 0
             // Self-destructing videos are left out (only Telegram opens them): a quiet line says so.
             val selfDestructing by viewModel.selfDestructing.collectAsStateWithLifecycle()
             val selfDestructNote = query.isBlank() && selfDestructing > 0
             val courseHeader: @Composable () -> Unit = {
                 if (filterNote) {
+                    val activeFilterLabel = listOfNotNull(
+                        videoFilterLabel(shownFilter, s).takeIf { shownFilter != com.tmplayer.data.VideoFilter.All },
+                        videoDurationFilterLabel(shownDuration, s).takeIf { shownDuration != com.tmplayer.data.VideoDurationFilter.All },
+                    ).joinToString(" · ")
                     FilterNote(
-                        label = videoFilterLabel(shownFilter, s),
+                        label = activeFilterLabel,
                         shown = shelf.size,
                         total = filterTotal,
                         onClear = clearFilter,
@@ -659,7 +693,7 @@ fun MediaGridScreen(
                     CourseHeader(
                         progress = it,
                         title = courseTitle,
-                        onPlay = onPlay,
+                        onPlay = { playInChat(it, false) },
                         modifier = Modifier.padding(horizontal = if (touch) 4.dp else 0.dp).padding(bottom = 4.dp),
                     )
                 }
@@ -822,7 +856,7 @@ fun MediaGridScreen(
                                         selected = if (selecting) selected.containsKey(item.id) else null,
                                         onClick = {
                                             tileReturn.open(shelved.key)
-                                            if (selecting) toggle(item) else if (detailFirst) details.open(item) else onPlay(item)
+                                            if (selecting) toggle(item) else if (detailFirst) details.open(item) else playInChat(item, false)
                                         },
                                         onLongClick = if (selecting) null else {
                                             {
@@ -876,7 +910,7 @@ fun MediaGridScreen(
                     SeriesOpened(
                         series = series,
                         watch = watch,
-                        onPlay = { onPlay(it) },
+                        onPlay = { playInChat(it, false) },
                         onDismiss = { openSeries.open(null) },
                         onLongClick = { heldMenuOf = it },
                         onDownload = { request ->
@@ -894,7 +928,7 @@ fun MediaGridScreen(
                         watched = watchProgress[key],
                         finished = key in watchedVideos,
                         onSetWatched = { onSetWatched(item, it) },
-                        onPlay = { onPlay(item) },
+                        onPlay = { playInChat(item, false) },
                         onSelectVideos = if (item.chatId != chatId) null else ({
                             selected = mapOf(item.id to item)
                             selecting = true
@@ -920,7 +954,7 @@ fun MediaGridScreen(
                             ],
                             finished = SettingsStore.progressKey(item.watchedBy.chatId, item.watchedBy.messageId) in watchedVideos,
                             onSetWatched = { onSetWatched(item, it) },
-                            onPlay = { onPlay(item) },
+                            onPlay = { playInChat(item, false) },
                             onSelectVideos = if (item.chatId != chatId) null else ({
                                 selected = mapOf(item.id to item)
                                 selecting = true
@@ -1034,17 +1068,8 @@ fun MediaGridScreen(
     val downloadSelected = { downloadThese(selected.values.toList()) }
         .takeIf { selected.isEmpty() || selected.values.any { it.canBeSaved } }
 
-    val shelfVideos = remember(shelfShown) {
-        shelfShown.flatMap { entry ->
-            when (entry) {
-                is ShelfEntry.File -> listOf(entry.item)
-                is ShelfEntry.Show -> entry.series.episodes.map { it.item }
-            }
-        }
-    }
-    val availableVideos = shelfVideos.ifEmpty { listedItems }
     val playRandom: (() -> Unit)? = if (availableVideos.isEmpty()) null else ({
-        availableVideos.randomOrNull()?.let(onPlay)
+        availableVideos.randomOrNull()?.let { playInChat(it, true) }
     })
 
     var chatInfoOpen by remember { mutableStateOf(false) }
@@ -1073,7 +1098,7 @@ fun MediaGridScreen(
             sortPopover = { anchor ->
                 VideoMenuPopover(open = sorting, anchor = anchor, state = menu, onDismiss = { sorting = false })
             },
-            filtered = filter != com.tmplayer.data.VideoFilter.All,
+            filtered = filter != com.tmplayer.data.VideoFilter.All || durationFilter != com.tmplayer.data.VideoDurationFilter.All,
             sizeHidden = shownHidden,
             onSizeHidden = { sizePicking = true },
             topicTabs = topicBar?.let { bar ->
@@ -1136,7 +1161,7 @@ fun MediaGridScreen(
                     recentSearches = recentSearches,
                     onClearRecent = clearRecent,
                     onSort = { sorting = true },
-                    filtered = filter != com.tmplayer.data.VideoFilter.All,
+                    filtered = filter != com.tmplayer.data.VideoFilter.All || durationFilter != com.tmplayer.data.VideoDurationFilter.All,
                     sizeHidden = shownHidden,
                     onSizeHidden = { sizePicking = true },
                     onChatInfo = { chatInfoOpen = true },
@@ -2827,6 +2852,7 @@ internal fun arrangeShelf(
     corrections: Map<String, com.tmplayer.data.VideoCorrection> = com.tmplayer.data.VideoCorrections.current,
     /** Which entries are listed (see [com.tmplayer.data.VideoFiltering]); every one by default. */
     filter: com.tmplayer.data.VideoFilter = com.tmplayer.data.VideoFilter.All,
+    durationFilter: com.tmplayer.data.VideoDurationFilter = com.tmplayer.data.VideoDurationFilter.All,
 ): Shelved {
     val progressOf: (MediaItem) -> com.tmplayer.data.VideoSorting.Progress = { item ->
         val key = SettingsStore.progressKey(item.chatId, item.messageId)
@@ -2850,7 +2876,8 @@ internal fun arrangeShelf(
         sort,
         progress = progressOf,
     )
-    val shown = com.tmplayer.data.VideoFiltering.filter(led, filter, progressOf)
+    val byFilter = com.tmplayer.data.VideoFiltering.filter(led, filter, progressOf)
+    val shown = com.tmplayer.data.VideoFiltering.filterByDuration(byFilter, durationFilter)
     val posters = SeriesShelf.posterKeys(shown)
     return Shelved(shown, MediaMapper.repeatedCaptionLines(items), posters, total = led.size)
 }

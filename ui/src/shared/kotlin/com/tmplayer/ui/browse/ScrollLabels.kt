@@ -21,12 +21,12 @@ object ScrollLabels {
             is String -> letter(value)
             is Int -> when (sort) {
                 VideoSort.Newest, VideoSort.Oldest -> value.takeIf { it > 0 }?.let { s.formatter.date(it * 1000L) }
-                VideoSort.Year -> value.toString()
+                VideoSort.Year, VideoSort.YearAsc -> value.toString()
                 else -> null
             }
             is Long -> when (sort) {
-                VideoSort.Size -> value.takeIf { it > 0 }?.let(s.formatter::size)
-                VideoSort.Longest -> value.takeIf { it > 0 }?.let(s.formatter::duration)
+                VideoSort.Size, VideoSort.SizeAsc -> value.takeIf { it > 0 }?.let(s.formatter::size)
+                VideoSort.Longest, VideoSort.Shortest -> value.takeIf { it > 0 }?.let(s.formatter::duration)
                 else -> null
             }
             else -> null

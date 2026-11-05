@@ -648,8 +648,12 @@ class PlayerControls(
      * it the remote, so OK resumes, and its glyph turning is the only answer to either.
      */
     private fun setUpTv(root: View) {
-        listOf(centerPrevious, centerNext, centerPreviousCaption, centerNextCaption)
-            .forEach { it.visibility = View.GONE }
+        listOf(centerPreviousCaption, centerNextCaption).forEach { it.visibility = View.GONE }
+        listOf(centerPrevious, centerNext).forEach {
+            it.visibility = View.INVISIBLE
+            it.isFocusable = true
+            it.nextFocusDownId = R.id.controls_timebar
+        }
         clock.visibility = View.VISIBLE
         center.visibility = View.VISIBLE
         wire(centerPlay) { onTogglePlay(); renderPlayPause(animate = true) }
@@ -681,7 +685,9 @@ class PlayerControls(
             root.findViewById(R.id.control_speed),
             shapeButton,
             more,
+            centerPrevious,
             centerPlay,
+            centerNext,
         )
     }
 
@@ -793,17 +799,16 @@ class PlayerControls(
         previousCaption: String = "",
         nextCaption: String = "",
     ) {
-        if (isTv) return
         // Invisible rather than gone keeps the play disc dead centre whether or not there are
         // neighbours.
         centerPrevious.visibility = if (previousEpisode != null) View.VISIBLE else View.INVISIBLE
         describe(centerPrevious, previousLabel)
         centerPrevious.setOnClickListener { previousEpisode?.let(onPlayEpisode) }
-        caption(centerPreviousCaption, previousCaption.takeIf { previousEpisode != null })
+        if (!isTv) caption(centerPreviousCaption, previousCaption.takeIf { previousEpisode != null })
         centerNext.visibility = if (nextEpisode != null) View.VISIBLE else View.INVISIBLE
         describe(centerNext, nextLabel)
         centerNext.setOnClickListener { nextEpisode?.let(onPlayEpisode) }
-        caption(centerNextCaption, nextCaption.takeIf { nextEpisode != null })
+        if (!isTv) caption(centerNextCaption, nextCaption.takeIf { nextEpisode != null })
     }
 
     /**

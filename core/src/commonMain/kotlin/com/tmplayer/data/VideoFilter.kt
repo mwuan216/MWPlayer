@@ -33,6 +33,24 @@ enum class VideoFilter {
 }
 
 /**
+ * Which of a chat's videos are shown by running time, remembered per chat alongside [VideoFilter].
+ */
+enum class VideoDurationFilter {
+    All,
+    Under5Min,
+    Min5To20,
+    Min20To60,
+    Over60Min,
+    ;
+
+    companion object {
+        val DEFAULT = All
+
+        fun decode(name: String?): VideoDurationFilter = entries.firstOrNull { it.name == name } ?: DEFAULT
+    }
+}
+
+/**
  * Screens a chat's arranged entries ([SeriesShelf.arrange]) by a [VideoFilter]. Pure and
  * order-keeping, so the grids filter after they sort and the tests cover all three of them.
  *
@@ -51,6 +69,25 @@ object VideoFiltering {
     ): List<ShelfEntry> {
         if (filter == VideoFilter.All) return entries
         return entries.filter { passes(it, filter, progress) }
+    }
+
+    fun filterByDuration(
+        entries: List<ShelfEntry>,
+        durationFilter: VideoDurationFilter,
+    ): List<ShelfEntry> {
+        if (durationFilter == VideoDurationFilter.All) return entries
+        return entries.filter { passesDuration(it, durationFilter) }
+    }
+
+    fun passesDuration(
+        entry: ShelfEntry,
+        durationFilter: VideoDurationFilter,
+    ): Boolean = when (durationFilter) {
+        VideoDurationFilter.All -> true
+        VideoDurationFilter.Under5Min -> VideoSorting.items(entry).any { it.durationSec in 1 until 300 }
+        VideoDurationFilter.Min5To20 -> VideoSorting.items(entry).any { it.durationSec in 300..1200 }
+        VideoDurationFilter.Min20To60 -> VideoSorting.items(entry).any { it.durationSec in 1201..3600 }
+        VideoDurationFilter.Over60Min -> VideoSorting.items(entry).any { it.durationSec > 3600 }
     }
 
     fun passes(entry: ShelfEntry, filter: VideoFilter, progress: (MediaItem) -> Progress): Boolean = when (filter) {

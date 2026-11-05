@@ -2411,8 +2411,8 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                     controls?.setEpisodes(
                         previousEpisode = found.previous,
                         nextEpisode = found.next,
-                        previousLabel = episodeLabel(next = false, found.previousTag),
-                        nextLabel = episodeLabel(next = true, found.nextTag),
+                        previousLabel = episodeLabel(next = false, found.previousTag, found.previous),
+                        nextLabel = episodeLabel(next = true, found.nextTag, found.next),
                         previousCaption = found.previousTag?.code.orEmpty(),
                         nextCaption = found.nextTag?.code.orEmpty(),
                     )
@@ -2441,12 +2441,13 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     }
 
     /**
-     * "Next: S01E02  ·  The Lighthouse", falling back to a bare "Next" when there is no episode to
-     * name.
+     * "Next: S01E02  ·  The Lighthouse", falling back to the video's title or bare "Next" when
+     * there is no episode tag.
      */
-    fun episodeLabel(next: Boolean, tag: EpisodeTag?): String {
-        tag ?: return if (next) L.playerNext else L.playerPrevious
-        return if (next) L.playerNextUp(tag.label) else L.playerPreviousUp(tag.label)
+    fun episodeLabel(next: Boolean, tag: EpisodeTag?, item: MediaItem? = null): String {
+        val label = tag?.label ?: item?.let { SeriesShelf.tileTitle(it) }?.takeIf { it.isNotBlank() }
+        label ?: return if (next) L.playerNext else L.playerPrevious
+        return if (next) L.playerNextUp(label) else L.playerPreviousUp(label)
     }
 
     // ---- copies ------------------------------------------------------------------------------
@@ -4738,13 +4739,39 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
      */
     private fun findEpisodes() {
         val here = currentItem()
-        // Started from a chat's audio: the list is the order, the next file plays when one ends.
-        com.tmplayer.data.PlayQueue.stepsFor(here)?.let { steps ->
-            _episodes.value = steps
+        val queueSteps = com.tmplayer.data.PlayQueue.stepsFor(here)
+        if (com.tmplayer.data.PlayQueue.shuffle) {
+            if (queueSteps != null) {
+                _episodes.value = queueSteps
+                return
+            }
+        }
+        val show = EpisodeNeighbours.showOf(here)
+        if (show == null) {
+            if (queueSteps != null) {
+                _episodes.value = queueSteps
+                return
+            }
+            itemScope.launch {
+                if (chatId == 0L) return@launch
+                afterOpening()
+                val session = Td.awaitAuthorizedSession()
+                val repository = ChatRepository(session.client)
+                val topic = here.topicId.takeIf { it != 0 }
+                    ?: runCatching { repository.topicOf(chatId, messageId) }.getOrDefault(0)
+                val page = runCatching { repository.mediaPage(chatId, topicId = topic) }.getOrNull() ?: return@launch
+                if (page.items.size > 1) {
+                    com.tmplayer.data.PlayQueue.set(page.items, shuffle = false, loop = true)
+                    com.tmplayer.data.PlayQueue.stepsFor(here)?.let { steps ->
+                        _episodes.value = steps
+                        refreshSessionMetadata()
+                    }
+                }
+            }
             return
         }
-        val show = EpisodeNeighbours.showOf(here) ?: return
-        _episodes.value = EpisodeSteps(current = EpisodeNeighbours.tagOf(here))
+        _episodes.value = queueSteps?.copy(current = EpisodeNeighbours.tagOf(here))
+            ?: EpisodeSteps(current = EpisodeNeighbours.tagOf(here))
 
         itemScope.launch {
             if (chatId == 0L) return@launch
@@ -4760,13 +4787,15 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             val steps = EpisodeNeighbours.lookUp(here, show) { query, cursors ->
                 runCatching { repository.mediaPage(chatId, cursors, query = query, topicId = topic) }.getOrNull()
             }
-            _episodes.value = steps
-            refreshSessionMetadata()
-            // The providers' episode names, where lookups are on: a label first, then a better one.
-            val named = withContext(Dispatchers.IO) { EpisodeNames.named(steps, here, OnlineMetadata.current) }
-            if (named != steps) {
-                _episodes.value = named
+            if (steps.previous != null || steps.next != null || queueSteps == null) {
+                _episodes.value = steps
                 refreshSessionMetadata()
+                // The providers' episode names, where lookups are on: a label first, then a better one.
+                val named = withContext(Dispatchers.IO) { EpisodeNames.named(steps, here, OnlineMetadata.current) }
+                if (named != steps) {
+                    _episodes.value = named
+                    refreshSessionMetadata()
+                }
             }
         }
     }

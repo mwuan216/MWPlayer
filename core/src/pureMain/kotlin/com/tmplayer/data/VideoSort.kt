@@ -21,18 +21,53 @@ enum class VideoSort {
     Newest,
     Oldest,
     Name,
+    NameDesc,
     Year,
+    YearAsc,
     Size,
+    SizeAsc,
     /** By running time, the longest first; a show by all its episodes, a video of unknown length last. */
     Longest,
+    Shortest,
     Unwatched,
+    WatchedFirst,
     ;
+
+    /** Returns the reversed sort direction when clicking an already active sort option. */
+    fun reversed(): VideoSort = when (this) {
+        Newest -> Oldest
+        Oldest -> Newest
+        Name -> NameDesc
+        NameDesc -> Name
+        Year -> YearAsc
+        YearAsc -> Year
+        Size -> SizeAsc
+        SizeAsc -> Size
+        Longest -> Shortest
+        Shortest -> Longest
+        Unwatched -> WatchedFirst
+        WatchedFirst -> Unwatched
+    }
 
     companion object {
         val DEFAULT = Newest
 
         /** A stored name back to a sort; anything unknown is [DEFAULT]. */
         fun decode(name: String?): VideoSort = entries.firstOrNull { it.name == name } ?: DEFAULT
+
+        /**
+         * The rows shown in the Sort menu for a chat currently ordered by [current]:
+         * each reversible category shows its active direction when selected.
+         */
+        fun menuEntries(current: VideoSort): List<VideoSort> = listOf(
+            Newest,
+            Oldest,
+            if (current == NameDesc) NameDesc else Name,
+            if (current == YearAsc) YearAsc else Year,
+            if (current == SizeAsc) SizeAsc else Size,
+            if (current == Shortest) Shortest else Longest,
+            if (current == WatchedFirst) WatchedFirst else Unwatched,
+        )
     }
 }
 
@@ -74,27 +109,51 @@ object VideoSorting {
         val indexed = entries.withIndex().toList()
         val collator = textCollator(locale, primary = true)
         // Each entry's sort value is read once: a title is a parse, and a comparison sort asks often.
-        val names = if (sort == VideoSort.Name || sort == VideoSort.Year) indexed.map { nameOf(it.value) } else emptyList()
+        val names = if (
+            sort == VideoSort.Name || sort == VideoSort.NameDesc ||
+            sort == VideoSort.Year || sort == VideoSort.YearAsc
+        ) {
+            indexed.map { nameOf(it.value) }
+        } else {
+            emptyList()
+        }
         val byName = Comparator<IndexedValue<ShelfEntry>> { a, b -> compareNames(names[a.index], names[b.index], collator) }
+        val byNameDesc = Comparator<IndexedValue<ShelfEntry>> { a, b -> compareNames(names[b.index], names[a.index], collator) }
         val order: Comparator<IndexedValue<ShelfEntry>> = when (sort) {
             VideoSort.Newest -> compareBy { it.index }
             VideoSort.Oldest -> compareBy { oldest(it.value) }
             VideoSort.Name -> byName
+            VideoSort.NameDesc -> byNameDesc
             VideoSort.Year -> {
                 val years = indexed.map { yearOf(it.value) }
                 compareBy<IndexedValue<ShelfEntry>> { years[it.index] == null }
                     .thenByDescending { years[it.index] ?: 0 }
                     .then(byName)
             }
+            VideoSort.YearAsc -> {
+                val years = indexed.map { yearOf(it.value) }
+                compareBy<IndexedValue<ShelfEntry>> { years[it.index] == null }
+                    .thenBy { years[it.index] ?: 0 }
+                    .then(byName)
+            }
             VideoSort.Size -> {
                 val sizes = indexed.map { sizeOf(it.value) }
                 compareBy<IndexedValue<ShelfEntry>> { sizes[it.index] <= 0 }.thenByDescending { sizes[it.index] }
+            }
+            VideoSort.SizeAsc -> {
+                val sizes = indexed.map { sizeOf(it.value) }
+                compareBy<IndexedValue<ShelfEntry>> { sizes[it.index] <= 0 }.thenBy { sizes[it.index] }
             }
             VideoSort.Longest -> {
                 val lengths = indexed.map { lengthOf(it.value) }
                 compareBy<IndexedValue<ShelfEntry>> { lengths[it.index] <= 0 }.thenByDescending { lengths[it.index] }
             }
+            VideoSort.Shortest -> {
+                val lengths = indexed.map { lengthOf(it.value) }
+                compareBy<IndexedValue<ShelfEntry>> { lengths[it.index] <= 0 }.thenBy { lengths[it.index] }
+            }
             VideoSort.Unwatched -> compareBy { progressOf(it.value, progress) }
+            VideoSort.WatchedFirst -> compareByDescending { progressOf(it.value, progress) }
         }
         // sortedWith is stable, and the index as the last word makes it so whatever the order says.
         return indexed.sortedWith(order.thenBy { it.index }).map { it.value }
@@ -118,11 +177,11 @@ object VideoSorting {
     fun placedBy(entry: ShelfEntry, sort: VideoSort): Any? = when (sort) {
         VideoSort.Newest -> items(entry).maxOf { it.date }
         VideoSort.Oldest -> oldest(entry)
-        VideoSort.Name -> withoutArticle(nameOf(entry))
-        VideoSort.Year -> yearOf(entry)
-        VideoSort.Size -> sizeOf(entry)
-        VideoSort.Longest -> lengthOf(entry)
-        VideoSort.Unwatched -> null
+        VideoSort.Name, VideoSort.NameDesc -> withoutArticle(nameOf(entry))
+        VideoSort.Year, VideoSort.YearAsc -> yearOf(entry)
+        VideoSort.Size, VideoSort.SizeAsc -> sizeOf(entry)
+        VideoSort.Longest, VideoSort.Shortest -> lengthOf(entry)
+        VideoSort.Unwatched, VideoSort.WatchedFirst -> null
     }
 
     /** The title an entry is listed under: the show's, or the file's own without its year. */

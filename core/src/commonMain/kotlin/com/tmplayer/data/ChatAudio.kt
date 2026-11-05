@@ -137,13 +137,25 @@ object PlayQueue {
     var items: List<MediaItem> = emptyList()
         private set
 
-    /** [list] in playing order, oldest first, as a course or an album is listened to. */
-    fun set(list: List<MediaItem>) {
+    @Volatile
+    var shuffle: Boolean = false
+        private set
+
+    @Volatile
+    var loop: Boolean = false
+        private set
+
+    /** [list] in playing order, with optional [shuffle] mode and [loop] wrap-around. */
+    fun set(list: List<MediaItem>, shuffle: Boolean = false, loop: Boolean = false) {
         items = list
+        this.shuffle = shuffle
+        this.loop = loop
     }
 
     fun clear() {
         items = emptyList()
+        shuffle = false
+        loop = false
     }
 
     /** The files either side of [item], or null when it was not started from the list. */
@@ -151,6 +163,18 @@ object PlayQueue {
         val list = items
         val at = list.indexOfFirst { it.chatId == item.chatId && it.messageId == item.messageId }
         if (at < 0) return null
+        if (shuffle) {
+            val others = list.filterIndexed { index, _ -> index != at }
+            if (others.isEmpty()) return EpisodeSteps()
+            val next = others.random()
+            val prev = if (others.size > 1) others.filter { it.id != next.id }.random() else next
+            return EpisodeSteps(previous = prev, next = next)
+        }
+        if (loop && list.size > 1) {
+            val prev = list.getOrNull(at - 1) ?: list.last()
+            val next = list.getOrNull(at + 1) ?: list.first()
+            return EpisodeSteps(previous = prev, next = next)
+        }
         return EpisodeSteps(previous = list.getOrNull(at - 1), next = list.getOrNull(at + 1))
     }
 }
