@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The same chrome at ten feet. Overscan clearance, a bar wide enough to read a percentage off from
+  a sofa, and enough room under the subtitles for leanback's 150dp control row.
+-->
+<resources>
+    <dimen name="player_sheet_side">72dp</dimen>
+    <dimen name="player_progress_width">520dp</dimen>
+    <!-- Big enough to recognise a poster across a room, small enough to leave the title room. -->
+    <dimen name="player_poster_width">320dp</dimen>
+    <dimen name="player_poster_height">180dp</dimen>
+    <dimen name="player_title_size">26sp</dimen>
+    <dimen name="player_chip_margin">32dp</dimen>
+    <dimen name="player_subtitle_bottom">48dp</dimen>
+    <dimen name="player_timebar_touch">26dp</dimen>
+    <!-- Space over the scrub bar. A phone's 48dp touch strip already carries its own air. -->
+    <dimen name="player_timebar_gap">10dp</dimen>
+    <!--
+      The television's cluster carries the title and its second line over the bar, so the bottom
+      scrim reaches higher than the phone's; the top one only has the clock to hold.
+    -->
+    <dimen name="player_scrim_top">120dp</dimen>
+    <dimen name="player_scrim_bottom">300dp</dimen>
+</resources>

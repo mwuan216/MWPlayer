@@ -1,0 +1,1253 @@
+package com.tmplayer.data
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.os.Build
+import android.os.IBinder
+import android.util.Log
+import com.tmplayer.MainActivity
+import com.tmplayer.R
+import com.tmplayer.i18n.L
+import com.tmplayer.i18n.Translator
+import com.tmplayer.player.StreamStats
+import com.tmplayer.player.TdByteWindow
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+
+/**
+ * Fetches videos the viewer asked to keep, with the app closed if need be, one at a time.
+ *
+ * It is a queue rather than a fan-out. Three videos fetched at once share one connection three ways
+ * and all three land at the end; fetched in turn, the first is watchable while the third is still
+ * coming, and the figures on the notification mean something because they describe one file. So
+ * [MAX_PARALLEL] is one, and the order they were ticked in is the order they arrive in.
+ *
+ * TDLib does the fetching; this only asks, watches and reports. The synchronous form of
+ * `downloadFile` returns when the whole file has landed, so the progress loop beside it exists
+ * purely to move the notification along.
+ */
+class DownloadService : Service() {
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + com.tmplayer.platform.JobFailures.handler("DownloadService"))
+
+    /**
+     * Everything the service is looking after, and which of it is moving.
+     *
+     * All three are read and written from both the main thread, where the intents arrive, and an
+     * IO thread, where a fetch finishes, so every touch of them is inside [lock]. They are the
+     * bookkeeping only: what the viewer sees is [OfflineDownloads], written in step with these.
+     */
+    private val lock = Any()
+    private val requests = LinkedHashMap<Int, DownloadRequest>()
+    private val waiting = ArrayDeque<Int>()
+    private val running = LinkedHashMap<Int, Job>()
+
+    /**
+     * Finished videos waiting for a player to let go of them before they can move into Downloads.
+     *
+     * Kept out of [running] on purpose: a viewer watching the one video they also asked to keep
+     * must not hold up the rest of the queue for the length of a film. Guarded by [lock] too.
+     */
+    private val heldMoves = LinkedHashMap<Int, Job>()
+
+    /** Counts requests in, so a row keeps the place in the list it was given when it was asked for. */
+    private var arrivals = 0L
+
+    /**
+     * Why the connection cannot carry a download at this moment, or null when it can.
+     *
+     * Kept here as well as acted on, because a video ticked while the phone is in a tunnel has to
+     * arrive on the list already waiting for a signal rather than being started and failing for a
+     * reason the app already knew about.
+     */
+    @Volatile
+    private var holdReason: OfflineDownloads.Stage? = null
+
+    /** What each video's own notification last said, so an unchanged one is not posted again. */
+    private val lines = java.util.concurrent.ConcurrentHashMap<Int, String>()
+
+    /** File ids this service has already asked Telegram about. See [resourceAndRequeue]. */
+    private val resourced = java.util.concurrent.ConcurrentHashMap.newKeySet<Int>()
+
+    /**
+     * The last start this service was given, so stopping it cannot swallow the next one.
+     *
+     * `stopSelf()` with no argument stops the service even if an intent arrived while the decision
+     * to stop was being made, which here is a download the viewer just asked for being dropped on
+     * the floor. The numbered form stops it only if no newer start has come in, and Android hands
+     * back the number for exactly this.
+     */
+    private var lastStartId = 0
+
+    /**
+     * True from the moment the ongoing notification has been taken down, so nothing puts it back.
+     *
+     * An ongoing notification with no service behind it is owned by nothing, so nothing takes it
+     * away and swiping does not dismiss it. Ordering alone is not enough: [stopSelf] is a request,
+     * not a return, and refreshes can arrive from the network watcher or a fetch's last breath
+     * after the decision to stop. So the decision is recorded, and every path that would draw the
+     * summary checks it first.
+     */
+    @Volatile
+    private var stopping = false
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        channel()
+        startPersisting()
+        // A service restarted into an app process that still holds a queue (the activity was
+        // recreated, or restore() ran at launch) adopts it rather than starting from nothing.
+        adoptExistingQueue()
+        // Started here as well as by the activity: the service can outlive every screen, and a
+        // download is exactly the thing that wants to know about the signal after the app is gone.
+        NetworkMonitor.start(this)
+        watchTheNetwork()
+    }
+
+    /**
+     * Holds the queue when the connection cannot carry it, and puts it back when it can.
+     *
+     * Two things stop a download the viewer has not stopped: no signal, and mobile data while
+     * "Wi-Fi only" is on. Neither is a failure, so neither is written down as one.
+     * TDLib keeps the partial file, so what resumes is the rest of the video and not the whole of
+     * it again.
+     */
+    private fun watchTheNetwork() {
+        scope.launch {
+            val television = FormFactor.isTv(applicationContext)
+            val wifiOnly = SettingsStore(applicationContext).wifiOnlyDownloads
+                .map { MeteredPolicy.wifiOnlyInForce(it, television) }
+            combine(
+                NetworkMonitor.status,
+                NetworkMonitor.metered,
+                wifiOnly,
+            ) { status, metered, onlyOverWifi ->
+                when {
+                    status == NetworkStatus.Offline -> OfflineDownloads.Stage.Offline
+                    onlyOverWifi && metered -> OfflineDownloads.Stage.NoWifi
+                    else -> null
+                }
+            }
+                // Only the edges. A stream of capability changes on a connection that stayed
+                // usable must not keep re-queueing a download that is running perfectly well.
+                .distinctUntilChanged()
+                .collect { reason ->
+                    holdReason = reason
+                    if (reason == null) releaseWhenUsable() else hold(reason)
+                }
+        }
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // A start means this service is wanted again, whatever the last one decided.
+        stopping = false
+        lastStartId = startId
+        // Android gives a few seconds from startForegroundService to this call, whatever the
+        // intent turns out to be, so the notification goes up before anything else is decided.
+        if (!goToForeground(ongoing())) {
+            // Only a download carries a whole request. A Cancel intent carries a file id and
+            // nothing else, and building a row out of that would put a nameless failed video on
+            // the screen in answer to somebody pressing Cancel.
+            val asked = intent
+                ?.takeIf { it.action == ACTION_DOWNLOAD }
+                ?.let(DownloadRequest::from)
+            refuseEverything(asked)
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
+
+        when (intent?.action) {
+            ACTION_DOWNLOAD -> enqueue(DownloadRequest.from(intent))
+            ACTION_CANCEL -> cancel(intent.fileId())
+            ACTION_PAUSE -> pause(intent.fileId())
+            ACTION_RESUME -> {
+                // Try again on a finished downloads notification names its files; a row's Resume
+                // and the summary's Resume all name one id or everything.
+                val ids = intent.getIntArrayExtra(EXTRA_FILE_IDS)
+                if (ids != null) ids.forEach(::resume) else resume(intent.fileId())
+                NoticeActions.cancel(this, intent)
+            }
+            else -> Unit
+        }
+        pump()
+        refresh()
+        // Not sticky: a process the system killed should not silently start fetching a gigabyte
+        // again with nobody watching. The partial file is kept, the queue is on disk, and the
+        // Downloads screen offers to carry on.
+        return START_NOT_STICKY
+    }
+
+    override fun onDestroy() {
+        // Nothing draws the summary from here on, whichever thread is part way through something.
+        stopping = true
+        runCatching { notifier().cancel(SUMMARY_ID) }
+        // Whatever was moving has stopped moving, and the rows have to say so: a service torn down
+        // by the system leaving rows reading "downloading" is the one lie this screen can tell.
+        val stopped = synchronized(lock) {
+            val ids = running.keys.toList() + waiting.toList() + heldMoves.keys.toList()
+            running.values.forEach { it.cancel() }
+            heldMoves.values.forEach { it.cancel() }
+            running.clear()
+            waiting.clear()
+            heldMoves.clear()
+            ids
+        }
+        stopped.forEach { OfflineDownloads.stage(it, OfflineDownloads.Stage.Paused) }
+        scope.cancel()
+        super.onDestroy()
+    }
+
+    // ---- the queue ---------------------------------------------------------------------------
+
+    /** Takes on rows a previous life of this service, or [OfflineDownloads.restore], left behind. */
+    private fun adoptExistingQueue() = synchronized(lock) {
+        for (progress in OfflineDownloads.ordered) {
+            requests[progress.fileId] = progress.request
+            arrivals = maxOf(arrivals, progress.order + 1)
+        }
+    }
+
+    private fun enqueue(request: DownloadRequest?) {
+        if (request == null) return
+        val known = OfflineDownloads.active.value[request.fileId]
+        // Already coming down or already waiting: pressing download twice is not two downloads.
+        // Paused and failed rows do fall through here, which is what makes Resume and Try again
+        // the same intent as the original press.
+        if (known != null && known.busy) return
+
+        // A video asked for while the phone has no signal, or has only the mobile data the viewer
+        // said not to use, joins the list already waiting for that to change rather than being
+        // started and failing for a reason the app knew before it began.
+        val held = holdReason
+        val position = synchronized(lock) {
+            if (running.containsKey(request.fileId) || waiting.contains(request.fileId)) return
+            requests[request.fileId] = request
+            if (held == null) waiting.addLast(request.fileId)
+            known?.order ?: arrivals++
+        }
+        OfflineDownloads.note(
+            OfflineDownloads.Progress(
+                request = request,
+                // What an earlier attempt already put on disk, so a resumed row does not restart
+                // its bar at zero for bytes that are already here.
+                downloadedBytes = known?.downloadedBytes ?: 0,
+                totalBytes = request.sizeBytes,
+                stage = held ?: OfflineDownloads.Stage.Queued,
+                order = position,
+            ),
+        )
+        persist()
+    }
+
+    /**
+     * Stops a download and forgets it: the row goes.
+     *
+     * A file id of [EVERYTHING] means the notification's "Cancel all", which is what the button
+     * says when more than one video is on the list and there is no room on it to ask which.
+     */
+    private fun cancel(fileId: Int) {
+        val doomed = idsFor(fileId) { true }
+        doomed.forEach { id ->
+            val job = synchronized(lock) {
+                requests.remove(id)
+                waiting.remove(id)
+                heldMoves.remove(id)?.cancel()
+                running.remove(id)
+            }
+            job?.cancel()
+            OfflineDownloads.forget(id)
+            Td.cancelDownloadInBackground(id)
+            notifier().cancel(id.notificationId())
+        }
+        persist()
+    }
+
+    /**
+     * Holds a download where it is, keeping the bytes that landed.
+     *
+     * TDLib has no pause: what it has is a cancellation that leaves the partial file alone, and a
+     * later `downloadFile` for the same id that carries on from it. That is the whole of the
+     * mechanism, and it is why resuming a paused video is the same call as starting it.
+     */
+    private fun pause(fileId: Int) {
+        val held = idsFor(fileId) { it.busy }
+        held.forEach { id ->
+            val job = synchronized(lock) {
+                waiting.remove(id)
+                // A move waiting on the player is let go as well: Resume finds the file whole and
+                // goes straight back to waiting for it, so nothing is lost by stopping.
+                heldMoves.remove(id)?.cancel()
+                running.remove(id)
+            }
+            job?.cancel()
+            Td.cancelDownloadInBackground(id)
+            OfflineDownloads.stage(id, OfflineDownloads.Stage.Paused)
+        }
+    }
+
+    /**
+     * Stops everything that was moving and says which of the two reasons it is waiting on.
+     *
+     * The order is kept, so the video that was half way down comes back first rather than the
+     * queue being reshuffled by an event that had nothing to do with the viewer. A row the viewer
+     * paused is left alone: they said not now, and a connection changing does not unsay it.
+     */
+    private fun hold(reason: OfflineDownloads.Stage) {
+        val moving = OfflineDownloads.ordered
+            .filter {
+                it.stage == OfflineDownloads.Stage.Running ||
+                    it.stage == OfflineDownloads.Stage.Queued ||
+                    // The other waiting state: cellular coming back after a tunnel, with Wi-Fi only
+                    // on, moves a row from one kind of waiting to the other rather than starting it.
+                    (it.busy && it.stage != reason && it.stage != OfflineDownloads.Stage.Moving)
+            }
+            .map { it.fileId }
+        if (moving.isEmpty()) return
+        Log.i(TAG, "Holding ${moving.size} download(s): $reason")
+        moving.forEach { id ->
+            val job = synchronized(lock) {
+                waiting.remove(id)
+                running.remove(id)
+            }
+            job?.cancel()
+            Td.cancelDownloadInBackground(id)
+            OfflineDownloads.stage(id, reason)
+        }
+        refresh()
+    }
+
+    /** The connection can carry them again: everything that was only waiting on it goes back on. */
+    private fun releaseWhenUsable() {
+        val held = OfflineDownloads.ordered
+            .filter {
+                it.stage == OfflineDownloads.Stage.Offline || it.stage == OfflineDownloads.Stage.NoWifi
+            }
+            .sortedBy { it.order }
+        if (held.isEmpty()) return
+        Log.i(TAG, "Connection usable: resuming ${held.size} download(s)")
+        held.forEach { progress ->
+            synchronized(lock) {
+                if (running.containsKey(progress.fileId) || waiting.contains(progress.fileId)) return@forEach
+                requests[progress.fileId] = progress.request
+                waiting.addLast(progress.fileId)
+            }
+            OfflineDownloads.stage(progress.fileId, OfflineDownloads.Stage.Queued)
+        }
+        pump()
+        refresh()
+    }
+
+    /** Puts held rows back on the end of the queue, oldest first, in the order they were asked for. */
+    private fun resume(fileId: Int) {
+        val held = idsFor(fileId) { !it.busy }
+        held.sortedBy { OfflineDownloads.active.value[it]?.order ?: 0 }
+            .forEach { id -> enqueue(OfflineDownloads.active.value[id]?.request) }
+    }
+
+    /**
+     * Which rows an action means: the one it named, or every row that [wanted] accepts.
+     *
+     * The notification's buttons carry [EVERYTHING] because they have room for one button and no
+     * room to say which video it would act on. A button that silently picked whichever download
+     * happened to be first would be worse than no button.
+     */
+    private inline fun idsFor(fileId: Int, wanted: (OfflineDownloads.Progress) -> Boolean): List<Int> =
+        if (fileId == EVERYTHING) {
+            OfflineDownloads.ordered.filter(wanted).map { it.fileId }
+        } else {
+            listOfNotNull(OfflineDownloads.active.value[fileId]?.takeIf(wanted)?.fileId)
+        }
+
+    /** Starts as many as [MAX_PARALLEL] allows, and stops the service when there is nothing left. */
+    private fun pump() {
+        while (true) {
+            // An id that reached the front of the queue with no request behind it. It has been
+            // taken off `waiting` by now, so without this it would leave a row on the Downloads
+            // screen reading "Queued" that nothing would ever start, and the same pass would then
+            // decide the queue was empty and stop the service.
+            var stale = 0
+            val next = synchronized(lock) {
+                if (running.size >= MAX_PARALLEL) return@synchronized null
+                val id = waiting.removeFirstOrNull() ?: return@synchronized null
+                val request = requests[id]
+                if (request == null) {
+                    stale = id
+                    return@synchronized null
+                }
+                val job = scope.launch { fetch(request) }
+                running[id] = job
+                // Registered before the job can finish, so a fetch that fails immediately still
+                // finds its own entry to clear and still pumps whatever is behind it.
+                job.invokeOnCompletion { done(id) }
+                id
+            }
+            if (stale != 0) {
+                OfflineDownloads.forget(stale)
+                continue
+            }
+            if (next == null) break
+            OfflineDownloads.stage(next, OfflineDownloads.Stage.Running)
+        }
+        stopWhenIdle()
+    }
+
+    /** One fetch has ended, whatever the reason. The next one starts and the shade is redrawn. */
+    private fun done(fileId: Int) {
+        synchronized(lock) { running.remove(fileId) }
+        // Drawn before the queue is pumped, not after. Pumping is what discovers there is nothing
+        // left and takes the notification down, and anything drawn after that would be putting it
+        // back with no service behind it.
+        refresh()
+        pump()
+    }
+
+    private suspend fun fetch(request: DownloadRequest) = coroutineScope {
+        // Already here in full. A video can finish between being ticked and reaching the front of
+        // the queue: the viewer played it while it waited, or an earlier attempt had all but the
+        // last block. Asking TDLib for a file it already has is a round trip to be told nothing,
+        // and the row belongs in the finished list either way.
+        //
+        // In Downloads already, which is the other way a video can be here in full: the file in
+        // the folder is the download, and TDLib, which let go of it, would fetch it all again.
+        if (LocalDownloads.videoFor(SettingsStore(applicationContext), request.chatId, request.messageId) != null) {
+            withContext(NonCancellable) {
+                synchronized(lock) { requests.remove(request.fileId) }
+                OfflineDownloads.forget(request.fileId)
+                persistNow()
+            }
+            return@coroutineScope
+        }
+        if (Td.localFileAvailability(request.fileId) == LocalFileAvailability.Complete) {
+            finishOrHold(request)
+            return@coroutineScope
+        }
+
+        // Room is checked again here, and not only when the video was ticked. A queue outlives the
+        // plan it was made with: the video behind two others no longer fits if the viewer watched
+        // something large while it waited, or ticked a second batch. Asked before the request goes
+        // out, because TDLib's own answer to a full disk is a message written for a developer, and
+        // by the time it arrives the download has spent the viewer's data getting most of the way
+        // there.
+        val landedAlready = Td.localDownloadedBytes(request.fileId)
+        val stillToCome = (request.sizeBytes - landedAlready).coerceAtLeast(0)
+        val free = DiskSpace.read(applicationContext).freeBytes
+        if (stillToCome > 0 && free < stillToCome + CacheShelf.HEADROOM_BYTES) {
+            withContext(NonCancellable) {
+                val short = stillToCome + CacheShelf.HEADROOM_BYTES - free
+                Log.w(TAG, "No room for ${request.title}: ${StreamStats.formatBytes(short)} short")
+                val row = OfflineDownloads.active.value[request.fileId]
+                if (row != null) {
+                    OfflineDownloads.note(
+                        row.copy(
+                            downloadedBytes = landedAlready,
+                            stage = OfflineDownloads.Stage.Failed,
+                            failure = L.downloadsNotEnoughSpace(short = Translator.messages.formatter.bytes(short)),
+                            bytesPerSecond = 0,
+                        ),
+                    )
+                    settled(request, ok = false, reason = L.downloadsNotEnoughSpace(short = Translator.messages.formatter.bytes(short)))
+                }
+                persistNow()
+            }
+            return@coroutineScope
+        }
+
+        // Bounded, not an indefinite wait. The row is already marked as running by this line, so a
+        // TDLib that never gets a socket would leave the viewer looking at a video that claims to
+        // be downloading, sat at zero bytes, with no error and nothing to press. Giving up says so
+        // instead, and Try again is one press away.
+        val session = Td.awaitConnectedSessionOrNull(CONNECT_WAIT_MS)
+        if (session == null) {
+            withContext(NonCancellable) {
+                Log.w(TAG, "No connection to Telegram for ${request.title}")
+                val waitingInstead = holdReason
+                if (waitingInstead != null) {
+                    OfflineDownloads.stage(request.fileId, waitingInstead)
+                } else {
+                    writeFailure(request, Td.localDownloadedBytes(request.fileId), Failures.OFFLINE)
+                }
+                persistNow()
+            }
+            return@coroutineScope
+        }
+
+        // TDLib will not fetch a file it cannot trace back to a message it has seen this session,
+        // and a file id only means anything to the run of the client that issued it. A queue
+        // written down before the process was killed comes back holding ids in exactly that state.
+        // Asking Telegram for the message again hands back a current id and gives TDLib the source
+        // it wanted. Once per id, so a video whose number keeps moving cannot become a loop.
+        if (resourceAndRequeue(request)) return@coroutineScope
+
+        // Watches the same file TDLib is filling, only so the notification and the row have
+        // something to move. The download itself is the call below. A child of this coroutine, so
+        // pausing or cancelling the fetch takes the ticker with it rather than leaving it running
+        // against a download that has stopped.
+        val ticker = launch {
+            while (isActive) {
+                delay(PROGRESS_INTERVAL_MS)
+                val done = Td.localDownloadedBytes(request.fileId)
+                OfflineDownloads.sample(request.fileId, done)
+                refresh()
+            }
+        }
+
+        var error: String? = null
+        // TDLib allows one synchronous request per file: the player asking for the same video from
+        // a seek position replaces this one and answers it with "Canceled by another downloadFile
+        // request". That is somebody else's request arriving, not this download failing, so the
+        // request is simply made again and the fetch survives being watched.
+        for (attempt in 1..MAX_TAKEOVERS) {
+            // While a player streams this file the download is the player's: TDLib keeps one per
+            // file, and taking it back from the player starved its reads (a minute and more for an
+            // index read on the 1 GB TV, 2026-10-23). Everything the player brings stays on the
+            // disk, so this carries on from there once it closes.
+            while (TdByteWindow.isStreaming(request.fileId)) delay(TAKEOVER_BACKOFF_MS)
+            val result = runCatching {
+                session.client.downloadFile(
+                    fileId = request.fileId,
+                    priority = DOWNLOAD_PRIORITY,
+                    offset = 0,
+                    // Zero means the whole file, which is the entire point of this service.
+                    limit = 0,
+                    synchronous = true,
+                )
+            }
+            // runCatching catches everything, cancellation included, and a paused download reported
+            // as a failure would put back the row the viewer just held. Rethrown here, so pausing
+            // and cancelling leave through this function rather than being written down as errors.
+            (result.exceptionOrNull() as? CancellationException)?.let { throw it }
+            error = result.exceptionOrNull()?.message ?: result.getOrNull()?.errorMessage
+            if (error == null || !error.contains(TAKEN_OVER, ignoreCase = true)) break
+            if (Td.localFileAvailability(request.fileId) == LocalFileAvailability.Complete) {
+                error = null
+                break
+            }
+            Log.i(TAG, "Another request took over ${request.title}; asking again ($attempt)")
+            // A pause, so a viewer scrubbing through the video is not raced press for press.
+            delay(TAKEOVER_BACKOFF_MS)
+        }
+        ticker.cancel()
+
+        // The id went stale while this was waiting its turn, or Telegram's file reference expired
+        // under it. Both are answered by asking for the message again rather than by a red row.
+        if (error != null && Failures.needsFreshFileReference(error)) {
+            var moved = false
+            withContext(NonCancellable) { moved = resourceAndRequeue(request) }
+            if (moved) return@coroutineScope
+        }
+
+        // Uncancellable from here down, and that includes asking TDLib what actually landed: these
+        // are the lines that decide what the row says and whether the video is listed as
+        // downloaded. A pause arriving in the same instant the last byte did would otherwise leave
+        // a complete file on the disk with nothing anywhere claiming it.
+        val finished = withContext(NonCancellable) {
+            val complete = Td.localFileAvailability(request.fileId) == LocalFileAvailability.Complete
+            val landed = Td.localDownloadedBytes(request.fileId)
+            if (error != null || !complete) {
+                Log.w(TAG, "Download of ${request.title} did not finish: ${error ?: "incomplete"}")
+                // Only if the row is still this fetch's to write. A cancel that arrived a moment
+                // ago has already taken it away, and a pause has already given it a state; putting
+                // a failure over either would resurrect a row the viewer dismissed or contradict
+                // the button they just pressed.
+                val row = OfflineDownloads.active.value[request.fileId]
+                if (row != null && row.stage == OfflineDownloads.Stage.Running) {
+                    // A download that stopped because the connection did is not a failure the
+                    // viewer has to do anything about, whichever noticed first: the request coming
+                    // back with an error, or the connectivity callback. It waits, like every other
+                    // held row, and the watcher above puts it back.
+                    val waitingInstead = holdReason
+                    OfflineDownloads.note(
+                        row.copy(
+                            downloadedBytes = landed,
+                            stage = waitingInstead ?: OfflineDownloads.Stage.Failed,
+                            failure = if (waitingInstead != null) {
+                                null
+                            } else {
+                                // Gone from its chat (HX21): that, not TDLib's word for a file it lost.
+                                com.tmplayer.data.GoneVideos.failureText(request.chatId, request.messageId)
+                                    ?: error?.let(Failures::humanise) ?: FAILED_TEXT
+                            },
+                            bytesPerSecond = 0,
+                        ),
+                    )
+                    if (waitingInstead == null) {
+                        settled(request, ok = false, reason = error?.let(Failures::humanise))
+                    }
+                }
+            }
+            persistNow()
+            error == null && complete
+        }
+        // Only a finished file goes into Downloads. Half a video is not something to offer
+        // somebody on a train as though it were there. Uncancellable for the same reason as the
+        // block above: a finished file with no move under way is a file nothing claims.
+        if (finished) withContext(NonCancellable) { finishOrHold(request) }
+    }
+
+    /**
+     * Moves a finished file into Downloads: now, or once the player watching it lets go.
+     *
+     * Waiting is done off the queue's slot, in [heldMoves], so the next video starts downloading
+     * while the viewer finishes watching this one. The row says "Finishes when playback stops"
+     * meanwhile, and the service stays up for it.
+     */
+    private suspend fun finishOrHold(request: DownloadRequest) {
+        val id = request.fileId
+        if (!WatchCache.isPlaying(id)) {
+            withContext(NonCancellable) { finishNow(request) }
+            return
+        }
+        OfflineDownloads.moving(id, heldByPlayer = true)
+        synchronized(lock) {
+            if (heldMoves.containsKey(id)) return
+            heldMoves[id] = scope.launch {
+                try {
+                    // Cancellable while it only waits: Pause and Cancel reach it here.
+                    while (WatchCache.isPlaying(id)) delay(DownloadFinisher.POLL_MS)
+                    withContext(NonCancellable) { finishNow(request) }
+                } finally {
+                    synchronized(lock) { heldMoves.remove(id) }
+                    refresh()
+                    pump()
+                }
+            }
+        }
+        refresh()
+    }
+
+    /**
+     * The picked folder ("Other folder", HX57) when one is chosen and still reachable, else null so
+     * the download falls back to the app's own folder instead of failing until the viewer notices.
+     */
+    private fun pickedFolder(): DownloadFinisher.TreeTarget? {
+        val context = applicationContext
+        val folder = AndroidStorage.currentTree() ?: return null
+        if (!DownloadTree.usable(context, folder)) return null
+        return object : DownloadFinisher.TreeTarget {
+            override val label: String get() = DownloadTree.label(context, folder)
+            override fun freeBytes(): Long? = DownloadTree.freeBytes(folder)
+            override suspend fun put(source: java.io.File, name: String, onProgress: (Long, Long) -> Unit): String =
+                DownloadTree.putFile(context, folder, source, name, onProgress).toString()
+        }
+    }
+
+    /** The move itself, through [DownloadFinisher], and what the row and the shade say after. */
+    private suspend fun finishNow(request: DownloadRequest) {
+        val id = request.fileId
+        val outcome = DownloadFinisher(
+            settings = SettingsStore(applicationContext),
+            downloadsDir = { AndroidPaths(applicationContext).downloadsDir },
+            tree = { pickedFolder() },
+        ).finish(request, onProgress = { _, _ -> refresh() })
+        when (outcome) {
+            is DownloadFinisher.Outcome.Moved, is DownloadFinisher.Outcome.MovedToTree -> {
+                synchronized(lock) { requests.remove(id) }
+                OfflineDownloads.forget(id)
+                lines.remove(id)
+                runCatching { notifier().cancel(id.notificationId()) }
+                // A new notification, not the progress one updated: it pops even for a viewer
+                // who swiped the progress away. One per season or cut video, once it is all here.
+                settled(request, ok = true)
+            }
+            is DownloadFinisher.Outcome.Failed -> {
+                Log.w(TAG, "Could not move ${request.title} into Downloads: ${outcome.reason}")
+                OfflineDownloads.active.value[id]?.let { row ->
+                    OfflineDownloads.note(
+                        row.copy(stage = OfflineDownloads.Stage.Failed, failure = outcome.reason, heldByPlayer = false),
+                    )
+                }
+                settled(request, ok = false, reason = outcome.reason)
+            }
+        }
+        persistNow()
+    }
+
+    /**
+     * Asks Telegram for the video's message again, and moves the row onto the id it hands back.
+     *
+     * True when the row moved, which means this fetch is finished with: the old id is gone from
+     * every list, the new one is on the queue in the same place, and the pump behind [done] starts
+     * it. False when nothing needed to change, or when the message could not be reached, in which
+     * case the caller carries on with the id it has: Telegram being slow is not a reason to give up
+     * on a download that may well work.
+     *
+     * Each id is re-sourced once. A video whose number moves every time it is asked for would
+     * otherwise be a queue that fetches nothing and never stops trying.
+     */
+    private suspend fun resourceAndRequeue(request: DownloadRequest): Boolean {
+        if (request.chatId == 0L || request.messageId == 0L) return false
+        if (!resourced.add(request.fileId)) return false
+        val fresh = runCatching { Td.refreshMedia(request.chatId, request.messageId) }.getOrNull()
+        val id = fresh?.fileId ?: return false
+        if (id <= 0 || id == request.fileId) return false
+        Log.i(TAG, "Re-sourced ${request.title}: file ${request.fileId} is now $id")
+        val moved = request.copy(
+            fileId = id,
+            // The old row's size came from the same message, but a re-fetched one is the newer
+            // answer and the bar is drawn against it.
+            sizeBytes = fresh.sizeBytes.takeIf { it > 0 } ?: request.sizeBytes,
+        )
+        synchronized(lock) { requests.remove(request.fileId) }
+        OfflineDownloads.forget(request.fileId)
+        lines.remove(request.fileId)
+        runCatching { notifier().cancel(request.fileId.notificationId()) }
+        enqueue(moved)
+        persistNow()
+        return true
+    }
+
+    /** The one way a row is written down as failed: only when this fetch still owns it. */
+    private fun writeFailure(request: DownloadRequest, landed: Long, text: String) {
+        val row = OfflineDownloads.active.value[request.fileId] ?: return
+        if (row.stage != OfflineDownloads.Stage.Running) return
+        OfflineDownloads.note(
+            row.copy(
+                downloadedBytes = landed,
+                stage = OfflineDownloads.Stage.Failed,
+                failure = text,
+                bytesPerSecond = 0,
+            ),
+        )
+        settled(request, ok = false, reason = text)
+    }
+
+    /**
+     * One video has finished or failed for good: its progress line goes, and once nothing else of
+     * its season or cut video is on the queue the one notification for all of it goes out
+     * ([DownloadResults], [AppNotices.postDownloadResult]), with Play and Try again. The window's
+     * toast hears of a finished group at the same moment, which is how a TV is told.
+     */
+    private fun settled(request: DownloadRequest, ok: Boolean, reason: String? = null) {
+        runCatching { notifier().cancel(request.fileId.notificationId()) }
+        val outstanding = OfflineDownloads.ordered
+            .filter { it.fileId != request.fileId && it.stage != OfflineDownloads.Stage.Failed }
+            .map { it.request }
+        val result = DownloadResults.record(request, ok, outstanding) ?: return
+        if (result.done.isNotEmpty()) {
+            AndroidTransferNotifier.announce(if (result.total == 1) result.done.first().title else result.group.name)
+        }
+        // The app's scope, not this service's: the service may be stopping as the last one lands.
+        val app = applicationContext
+        com.tmplayer.App.backgroundScope.launch {
+            runCatching { AppNotices.postDownloadResult(app, result, reason.takeIf { result.total == 1 }) }
+        }
+    }
+
+    /**
+     * Writes the unfinished queue down, so a crash or a kill comes back to the same list.
+     *
+     * Failed rows are written too. "Try again" on a row that a flat tunnel killed is the most
+     * likely next press there is, and losing the row means losing the only thing that knows which
+     * video it was.
+     */
+    private fun persist() {
+        // Asked for, not performed. Two concurrent writes could each snapshot the queue and then
+        // reach the write in the other order, leaving the file holding the older of the two. The
+        // channel below conflates, so only the newest snapshot is written and two writes never
+        // overlap.
+        persistRequests.trySend(Unit)
+    }
+
+    /**
+     * Coalesces persistence requests. Conflated: a request arriving while one is being written
+     * replaces any other waiting, because the queue is written whole and only its latest state has
+     * ever mattered.
+     */
+    private val persistRequests = Channel<Unit>(Channel.CONFLATED)
+
+    /** The single writer. Started with the service and dies with its scope. */
+    private fun startPersisting() {
+        scope.launch { for (unused in persistRequests) persistNow() }
+    }
+
+    /**
+     * Writes the queue, now, and never alongside another write of it.
+     *
+     * Still called directly from the completion paths, which run under [NonCancellable] because
+     * the record of a finished download has to survive the service stopping a moment later: a
+     * conflated request would simply be dropped there. The lock is what makes those safe next to
+     * the coalesced writer above, since the snapshot and the write are one operation under it.
+     */
+    private suspend fun persistNow() = persistLock.withLock {
+        val queued = OfflineDownloads.ordered.map { it.request }
+        runCatching { SettingsStore(applicationContext).saveDownloadQueue(queued) }
+        Unit
+    }
+
+    private val persistLock = Mutex()
+
+    /**
+     * Stops the service once nothing is moving and nothing is waiting on the world to change.
+     *
+     * A paused download does not hold it up. Pausing means the viewer said not now, and leaving a
+     * permanent notification in the shade for something nobody is doing is the app talking over
+     * them: the row is on the Downloads screen, which is where they paused it from and where they
+     * will press Resume. Failed rows do not hold it either, since they post a notification of
+     * their own that outlives the service.
+     *
+     * Rows waiting for a signal are the exception, and the only one. Nothing else is going to put
+     * them back when the signal returns, so the service that will do it has to still be here, and
+     * its notification is then telling the truth: this app is waiting on your connection.
+     */
+    private fun stopWhenIdle() {
+        synchronized(lock) {
+            if (running.isNotEmpty() || waiting.isNotEmpty()) return
+        }
+        // A video waiting for the player to let go is still this service's to move.
+        if (synchronized(lock) { heldMoves.isNotEmpty() }) {
+            refresh()
+            return
+        }
+        val waitingOnTheWorld = OfflineDownloads.active.value.values.any {
+            it.stage == OfflineDownloads.Stage.Offline || it.stage == OfflineDownloads.Stage.NoWifi
+        }
+        if (waitingOnTheWorld) {
+            refresh()
+            return
+        }
+        // The terminal notifications stay: "downloaded" and "did not finish" are both things the
+        // viewer wants to find later. Only the ongoing one holding the service up goes, and it is
+        // marked as gone before it is taken down so that nothing arriving late puts it back.
+        stopping = true
+        stopForegroundRemoving()
+        // Asked for by hand as well. STOP_FOREGROUND_REMOVE only takes down a notification this
+        // service is actually in the foreground with, and an earlier refresh may have replaced it
+        // with an ordinary one of the same id, which that flag leaves exactly where it is.
+        runCatching { notifier().cancel(SUMMARY_ID) }
+        stopSelf(lastStartId)
+    }
+
+    // ---- the notification --------------------------------------------------------------------
+
+    /**
+     * Puts the notification up, and says whether Android allowed it.
+     *
+     * From Android 14 `startForeground` throws when the start came from the background, and from
+     * Android 15 when a data sync service has spent its allowance for the day. Uncaught, both take
+     * the process down and the queue with it, so the viewer loses every row rather than one
+     * download. Caught here, and the caller writes the queue down as failed so there is something
+     * left to press.
+     */
+    private fun goToForeground(notification: Notification): Boolean = runCatching {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(SUMMARY_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        } else {
+            startForeground(SUMMARY_ID, notification)
+        }
+    }.onFailure { Log.w(TAG, "Android would not let the download service run", it) }.isSuccess
+
+    /**
+     * Says so on every row, when this service is not allowed to exist.
+     *
+     * Including the video that was being asked for as this happened, which has no row yet: without
+     * one, the press the viewer just made leaves nothing at all on the screen. Everything that was
+     * moving is written down as failed rather than left claiming to download, because nothing is
+     * going to move it now.
+     */
+    private fun refuseEverything(asked: DownloadRequest?) {
+        if (asked != null && OfflineDownloads.active.value[asked.fileId] == null) {
+            OfflineDownloads.note(
+                OfflineDownloads.Progress(
+                    request = asked,
+                    downloadedBytes = 0,
+                    totalBytes = asked.sizeBytes,
+                    stage = OfflineDownloads.Stage.Failed,
+                    failure = AndroidDownloadRunner.REFUSED,
+                    order = OfflineDownloads.nextOrder(),
+                ),
+            )
+        }
+        OfflineDownloads.ordered
+            .filter { it.busy }
+            .forEach {
+                OfflineDownloads.stage(
+                    it.fileId,
+                    OfflineDownloads.Stage.Failed,
+                    AndroidDownloadRunner.REFUSED,
+                )
+            }
+        persist()
+    }
+
+    private fun refresh() {
+        // Nothing draws the summary again once it has been taken down. The per-video notifications
+        // are a different matter: "downloaded" and "did not finish" are posted as the queue empties
+        // and are meant to outlive the service.
+        runCatching {
+            if (!stopping) notifier().notify(SUMMARY_ID, ongoing())
+            perVideoNotifications()
+        }
+    }
+
+    /**
+     * One notification per video, under the summary, saying which is which.
+     *
+     * The summary alone cannot answer the question the viewer has when they queue three videos:
+     * not "how far along is this" but "did it take all three, and which one is it on". A count in
+     * a second line ("2 waiting") says how many and never says what.
+     *
+     * Android groups them under [SUMMARY_ID] on its own, so the shade shows one entry that expands
+     * into the queue. Each carries a Cancel for its own video, which is the one thing the summary's
+     * button cannot do: from there, with several queued, cancelling has to mean all of them.
+     *
+     * Re-posted only when a line actually changes. The progress ticker runs once a second, and
+     * posting four unchanged notifications a second is how a download turns into a battery
+     * complaint.
+     */
+    private fun perVideoNotifications() {
+        val rows = OfflineDownloads.ordered
+        val queued = rows.filter { it.stage == OfflineDownloads.Stage.Queued }
+
+        for (row in rows) {
+            // Failures already have a notification of their own, posted once, that outlives the
+            // service. A second one saying the same thing is not twice as informative.
+            if (row.stage == OfflineDownloads.Stage.Failed) continue
+            val line = when (row.stage) {
+                OfflineDownloads.Stage.Running -> listOfNotNull(
+                    row.fraction?.let { Translator.messages.formatter.percent(it.toDouble()) },
+                    if (row.totalBytes > 0) {
+                        L.commonOfTotal(done = bytes(row.downloadedBytes), total = bytes(row.totalBytes))
+                    } else {
+                        bytes(row.downloadedBytes)
+                    },
+                    Translator.messages.formatter.eta(row.remainingSeconds).ifEmpty { null },
+                ).joinToString(DOT)
+                OfflineDownloads.Stage.Queued -> {
+                    val place = queued.indexOfFirst { it.fileId == row.fileId }
+                    if (place <= 0) L.downloadsNextInQueue else L.downloadsPlaceInQueue(place = place + 1)
+                }
+                OfflineDownloads.Stage.Paused -> L.downloadsPaused
+                OfflineDownloads.Stage.Offline -> L.downloadsWaitingConnection
+                OfflineDownloads.Stage.NoWifi -> L.downloadsWaitingWifi
+                OfflineDownloads.Stage.Moving ->
+                    if (row.heldByPlayer) L.downloadsFinishesAfterPlayback else L.downloadsMovingIntoDownloads
+                OfflineDownloads.Stage.Failed -> continue
+            }
+            if (lines[row.fileId] == line) continue
+            lines[row.fileId] = line
+            notifier().notify(row.fileId.notificationId(), videoNotification(row, line))
+        }
+
+        // Anything that has left the list takes its notification with it: a finished video's row
+        // is replaced by the "Downloaded" one on the same id, and a cancelled one has none.
+        val live = rows.map { it.fileId }.toSet()
+        lines.keys.retainAll(live)
+    }
+
+    private fun videoNotification(
+        row: OfflineDownloads.Progress,
+        line: String,
+    ): Notification {
+        val running = row.stage == OfflineDownloads.Stage.Running
+        val fraction = row.fraction
+        return builder()
+            .setContentTitle(row.title)
+            .setContentText(line)
+            .setGroup(GROUP)
+            .setOngoing(row.busy)
+            .apply {
+                if (running) {
+                    setProgress(100, ((fraction ?: 0f) * 100).toInt(), fraction == null)
+                } else if (fraction != null && row.downloadedBytes > 0) {
+                    // A held video keeps its bar, unmoving, because what it has already fetched is
+                    // the thing the viewer is deciding whether to wait for.
+                    setProgress(100, (fraction * 100).toInt(), false)
+                }
+                addAction(
+                    action(
+                        icon = R.drawable.ic_notify_cancel,
+                        label = L.commonCancel,
+                        action = ACTION_CANCEL,
+                        fileId = row.fileId,
+                    ),
+                )
+                if (row.stage == OfflineDownloads.Stage.Running) {
+                    addAction(
+                        action(
+                            icon = R.drawable.ic_notify_pause,
+                            label = L.commonPause,
+                            action = ACTION_PAUSE,
+                            fileId = row.fileId,
+                        ),
+                    )
+                } else if (!row.busy) {
+                    addAction(
+                        action(
+                            icon = R.drawable.ic_notify_resume,
+                            label = L.commonResume,
+                            action = ACTION_RESUME,
+                            fileId = row.fileId,
+                        ),
+                    )
+                }
+            }
+            .build()
+    }
+
+    /**
+     * The one notification a download gets.
+     *
+     * The service needs exactly one notification to hold it up, so that is the one given the title,
+     * the bar and the numbers, and nothing else is posted while the fetching goes on.
+     *
+     * It names the video being fetched, not the batch, because only one is ever being fetched.
+     * What is behind it is a count on the second line, which is what a queue looks like from the
+     * shade: this one, and how many after it.
+     */
+    private fun ongoing(): Notification {
+        val rows = OfflineDownloads.ordered.filter { it.stage != OfflineDownloads.Stage.Failed }
+        val current = rows.firstOrNull { it.stage == OfflineDownloads.Stage.Running }
+        val queued = rows.count { it.stage == OfflineDownloads.Stage.Queued }
+        val paused = rows.count { it.stage == OfflineDownloads.Stage.Paused }
+        val offline = rows.count { it.stage == OfflineDownloads.Stage.Offline }
+        val noWifi = rows.count { it.stage == OfflineDownloads.Stage.NoWifi }
+        val moving = rows.count { it.stage == OfflineDownloads.Stage.Moving }
+        val builder = builder().setOngoing(true).setGroup(GROUP).setGroupSummary(true)
+
+        if (current == null && moving > 0 && queued == 0) {
+            // Fetched, and waiting for the player or being moved: the last stage of the queue.
+            val waitingForPlayer = rows.any { it.stage == OfflineDownloads.Stage.Moving && it.heldByPlayer }
+            return builder
+                .setContentTitle(L.notifySaving(count = moving))
+                .setContentText(if (waitingForPlayer) L.downloadsFinishesAfterPlayback else L.downloadsMovingIntoDownloads)
+                .setProgress(0, 0, !waitingForPlayer)
+                .addAction(cancelAction(rows.size))
+                .build()
+        }
+
+        if (current == null) {
+            // Nothing moving. Either the signal went, which the service deliberately stays alive
+            // for, or it is on its way out and this is the last thing it will draw.
+            if (offline > 0 || noWifi > 0) {
+                val forWifi = noWifi > offline
+                val held = maxOf(offline, noWifi)
+                return builder
+                    .setContentTitle(
+                        if (forWifi) {
+                            L.notifyHeldForWifi(count = held)
+                        } else {
+                            L.notifyHeldForConnection(count = held)
+                        },
+                    )
+                    .setContentText(
+                        if (forWifi) {
+                            L.notifyStartOnWifi
+                        } else {
+                            L.notifyCarryOn
+                        },
+                    )
+                    .setProgress(0, 0, false)
+                    .addAction(pauseAction())
+                    .addAction(cancelAction(rows.size))
+                    .build()
+            }
+            val title = when {
+                paused > 0 -> L.notifyPaused(count = paused)
+                queued > 0 -> L.notifyStarting(count = queued)
+                else -> L.notifyDownloadingForLater
+            }
+            return builder
+                .setContentTitle(title)
+                // "Finishing up" is the last moment of a queue, not a state anything sits in, so
+                // rows still queued or paused say so instead.
+                .setContentText(
+                    when {
+                        paused > 0 -> L.downloadsPaused
+                        queued > 0 -> L.notifyWaitingToStart
+                        else -> L.notifyFinishingUp
+                    },
+                )
+                .setProgress(0, 0, paused == 0)
+                .apply { if (paused > 0) addAction(resumeAction(paused)) }
+                .addAction(cancelAction(rows.size))
+                .build()
+        }
+
+        val fraction = current.fraction
+        val line = listOfNotNull(
+            fraction?.let { Translator.messages.formatter.percent(it.toDouble()) },
+            if (current.totalBytes > 0) {
+                L.commonOfTotal(done = bytes(current.downloadedBytes), total = bytes(current.totalBytes))
+            } else {
+                bytes(current.downloadedBytes)
+            },
+            Translator.messages.formatter.speed(current.bytesPerSecond).takeIf { current.bytesPerSecond >= 1024 },
+            waitingLine(queued + paused + offline + noWifi),
+        ).joinToString(DOT)
+
+        return builder
+            .setContentTitle(current.title)
+            .setContentText(line)
+            .setSubText(Translator.messages.formatter.eta(current.remainingSeconds).ifEmpty { null })
+            .setProgress(100, ((fraction ?: 0f) * 100).toInt(), fraction == null)
+            .addAction(pauseAction())
+            .addAction(cancelAction(rows.size))
+            .build()
+    }
+
+    private fun waitingLine(count: Int): String? = when {
+        count <= 0 -> null
+        else -> L.notifyWaiting(count = count)
+    }
+
+    /**
+     * Pause, which stops the fetching and keeps every byte that arrived.
+     *
+     * It acts on everything, the queue included, for the same reason "Cancel all" does: one button,
+     * several videos, and no honest way to choose between them from here. Holding just one is done
+     * from its own row in the Downloads screen, which has the space to name it.
+     */
+    private fun pauseAction(): Notification.Action = action(
+        icon = R.drawable.ic_notify_pause,
+        label = L.commonPause,
+        action = ACTION_PAUSE,
+    )
+
+    private fun resumeAction(paused: Int): Notification.Action = action(
+        icon = R.drawable.ic_notify_resume,
+        label = if (paused > 1) L.commonResumeAll else L.commonResume,
+        action = ACTION_RESUME,
+    )
+
+    private fun cancelAction(rows: Int): Notification.Action = action(
+        icon = R.drawable.ic_notify_cancel,
+        label = if (rows > 1) L.commonCancelAll else L.commonCancel,
+        action = ACTION_CANCEL,
+    )
+
+    private fun action(
+        icon: Int,
+        label: String,
+        action: String,
+        /** [EVERYTHING] on the summary, which has no room to say which video it means. */
+        fileId: Int = EVERYTHING,
+    ): Notification.Action {
+        val intent = Intent(this, DownloadService::class.java).apply {
+            this.action = action
+            putExtra(EXTRA_FILE_ID, fileId)
+        }
+        val pending = PendingIntent.getService(
+            this,
+            // One request code per action and per video, or the buttons would share a
+            // PendingIntent and the last one built would quietly become all of them.
+            action.hashCode() + fileId,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        return Notification.Action.Builder(
+            android.graphics.drawable.Icon.createWithResource(this, icon),
+            label,
+            pending,
+        ).build()
+    }
+
+    private fun builder(): Notification.Builder =
+        notificationBuilder(this, CHANNEL_ID, OldAndroid.IMPORTANCE_LOW)
+            .setSmallIcon(R.drawable.ic_stat_download)
+            .setContentIntent(openApp())
+            .setOnlyAlertOnce(true)
+
+    /**
+     * Where pressing the notification goes: the Downloads screen, which is what it is about, rather
+     * than wherever the viewer last was.
+     */
+    private fun openApp(): PendingIntent = AndroidTransferNotifier.openDownloads(this)
+
+    private fun notifier(): NotificationManager =
+        getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+    /** One channel for these and for [AndroidTransferNotifier]'s, so one switch covers both. */
+    private fun channel() = AndroidTransferNotifier.ensureChannel(this)
+
+    private fun bytes(value: Long): String = Translator.messages.formatter.bytes(value)
+
+    private fun Int.notificationId(): Int = SUMMARY_ID + 1 + (this and 0xFFFF)
+
+    private fun Intent.fileId(): Int = getIntExtra(EXTRA_FILE_ID, EVERYTHING)
+
+    companion object {
+        const val ACTION_DOWNLOAD = "com.tmplayer.action.DOWNLOAD"
+        const val ACTION_CANCEL = "com.tmplayer.action.CANCEL_DOWNLOAD"
+        const val ACTION_PAUSE = "com.tmplayer.action.PAUSE_DOWNLOAD"
+        const val ACTION_RESUME = "com.tmplayer.action.RESUME_DOWNLOAD"
+
+        const val EXTRA_FILE_ID = "fileId"
+
+        /** Several file ids at once: Try again on a finished downloads notification. */
+        const val EXTRA_FILE_IDS = "fileIds"
+        const val EXTRA_TITLE = "title"
+        const val EXTRA_SIZE = "size"
+        const val EXTRA_CHAT_ID = "chatId"
+        const val EXTRA_MESSAGE_ID = "messageId"
+        const val EXTRA_CHAT_TITLE = "chatTitle"
+        const val EXTRA_DURATION = "duration"
+        const val EXTRA_MIME = "mime"
+        const val EXTRA_FILE_NAME = "fileName"
+
+        private const val TAG = "DownloadService"
+        private const val CHANNEL_ID = AndroidTransferNotifier.CHANNEL_ID
+
+        /** Ties the per-video notifications to the summary, so the shade shows one entry. */
+        private const val GROUP = "com.tmplayer.downloads"
+        private const val SUMMARY_ID = 4200
+
+        /**
+         * How many videos are fetched at once.
+         *
+         * One. See the note at the top of the class: the alternative is every video finishing at
+         * the same late moment, and figures on a notification that describe no file in particular.
+         */
+        private const val MAX_PARALLEL = 1
+
+        /** Above the streaming player's priority: this is what the viewer is waiting on. */
+        private const val DOWNLOAD_PRIORITY = 32
+
+        private const val PROGRESS_INTERVAL_MS = 1_000L
+
+        /**
+         * How long a download waits for TDLib to find a line to Telegram before saying it cannot.
+         *
+         * Longer than a screen would wait, because nobody is watching a spinner: a phone coming
+         * out of a tunnel deserves a couple of minutes. Bounded, so it cannot wait for ever.
+         */
+        private const val CONNECT_WAIT_MS = 120_000L
+
+        /** What TDLib says when a newer request for the same file replaced this one. */
+        private const val TAKEN_OVER = "Canceled by another downloadFile"
+
+        /** Enough to sit through a viewer seeking around the video they are also keeping. */
+        private const val MAX_TAKEOVERS = 60
+        private const val TAKEOVER_BACKOFF_MS = 2_000L
+
+        /** The file id the notification's buttons carry, since no real file has it. */
+        private const val EVERYTHING = 0
+
+        private const val DOT = "  ·  "
+
+        private val FAILED_TEXT: String get() = L.downloadsFailed
+    }
+}

@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Only the downloaded update, and only for as long as the installer is reading it. -->
+    <cache-path
+        name="updates"
+        path="updates/" />
+    <!--
+      A cached video, for the Share sheet and for opening it in another player. Scoped to TDLib's
+      own files directory rather than to all of files/, so a share can only ever hand out media:
+      the TDLib database sits next door and is nobody else's business. FileProvider compares
+      resolved paths, so a path TDLib still spells with the directory's old name, tdlib-files,
+      which is now a link to cache, is served from here too.
+    -->
+    <files-path
+        name="media"
+        path="cache/" />
+    <!--
+      The same directory under its old name, for an install where it could not be renamed (see
+      CacheDirRename) and is still a real directory called tdlib-files.
+    -->
+    <files-path
+        name="media_legacy"
+        path="tdlib-files/" />
+    <!--
+      The logs Send logs writes for the share sheet, one file at a time: names, numbers and file
+      names are already taken out of it (see LogExport).
+    -->
+    <cache-path
+        name="logs"
+        path="logs/" />
+    <!-- A downloaded video, in TMPlayer's own Downloads folder. -->
+    <files-path
+        name="downloads"
+        path="downloads/" />
+</paths>

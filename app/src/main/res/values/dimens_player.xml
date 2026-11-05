@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The player's chrome, at phone size.
+
+  These were written as literals in the layout and every one of them was a television figure: 72dp
+  of side padding and a 520dp progress bar on a 411dp-wide phone means a loading sheet whose bar is
+  wider than the screen inside margins that leave nothing between them. The television keeps the
+  originals in values-television, which is the resource qualifier for a device reporting
+  UI_MODE_TYPE_TELEVISION, so neither device is guessing about the other.
+-->
+<resources>
+    <dimen name="player_sheet_side">24dp</dimen>
+    <dimen name="player_progress_width">260dp</dimen>
+    <!--
+      The poster on the loading screen, at 16:9. Sized so it and the title together sit inside the
+      short side of a phone held sideways, which is 411dp at its narrowest in landscape.
+    -->
+    <dimen name="player_poster_width">208dp</dimen>
+    <dimen name="player_poster_height">117dp</dimen>
+    <dimen name="player_title_size">20sp</dimen>
+    <dimen name="player_chip_margin">16dp</dimen>
+    <!-- Clear of the transport row, which on a phone is Media3's and about 70dp tall. -->
+    <dimen name="player_subtitle_bottom">32dp</dimen>
+    <!--
+      The scrub bar's touch height. A thumb wants the Material 48dp; a television's bar is reached
+      with the D-pad and keeps the slimmer figure its focus pill was drawn around.
+    -->
+    <dimen name="player_timebar_touch">48dp</dimen>
+    <!-- Space over the scrub bar. A phone's 48dp touch strip already carries its own air. -->
+    <dimen name="player_timebar_gap">0dp</dimen>
+    <!--
+      The line under each of the phone's episode steps naming where it goes ("S01E05"), and the
+      equal spacer over it that keeps the button level with the play disc.
+    -->
+    <dimen name="player_episode_caption">22dp</dimen>
+    <!-- The air between an episode step and the caption pill under it. -->
+    <dimen name="player_episode_caption_gap">4dp</dimen>
+    <!--
+      How far the scrims reach in from each edge while the controls are up. The phone's top one
+      clears the status bar plus the 56dp top bar with its title and subtitle.
+    -->
+    <dimen name="player_scrim_top">160dp</dimen>
+    <dimen name="player_scrim_bottom">260dp</dimen>
+</resources>

@@ -1,0 +1,73 @@
+package com.tmplayer.ui.browse
+
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.tmplayer.data.SettingsStore
+import com.tmplayer.ui.components.TvSearchField
+import com.tmplayer.ui.components.isTouch
+import com.tmplayer.ui.settings.SendLogsButton
+
+/**
+ * The Add chats picker (HX27) on the phone and the television, over the shell's chat list.
+ *
+ * [run] is how many times the picker has been opened. The view model is kept under it, so a
+ * rotation in the middle of a choice keeps its ticks and the next opening starts from the store.
+ * [required] is the mandatory chat choice ([com.tmplayer.data.ChatsGate]), where Back calls
+ * [onLeave] (the shell leaves the app) rather than closing.
+ */
+@Composable
+internal fun AddChatsPage(
+    settings: SettingsStore,
+    chatsViewModel: ChatListViewModel,
+    run: Int,
+    onClose: () -> Unit,
+    required: Boolean = false,
+    onLeave: () -> Unit = onClose,
+) {
+    if (DebugFakeChats.active) {
+        // Debug only (HX76): 3,000 fake chats and their counts, to measure the TV picker on a long list.
+        val fake: AddChatsViewModel = viewModel(
+            key = "add-chats-fake-$run",
+            factory = object : ViewModelProvider.Factory {
+                @Suppress("UNCHECKED_CAST")
+                override fun <T : ViewModel> create(modelClass: Class<T>): T =
+                    AddChatsViewModel(settings, DebugFakeChats.counts()).also { it.open() } as T
+            },
+        )
+        val fakeChats = remember { DebugFakeChats.chats() }
+        AddChatsScreen(
+            chats = fakeChats,
+            listComplete = true,
+            starred = emptySet(),
+            model = fake,
+            onClose = onClose,
+            sendLogs = { SendLogsButton() },
+            required = required,
+            onLeave = onLeave,
+        )
+        return
+    }
+    val model: AddChatsViewModel = viewModel(
+        key = "add-chats-$run",
+        factory = object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>): T = newAddChatsViewModel(settings) as T
+        },
+    )
+    AddChatsFed(
+        settings = settings,
+        chatsViewModel = chatsViewModel,
+        model = model,
+        onClose = onClose,
+        sendLogs = { SendLogsButton() },
+        // A remote and a sofa get the television's own search box, which opens its keyboard on a press.
+        searchField = if (isTouch()) null else { value, onValueChange, placeholder, modifier, onSubmit ->
+            TvSearchField(value = value, onValueChange = onValueChange, placeholder = placeholder, modifier = modifier, onSubmit = onSubmit)
+        },
+        required = required,
+        onLeave = onLeave,
+    )
+}

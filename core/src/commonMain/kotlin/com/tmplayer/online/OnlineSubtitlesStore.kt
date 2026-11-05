@@ -1,0 +1,132 @@
+package com.tmplayer.online
+
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import java.io.File
+import java.util.Properties
+
+/**
+ * The viewer's OpenSubtitles account and the online subtitle switches, as this device knows them.
+ *
+ * [token] is the session OpenSubtitles hands out at sign in; the password is never kept. The
+ * quota figures are the last ones OpenSubtitles reported, which is what "N of M downloads left
+ * today" reads. [anonRemaining] and [anonResetAt] are the same figures for downloads made without
+ * an account, kept apart so signing in or out never mixes the two. [rejectedKey] is a fingerprint of an app key OpenSubtitles refused, so the feature
+ * stays off for that key and comes back by itself when an update brings another.
+ */
+data class OnlineAccount(
+    val username: String = "",
+    val token: String = "",
+    val host: String = OpenSubtitlesApi.DEFAULT_HOST,
+    val allowed: Int = 0,
+    val remaining: Int = -1,
+    val resetAt: Long = 0,
+    /** Signed in once, then OpenSubtitles stopped taking the token. */
+    val expired: Boolean = false,
+    val includeMachine: Boolean = false,
+    val subdlKey: String = "",
+    val subdlRefused: Boolean = false,
+    val rejectedKey: String = "",
+    val rejectedAt: Long = 0,
+    /** Downloads left without an account, as the last anonymous download reported; -1 unknown. */
+    val anonRemaining: Int = -1,
+    val anonResetAt: Long = 0,
+    /**
+     * MSone's search shown on this device (in a build with the gateway key). Typing `msone` as the
+     * SubDL key hides it again, or brings it back (see [OnlineSubtitles.setSubdlKey]).
+     */
+    val msoneShown: Boolean = true,
+    /** The gateway's last answer about MSone ([MsoneStatus]), kept so a failed check changes nothing. */
+    val msoneState: MsoneState = MsoneState.Unknown,
+    val msoneMessage: String = "",
+    val msoneCheckedAt: Long = 0,
+) {
+    val msone: MsoneStatus get() = MsoneStatus(msoneState, msoneMessage.ifBlank { null }, msoneCheckedAt)
+
+    val signedIn: Boolean get() = token.isNotBlank()
+
+    /** No downloads left until [resetAt], as far as the last answer said. */
+    fun quotaUsed(now: Long): Boolean = signedIn && remaining == 0 && (resetAt == 0L || now < resetAt)
+
+    /** Not signed in, and the downloads OpenSubtitles allows without an account are spent until [anonResetAt]. */
+    fun anonQuotaUsed(now: Long): Boolean = !signedIn && anonRemaining == 0 && (anonResetAt == 0L || now < anonResetAt)
+}
+
+/** [OnlineAccount] kept in a small properties file in the app's private storage. */
+class OnlineSubtitlesStore(private val file: File) {
+
+    private val state = MutableStateFlow(load())
+
+    val account: StateFlow<OnlineAccount> = state.asStateFlow()
+
+    val now: OnlineAccount get() = state.value
+
+    @Synchronized
+    fun update(change: (OnlineAccount) -> OnlineAccount) {
+        val next = change(state.value)
+        if (next == state.value) return
+        save(next)
+        state.value = next
+    }
+
+    private fun load(): OnlineAccount {
+        val p = Properties()
+        runCatching { if (file.isFile) file.inputStream().use { p.load(it) } }
+        fun s(name: String) = p.getProperty(name).orEmpty()
+        fun i(name: String, default: Int) = p.getProperty(name)?.toIntOrNull() ?: default
+        fun l(name: String) = p.getProperty(name)?.toLongOrNull() ?: 0L
+        return OnlineAccount(
+            username = s("username"),
+            token = s("token"),
+            host = s("host").ifBlank { OpenSubtitlesApi.DEFAULT_HOST },
+            allowed = i("allowed", 0),
+            remaining = i("remaining", -1),
+            resetAt = l("reset_at"),
+            expired = s("expired") == "true",
+            includeMachine = s("include_machine") == "true",
+            subdlKey = s("subdl_key"),
+            subdlRefused = s("subdl_refused") == "true",
+            rejectedKey = s("rejected_key"),
+            rejectedAt = l("rejected_at"),
+            anonRemaining = i("anon_remaining", -1),
+            anonResetAt = l("anon_reset_at"),
+            // Shown unless hidden on this device; the old opt-in key is not read.
+            msoneShown = s("msone_hidden") != "true",
+            msoneState = MsoneState.of(s("msone_state")),
+            msoneMessage = s("msone_message").take(500),
+            msoneCheckedAt = l("msone_checked_at"),
+        )
+    }
+
+    private fun save(a: OnlineAccount) {
+        val p = Properties()
+        p["username"] = a.username
+        p["token"] = a.token
+        p["host"] = a.host
+        p["allowed"] = a.allowed.toString()
+        p["remaining"] = a.remaining.toString()
+        p["reset_at"] = a.resetAt.toString()
+        p["expired"] = a.expired.toString()
+        p["include_machine"] = a.includeMachine.toString()
+        p["subdl_key"] = a.subdlKey
+        p["subdl_refused"] = a.subdlRefused.toString()
+        p["rejected_key"] = a.rejectedKey
+        p["rejected_at"] = a.rejectedAt.toString()
+        p["anon_remaining"] = a.anonRemaining.toString()
+        p["anon_reset_at"] = a.anonResetAt.toString()
+        p["msone_hidden"] = (!a.msoneShown).toString()
+        p["msone_state"] = a.msoneState.name
+        p["msone_message"] = a.msoneMessage
+        p["msone_checked_at"] = a.msoneCheckedAt.toString()
+        runCatching {
+            file.parentFile?.mkdirs()
+            val temp = File(file.parentFile, file.name + ".tmp")
+            temp.outputStream().use { p.store(it, null) }
+            if (!temp.renameTo(file)) {
+                file.delete()
+                temp.renameTo(file)
+            }
+        }
+    }
+}

@@ -1,0 +1,8 @@
+<!--
+  The words on the error sheet's suggested way out (bg_control_pill_primary): the dark scheme's
+  on primary on the light accent, and the near-black of every focused player control on white.
+-->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:color="#FF111111" android:state_focused="true" />
+    <item android:color="#FF003546" />
+</selector>

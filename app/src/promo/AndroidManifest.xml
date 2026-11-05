@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Screenshot fixture. This activity and its media do not exist in release builds. -->
+        <activity
+            android:name=".PromoCaptureActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode|locale|layoutDirection" />
+        <!-- The player overlay over a demo picture, for checking and capturing the controls. -->
+        <activity
+            android:name=".PromoPlayerActivity"
+            android:exported="true"
+            android:screenOrientation="fullUser"
+            android:theme="@style/Theme.TMPlayer.Player"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode|locale|layoutDirection" />
+        <!-- A decode bench for slow TVs: a file from the disk through the real renderers (HX2). -->
+        <activity
+            android:name=".PromoDecodeBenchActivity"
+            android:exported="true"
+            android:theme="@style/Theme.TMPlayer.Player"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode|locale|layoutDirection" />
+    </application>
+</manifest>

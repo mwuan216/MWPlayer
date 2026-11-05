@@ -1,0 +1,25 @@
+<!--
+  A worded player control's seat, bg_control_button in a pill: at rest the dark seat the round
+  buttons share (bg_controls_pill), a solid white pill under D-pad focus with the words turned
+  dark (player_control_icon), and a bounded ripple for a thumb. The Episodes button sits on it.
+-->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="#33FFFFFF">
+    <item android:id="@android:id/mask">
+        <shape android:shape="rectangle">
+            <solid android:color="#FFFFFFFF" />
+            <corners android:radius="100dp" />
+        </shape>
+    </item>
+    <item>
+        <selector>
+            <item android:state_focused="true">
+                <shape android:shape="rectangle">
+                    <solid android:color="#FFFFFFFF" />
+                    <corners android:radius="100dp" />
+                </shape>
+            </item>
+            <item android:drawable="@drawable/bg_controls_pill" />
+        </selector>
+    </item>
+</ripple>

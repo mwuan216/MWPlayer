@@ -1,0 +1,14 @@
+<!--
+  The dark the top edge reads against: the phone's back arrow, title and overflow, the
+  television's clock. Black at 70 per cent at the edge, clear at the foot.
+
+  This is the three-stop stand-in the layout names. PlayerControls replaces it with
+  ControlsScrim.top(), the same fade on five stops, which XML cannot draw without a seam.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <gradient
+        android:angle="270"
+        android:startColor="#B3000000"
+        android:centerColor="#73000000"
+        android:endColor="#00000000" />
+</shape>

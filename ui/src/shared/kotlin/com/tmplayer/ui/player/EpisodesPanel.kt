@@ -1,0 +1,488 @@
+package com.tmplayer.ui.player
+
+import com.tmplayer.ui.theme.collectIsFocusVisibleAsState
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.runtime.snapshotFlow
+import com.tmplayer.data.SeriesEpisode
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import com.tmplayer.data.DeviceForm
+import com.tmplayer.data.MediaItem
+import com.tmplayer.data.Series
+import com.tmplayer.ui.browse.EpisodeRow
+import com.tmplayer.ui.browse.SeasonTabs
+import com.tmplayer.ui.browse.SeriesWatch
+import com.tmplayer.ui.browse.seriesSummary
+import com.tmplayer.ui.components.deviceForm
+import com.tmplayer.ui.components.isTouch
+import com.tmplayer.ui.icons.TmIcons
+import com.tmplayer.ui.i18n.LocalStrings
+import com.tmplayer.ui.theme.Corner
+import com.tmplayer.ui.theme.Tone
+
+/**
+ * What the player's episode list shows: the show the video playing belongs to, the steps either
+ * side of it, and the per series choices made here.
+ */
+@Immutable
+data class EpisodesState(
+    val series: Series,
+    /** The video playing, which the list tints and opens on. */
+    val playing: MediaItem,
+    val previous: MediaItem? = null,
+    /** "Previous: S01E03  ·  The Lighthouse", the step buttons' words. */
+    val previousLabel: String? = null,
+    val next: MediaItem? = null,
+    val nextLabel: String? = null,
+    /** "S01E03", for the short form a narrow screen has room for. */
+    val previousCode: String? = null,
+    val nextCode: String? = null,
+    /** The app's autoplay setting, the same one Settings shows. */
+    val autoplay: Boolean = true,
+)
+
+/** What the episode list asks of the player. Every one of these is the player's to carry out. */
+class EpisodesActions(
+    /** Plays an episode, or for the one already playing, closes the list. */
+    val onPlay: (MediaItem) -> Unit,
+    val onToggleWatched: (MediaItem) -> Unit,
+    val onAutoplay: (Boolean) -> Unit,
+)
+
+/**
+ * The player's episode list (CP40), shared by the phone, the television and the desktop: each puts
+ * its own window round it. The show's name, the previous and next episode, the autoplay switch,
+ * then the seasons as tabs and the chosen season's episodes in the series view's own rows, the one playing
+ * tinted, scrolled to and, under a remote, focused.
+ *
+ * Wide (a landscape phone, a television, a desktop window) the choices take a column at the start
+ * and the episodes the rest; narrow they lead the list and scroll away with it, so a phone held
+ * upright still shows the episodes rather than a screen of switches.
+ *
+ * [trailing] sits at the end of the heading, for the window's own way out.
+ */
+@Composable
+fun EpisodesPanel(
+    state: EpisodesState,
+    watch: SeriesWatch,
+    actions: EpisodesActions,
+    modifier: Modifier = Modifier,
+    contentPadding: Dp = 0.dp,
+    /** Focus the episode playing on open: under a remote, and on a desktop for the keyboard. */
+    focusCurrent: Boolean = !isTouch(),
+    trailing: @Composable () -> Unit = {},
+) {
+    val s = LocalStrings.current
+    val tv = !isTouch()
+    val series = state.series
+    val playingEpisode = remember(series, state.playing.id) {
+        series.episodes.firstOrNull { episode -> episode.copies.any { it.id == state.playing.id } }
+    }
+    var season by remember(series.key) {
+        mutableIntStateOf(playingEpisode?.season ?: series.seasons.first().number)
+    }
+    val shown = series.seasons.firstOrNull { it.number == season } ?: series.seasons.first()
+    val list = rememberLazyListState()
+    val currentFocus = remember { FocusRequester() }
+    // Whether the playing row has really taken focus, which on a slow television can take more
+    // than one frame after the window opens.
+    var currentFocused by remember { mutableStateOf(false) }
+    val progress = watch.progress(series)
+    val next = progress.next
+    // The episodes' names, as the series page shows them, once lookups have them.
+    val names = com.tmplayer.ui.online.rememberSeasonEpisodes(
+        com.tmplayer.ui.online.rememberMeta(series.cover, showOnly = true),
+        shown.number,
+    )
+
+    BoxWithConstraints(modifier) {
+        val wide = maxWidth >= WIDE_FROM
+        val pad = PaddingValues(horizontal = contentPadding)
+        Column(Modifier.fillMaxWidth()) {
+            Row(
+                Modifier.fillMaxWidth().padding(pad),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f).padding(vertical = 8.dp)) {
+                    Text(
+                        s.episodesTitle,
+                        style = if (tv) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleLarge,
+                        color = Tone.text,
+                        maxLines = 1,
+                    )
+                    Text(
+                        listOf(series.title, seriesSummary(series)).joinToString("  ·  "),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Tone.muted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                trailing()
+            }
+            Spacer(Modifier.height(8.dp))
+
+            // The rows, as either layout lists them. The tabs only once there is a choice to make.
+            val rows: LazyListScope.() -> Unit = {
+                if (series.seasons.size > 1) {
+                    item(key = "seasons") {
+                        SeasonTabs(
+                            series.seasons,
+                            shown.number,
+                            onSelect = { season = it },
+                            modifier = Modifier.padding(pad).padding(vertical = 8.dp),
+                        )
+                    }
+                }
+                items(shown.episodes, key = { it.item.id }) { episode ->
+                    val isPlaying = playingEpisode?.sameAs(episode) == true
+                    // "Up next" is the player's own next step, by the order chosen here, not where the
+                    // viewer stopped across the show (the series page's meaning).
+                    val stepNext = state.next?.let { n -> episode.copies.any { it.id == n.id } } == true
+                    val chosen = when {
+                        isPlaying -> state.playing
+                        stepNext -> state.next!!
+                        next != null && episode.sameAs(next) -> next.item
+                        else -> watch.pick(episode, progress)
+                    }
+                    EpisodeRow(
+                        episode = episode,
+                        point = watch.pointOf(episode),
+                        finished = watch.finishedEpisode(episode),
+                        upNext = stepNext,
+                        onClick = { actions.onPlay(chosen) },
+                        onLongClick = { actions.onToggleWatched(chosen) },
+                        chosen = chosen,
+                        current = isPlaying,
+                        holdOk = true,
+                        name = com.tmplayer.online.EpisodeNames.listName(episode.season, episode.episode, names),
+                        guide = com.tmplayer.online.EpisodeNames.listed(episode.season, episode.episode, names),
+                        modifier = Modifier.padding(pad).secondaryClick { actions.onToggleWatched(chosen) },
+                        lineModifier = if (isPlaying) {
+                            Modifier.focusRequester(currentFocus).onFocusChanged { currentFocused = it.isFocused }
+                        } else {
+                            Modifier
+                        },
+                    )
+                }
+            }
+
+            if (wide) {
+                Row(Modifier.fillMaxWidth().weight(1f, fill = false), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                    Column(
+                        Modifier
+                            .width(CHOICES_WIDTH)
+                            .fillMaxHeight()
+                            .verticalScroll(rememberScrollState())
+                            .padding(start = contentPadding, bottom = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp),
+                    ) {
+                        Choices(state, actions)
+                    }
+                    LazyColumn(
+                        state = list,
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(end = contentPadding, bottom = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        content = rows,
+                    )
+                }
+            } else {
+                // Narrow, the steps stay put at the top, side by side, and the choices follow the
+                // episodes: on a phone held upright the list is what the screen is for.
+                Steps(state, actions, sideBySide = true, modifier = Modifier.padding(pad).padding(bottom = 8.dp))
+                LazyColumn(
+                    state = list,
+                    modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
+                    contentPadding = PaddingValues(bottom = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    rows()
+                    item(key = "choices") {
+                        Column(
+                            Modifier.padding(pad).padding(top = 16.dp),
+                            verticalArrangement = Arrangement.spacedBy(14.dp),
+                        ) { Choices(state, actions, withSteps = false) }
+                    }
+                }
+            }
+        }
+
+        // The episode playing in view, and under a remote, focused: once the rows are laid out.
+        val lead = if (series.seasons.size > 1) 1 else 0
+        // Only once the window has focus: a window that gains it moves focus to its first control
+        // (Previous), over a request made before that, which on a slow stick it often was. Then
+        // tried for a few frames, in case the first layout arrives late as well.
+        val window = LocalWindowInfo.current
+        LaunchedEffect(series.key, wide) {
+            val playingSeason = playingEpisode?.season ?: return@LaunchedEffect
+            val at = series.seasons.firstOrNull { it.number == playingSeason }?.episodes
+                ?.indexOfFirst { playingEpisode.sameAs(it) } ?: -1
+            if (at < 0) return@LaunchedEffect
+            // A touch screen places no focus, so it scrolls at once.
+            if (focusCurrent) withTimeoutOrNull(WINDOW_FOCUS_WAIT_MS) { snapshotFlow { window.isWindowFocused }.first { it } }
+            // The window's own first focus can land on a season tab, and on a television a
+            // focused tab shows its season (right to left, that was Season 2): back to the one
+            // playing before the row is looked for.
+            season = playingSeason
+            repeat(FOCUS_TRIES) {
+                withFrameNanos { }
+                if (list.layoutInfo.totalItemsCount == 0) return@repeat
+                bringIntoView(list, lead + at)
+                if (!focusCurrent) return@LaunchedEffect
+                withFrameNanos { }
+                runCatching { currentFocus.requestFocus() }
+                withFrameNanos { }
+                if (currentFocused) return@LaunchedEffect
+            }
+        }
+    }
+}
+
+/** Scrolls [index] into view, one row of context above it, unless it is already wholly shown. */
+private suspend fun bringIntoView(list: LazyListState, index: Int) {
+    val info = list.layoutInfo
+    val seen = info.visibleItemsInfo.firstOrNull { it.index == index }
+    if (seen != null && seen.offset >= info.viewportStartOffset && seen.offset + seen.size <= info.viewportEndOffset) return
+    list.scrollToItem((index - 1).coerceAtLeast(0))
+}
+
+/** The steps, autoplay and how to mark an episode. */
+@Composable
+private fun ColumnScope.Choices(
+    state: EpisodesState,
+    actions: EpisodesActions,
+    withSteps: Boolean = true,
+) {
+    val s = LocalStrings.current
+    if (withSteps) Steps(state, actions, sideBySide = false)
+
+    SwitchLine(s.episodesAutoplay, state.autoplay) { actions.onAutoplay(!state.autoplay) }
+
+    Text(
+        when (deviceForm()) {
+            DeviceForm.Tv -> s.episodesHintTv
+            DeviceForm.Desktop -> s.episodesHintDesktop
+            DeviceForm.Phone -> s.episodesHintTouch
+        },
+        style = MaterialTheme.typography.bodySmall,
+        color = Tone.muted,
+    )
+}
+
+/**
+ * The previous and next episode, labelled with where they lead. One above the other in the wide
+ * layout's column; [sideBySide] on a narrow screen, each half the width.
+ */
+@Composable
+private fun Steps(state: EpisodesState, actions: EpisodesActions, sideBySide: Boolean, modifier: Modifier = Modifier) {
+    val s = LocalStrings.current
+    val previous = state.previous
+    val next = state.next
+    if (previous == null && next == null) return
+    @Composable
+    fun PreviousButton(m: Modifier) = previous?.let {
+        val short = state.previousCode?.takeIf { sideBySide }?.let { code -> s.playerPreviousUp(code) }
+        PanelButton(short ?: state.previousLabel ?: s.playerPreviousEpisode, onClick = { actions.onPlay(it) }, modifier = m, icon = TmIcons.SkipPrevious, lines = if (sideBySide) 1 else 2)
+    }
+    @Composable
+    fun NextButton(m: Modifier) = next?.let {
+        val short = state.nextCode?.takeIf { sideBySide }?.let { code -> s.playerNextUp(code) }
+        PanelButton(short ?: state.nextLabel ?: s.playerNextEpisode, onClick = { actions.onPlay(it) }, modifier = m, icon = TmIcons.SkipNext, lines = if (sideBySide) 1 else 2)
+    }
+    if (sideBySide) {
+        Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            PreviousButton(Modifier.weight(1f))
+            NextButton(Modifier.weight(1f))
+        }
+    } else {
+        Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            PreviousButton(Modifier.fillMaxWidth())
+            NextButton(Modifier.fillMaxWidth())
+        }
+    }
+}
+
+/** A button of the panel: the surface step at rest, the focus fill and ring under a remote or a keyboard. */
+@Composable
+private fun PanelButton(
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    icon: ImageVector? = null,
+    lines: Int = 2,
+) {
+    val tv = !isTouch()
+    val interactions = remember { MutableInteractionSource() }
+    val focused by interactions.collectIsFocusVisibleAsState()
+    val shape = RoundedCornerShape(Corner.Medium)
+    val ink = if (focused) Tone.onFocusFill else Tone.text
+    Row(
+        modifier
+            .heightIn(min = if (tv) 48.dp else 44.dp)
+            .clip(shape)
+            .background(if (focused) Tone.focusFill else Tone.surfaceHigh)
+            .then(if (!focused) Modifier.border(1.dp, Tone.outline, shape) else Modifier)
+            .clickable(
+                interactionSource = interactions,
+                indication = if (tv) null else androidx.compose.foundation.LocalIndication.current,
+                role = Role.Button,
+                onClick = onClick,
+            )
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        if (icon != null) {
+            // Not mirrored right to left: the step glyphs point the way time runs, which is left
+            // to right in every language, as the player's own transport keeps it.
+            Icon(icon, contentDescription = null, tint = ink, modifier = Modifier.size(20.dp))
+        }
+        Text(
+            label,
+            style = MaterialTheme.typography.labelLarge,
+            color = ink,
+            maxLines = lines,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/** A line with a switch at its end, the whole line the target. */
+@Composable
+private fun SwitchLine(label: String, on: Boolean, onToggle: () -> Unit) {
+    val tv = !isTouch()
+    val interactions = remember { MutableInteractionSource() }
+    val focused by interactions.collectIsFocusVisibleAsState()
+    val shape = RoundedCornerShape(Corner.Medium)
+    val s = LocalStrings.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = if (tv) 52.dp else 48.dp)
+            .clip(shape)
+            .background(if (focused) Tone.focusFill else Tone.surfaceHigh)
+            .semantics {
+                role = Role.Switch
+                stateDescription = if (on) s.commonOn else s.commonOff
+            }
+            .clickable(
+                interactionSource = interactions,
+                indication = if (tv) null else androidx.compose.foundation.LocalIndication.current,
+                onClick = onToggle,
+            )
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelLarge,
+            color = if (focused) Tone.onFocusFill else Tone.text,
+            modifier = Modifier.weight(1f),
+        )
+        // Drawn rather than Material's Switch: the same track on a phone, a television and a
+        // desktop, and nothing in it that takes focus away from the line.
+        val track = if (on) Tone.accent else Tone.muted.copy(alpha = 0.45f)
+        Box(
+            Modifier.size(width = 40.dp, height = 24.dp).clip(CircleShape).background(track)
+                .then(if (focused) Modifier.border(2.dp, Tone.onFocusFill, CircleShape) else Modifier),
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            Box(
+                Modifier
+                    .offset(x = if (on) 19.dp else 3.dp)
+                    .size(18.dp)
+                    .clip(CircleShape)
+                    .background(if (on) Tone.onAccent else Color.White),
+            )
+        }
+    }
+}
+
+/**
+ * A right click, which a mouse sends and a finger and a remote never do: marks the episode on the
+ * desktop. Watched on the way in, before the row's own click handling sees the press.
+ */
+private fun Modifier.secondaryClick(onClick: () -> Unit): Modifier = pointerInput(onClick) {
+    awaitPointerEventScope {
+        while (true) {
+            val event = awaitPointerEvent(PointerEventPass.Initial)
+            if (event.type == PointerEventType.Press && event.buttons.isSecondaryPressed) {
+                event.changes.forEach { it.consume() }
+                onClick()
+            }
+        }
+    }
+}
+
+/** From this width the choices take a column of their own beside the episodes. */
+private val WIDE_FROM: Dp = 640.dp
+
+private val CHOICES_WIDTH: Dp = 280.dp
+
+/** How long the open-time focus waits for the window to take focus before trying anyway. */
+private const val WINDOW_FOCUS_WAIT_MS = 2_000L
+
+/** Frames the open-time scroll and focus are tried for before giving up. */
+private const val FOCUS_TRIES = 30

@@ -1,0 +1,60 @@
+package com.tmplayer.data
+
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import com.tmplayer.i18n.L
+
+/**
+ * Hands a downloaded video to whatever else is on the phone.
+ *
+ * Complete files only. A partial video stops in the middle, and neither the Share sheet nor the
+ * app receiving it has any way to say so.
+ */
+object ShareMedia {
+
+    /**
+     * A share sheet for one or several videos, or null when none of them can be shared.
+     *
+     * Returns the intent rather than starting it, so the caller decides what to say when there is
+     * nothing to send: a screen that knows which videos it asked about can name them.
+     */
+    fun intentFor(context: Context, files: List<Pair<String, String>>): Intent? {
+        val uris = files.mapNotNull { (path, _) -> uriFor(context, path) }
+        if (uris.isEmpty()) return null
+
+        val share = if (uris.size == 1) {
+            Intent(Intent.ACTION_SEND).apply {
+                putExtra(Intent.EXTRA_STREAM, uris.first())
+                putExtra(Intent.EXTRA_TITLE, files.first().second)
+            }
+        } else {
+            Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+                putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))
+            }
+        }
+        return Intent.createChooser(
+            share.apply {
+                // The generic video type rather than each file's own: a selection of an mkv and an
+                // mp4 has no single accurate type, and naming one of them hides the apps that
+                // handle the other.
+                type = "video/*"
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            },
+            L.shareChooserTitle(count = uris.size),
+        ).apply {
+            // The chooser itself is started from a context that may not be an activity, and the
+            // read permission has to survive being handed to whichever app is picked.
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+    }
+
+    /**
+     * A content URI for one file, or null when it is not somewhere this app may share from.
+     *
+     * The provider only maps TDLib's media directory, so anything outside it throws rather than
+     * returning null. A video moved or deleted between the list being drawn and the button being
+     * pressed should drop out of the share rather than take the app down with it.
+     */
+    internal fun uriFor(context: Context, path: String): Uri? = LocalVideo.handoutUri(context, path)
+}

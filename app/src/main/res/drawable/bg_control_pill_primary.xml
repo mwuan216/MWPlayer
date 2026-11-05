@@ -1,0 +1,30 @@
+<!--
+  The first way out of the player's error sheet (Try again): bg_control_pill in the app's dark scheme accent (Palette.Dark primary), so the
+  attempt worth making first stands out from the ways out under it. Under D-pad focus it turns the
+  same solid white every focused player control does, with the words turned dark.
+-->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="#33FFFFFF">
+    <item android:id="@android:id/mask">
+        <shape android:shape="rectangle">
+            <solid android:color="#FFFFFFFF" />
+            <corners android:radius="100dp" />
+        </shape>
+    </item>
+    <item>
+        <selector>
+            <item android:state_focused="true">
+                <shape android:shape="rectangle">
+                    <solid android:color="#FFFFFFFF" />
+                    <corners android:radius="100dp" />
+                </shape>
+            </item>
+            <item>
+                <shape android:shape="rectangle">
+                    <solid android:color="#FF79D0F5" />
+                    <corners android:radius="100dp" />
+                </shape>
+            </item>
+        </selector>
+    </item>
+</ripple>

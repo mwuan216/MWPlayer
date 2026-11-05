@@ -1,0 +1,429 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/player_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@android:color/black">
+
+    <!-- The video surface: a bare PlayerView on every device, all chrome drawn by this app. -->
+    <FrameLayout
+        android:id="@+id/playback_container"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!--
+      Sits above the video but below any dialog. The bottom margin is overscan clearance: 48dp
+      keeps descenders off a TV's crop boundary, and the overscan inset alone is 20dp. While the
+      transport row is up the activity lifts this view clear of it.
+    -->
+    <androidx.media3.ui.SubtitleView
+        android:id="@+id/subtitles"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_marginBottom="@dimen/player_subtitle_bottom" />
+
+    <!-- The transport controls, one design for both devices. See player_controls.xml. -->
+    <include layout="@layout/player_controls" />
+
+    <!--
+      Full-screen while the video opens.
+
+      It used to be a title, a sentence and a spinner on a flat sheet of #0E0E12, centred in a
+      1920 by 1080 screen with nothing else on it: correct, and indistinguishable from every other
+      "please wait" on the platform. The wait is the app's first impression and often its longest
+      single moment, so it is now the video's own artwork, at the size the screen actually has.
+
+      Still fully opaque behind the artwork, with no alpha on the sheet itself. At 94 per cent the
+      first frames of the video showed through behind the text, which does not read as a deliberate
+      scrim, only as a sheet that has not finished drawing.
+    -->
+    <FrameLayout
+        android:id="@+id/status_overlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#0E0E12">
+
+        <!--
+          The backdrop: Telegram's own preview, blown up to fill the screen.
+
+          No blur filter is involved and none is needed. The bytes are the minithumbnail Telegram
+          ships inside every message, which is a few hundred bytes and around forty pixels across,
+          so scaling it to a 1080p panel is a blur by arithmetic: free, instant, and available on
+          every device this runs on rather than on Android 12 and later.
+        -->
+        <ImageView
+            android:id="@+id/status_art"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:contentDescription="@null"
+            android:scaleType="centerCrop"
+            android:visibility="gone" />
+
+        <View
+            android:id="@+id/status_scrim"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@drawable/bg_status_scrim"
+            android:visibility="gone" />
+
+        <!--
+          The sheet scrolls, for the case where it does not fit.
+
+          It is centred and it is short, right up until a failure adds a message of two lines and
+          three buttons under it, on a phone held sideways, where there is around 390dp of height
+          to work with. That overflowed, and a FrameLayout clips rather than scrolls, so Reload and
+          Open in another app were on the screen in every sense except the one that matters. With
+          fillViewport the short case is unchanged: the child fills the viewport and centres itself
+          exactly as before.
+        -->
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:fillViewport="true"
+            android:scrollbars="none">
+
+        <!--
+          The sheet itself: a poster and a column of words, stacked or side by side.
+
+          Stacked is the shape it was drawn for. On a screen with no room to stack, which is any
+          phone held sideways and a television once the buttons add up, the same two parts are laid
+          out as two columns instead: picture on the left, everything that can be read or pressed on
+          the right. A phone held upright has no room beside the picture either, and stacks with a
+          smaller one. Which of them is decided by the sheet from the width it is measured at
+          (StatusSheet), rather than by a layout-land folder, because the rest of this file is
+          four hundred lines that would then exist twice.
+        -->
+        <com.tmplayer.player.StatusSheet
+            android:id="@+id/status_sheet"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:paddingLeft="@dimen/player_sheet_side"
+            android:paddingTop="16dp"
+            android:paddingRight="@dimen/player_sheet_side"
+            android:paddingBottom="16dp">
+
+            <!-- The picture side: the poster and, under it, the name of what it is. -->
+            <LinearLayout
+                android:id="@+id/status_side"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:orientation="vertical">
+
+            <!--
+              The poster, sharp, at the centre of the screen.
+
+              This is the real thumbnail rather than the blurred one behind it, and it is the one
+              thing on the screen that says which video is opening without anybody reading a word:
+              a viewer who pressed the wrong tile in a grid of near-identical file names knows it
+              here, before the two minutes of waiting rather than after them.
+            -->
+            <ImageView
+                android:id="@+id/status_poster"
+                android:layout_width="@dimen/player_poster_width"
+                android:layout_height="@dimen/player_poster_height"
+                android:layout_marginBottom="22dp"
+                android:background="@drawable/bg_poster"
+                android:contentDescription="@null"
+                android:scaleType="centerCrop"
+                android:visibility="gone" />
+
+            <!--
+              The video's own name, under its poster, on the failure sheet only.
+
+              Everywhere else the name is the heading; a failure takes that heading for "Can't play
+              this", and the name went with it, leaving a screen that said something had gone wrong
+              without saying what it had gone wrong for. It sits above the warning rather than below
+              it because it is what the viewer chose, and the failure is what happened to it.
+            -->
+            <TextView
+                android:id="@+id/status_name"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="14dp"
+                android:ellipsize="end"
+                android:gravity="center"
+                android:maxLines="2"
+                android:maxWidth="720dp"
+                android:textColor="@color/text_primary"
+                android:textSize="15sp"
+                android:visibility="gone" />
+
+            </LinearLayout>
+
+            <!-- Everything that is not the picture, so the two can be put beside each other. -->
+            <LinearLayout
+                android:id="@+id/status_column"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:orientation="vertical">
+
+            <!--
+              Shown only when the overlay is carrying an error, so the loading screen and the
+              failure screen are told apart at a glance from across a room.
+            -->
+            <ImageView
+                android:id="@+id/status_icon"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_marginBottom="16dp"
+                android:contentDescription="@null"
+                android:src="@drawable/ic_warning"
+                android:tint="#E5484D"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/status_title"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="6dp"
+                android:gravity="center"
+                android:maxLines="2"
+                android:ellipsize="end"
+                android:maxWidth="820dp"
+                android:textColor="@color/text_primary"
+                android:textSize="@dimen/player_title_size"
+                android:textStyle="bold" />
+
+            <!--
+              The running time, the size and the chat it came from: what the tile said, carried
+              through to the screen the viewer is now looking at for the next minute or two.
+            -->
+            <TextView
+                android:id="@+id/status_meta"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="10dp"
+                android:gravity="center"
+                android:maxLines="1"
+                android:ellipsize="end"
+                android:maxWidth="720dp"
+                android:textColor="#9A9AA5"
+                android:textSize="13sp"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/status_text"
+                android:accessibilityLiveRegion="polite"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="20dp"
+                android:gravity="center"
+                android:maxWidth="720dp"
+                android:textColor="#9A9AA5"
+                android:textSize="15sp" />
+
+            <ProgressBar
+                android:id="@+id/status_progress"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="@dimen/player_progress_width"
+                android:layout_height="6dp"
+                android:max="1000"
+                android:progressDrawable="@drawable/bg_status_progress" />
+
+            <TextView
+                android:id="@+id/status_detail"
+                android:accessibilityLiveRegion="polite"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:gravity="center"
+                android:maxWidth="720dp"
+                android:textColor="@color/text_primary"
+                android:textSize="15sp" />
+
+            <!--
+              The indeterminate half of the same bar, in the same place.
+
+              A large spinner underneath a progress bar was two answers to one question, and the
+              spinner was the louder of them. This is up only while there is no figure to draw yet,
+              and it hands over to the bar above the moment there is.
+            -->
+            <ProgressBar
+                android:id="@+id/status_spinner"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="@dimen/player_progress_width"
+                android:layout_height="6dp"
+                android:background="@drawable/bg_status_track"
+                android:indeterminate="true"
+                android:indeterminateTint="@color/accent" />
+
+            <!--
+              The buttons: a column on a television, one axis of the D-pad for all of them; a row
+              that wraps on a phone, where a column of pills ran off the bottom of a sideways
+              screen ([SheetActions]). Go back comes last in either shape: it is the way out once
+              the attempts have been offered.
+            -->
+            <com.tmplayer.player.SheetActions
+                android:id="@+id/status_actions"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content">
+
+                <!--
+                  The error sheet's way out. Before this it said "Press Back to pick something else"
+                  and offered nothing focusable at all, so on a remote the whole screen took no input:
+                  a video that failed on a moved download window, which the next attempt would have
+                  played, was simply the end of the session.
+                -->
+                <Button
+                    android:id="@+id/status_retry"
+                    style="@style/PlayerSheetButton.Primary"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="24dp"
+                    android:text="Try again"
+                    android:visibility="gone" />
+
+                <!--
+                  The second attempt, for when the first one is never going to work.
+
+                  Try again re-prepares the same player over the same bytes. When the reason the video
+                  will not play is the bytes themselves, that is the same failure a second time, and
+                  the viewer has no way to tell those two cases apart. This one throws the local copy
+                  away first. Stacked under Try again rather than beside it so a remote reaches all
+                  three with one axis of the D-pad, in the order they should be tried.
+                -->
+                <!--
+                  On a decoding failure the other decoder can take: the device's own and the app's
+                  FFmpeg decoder are two ways to draw the same track (DecoderSwitch).
+                -->
+                <Button
+                    android:id="@+id/status_decoder"
+                    style="@style/PlayerSheetButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:text="Try the other decoder"
+                    android:visibility="gone" />
+
+                <Button
+                    android:id="@+id/status_reload"
+                    style="@style/PlayerSheetButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:text="Reload from scratch"
+                    android:visibility="gone" />
+
+                <!--
+                  On the sheet that says nothing is arriving: Telegram's own lighter copy of the video
+                  (CP80), which asks less of the line. Only where Telegram made one.
+                -->
+                <Button
+                    android:id="@+id/status_lighter"
+                    style="@style/PlayerSheetButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:text="Play Telegram's 480p"
+                    android:visibility="gone" />
+
+                <!-- The way out that does not involve this app's decoders at all. -->
+                <Button
+                    android:id="@+id/status_open_with"
+                    style="@style/PlayerSheetButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:text="Open in another app"
+                    android:visibility="gone" />
+
+                <!--
+                  The way out that is not another attempt.
+
+                  "Press Back to pick something else" is a sentence about a key, and on a phone there
+                  is no key: the gesture exists, but a viewer looking at a failure should not have to
+                  know it. One button, doing what the sentence described.
+                -->
+                <Button
+                    android:id="@+id/status_back"
+                    style="@style/PlayerSheetButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:text="Go back"
+                    android:visibility="gone" />
+            </com.tmplayer.player.SheetActions>
+            </LinearLayout>
+        </com.tmplayer.player.StatusSheet>
+        </ScrollView>
+    </FrameLayout>
+
+    <!--
+      Everything that floats in the top right corner, in one column: the download figure and the
+      rebuffer chip. Stacked so both can be up at once without landing on each other. The bottom
+      of the screen belongs to the transport controls in player_controls.xml.
+    -->
+    <LinearLayout
+        android:id="@+id/top_right_stack"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|end"
+        android:layout_margin="@dimen/player_chip_margin"
+        android:gravity="end"
+        android:orientation="vertical">
+
+        <!--
+          How much of the video has arrived, shown only while the transport controls are up. That
+          is when the question gets asked, and it keeps a permanent figure off the picture the rest
+          of the time.
+        -->
+        <TextView
+            android:id="@+id/download_chip"
+            android:accessibilityLiveRegion="polite"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_player_chip"
+            android:paddingLeft="18dp"
+            android:paddingTop="10dp"
+            android:paddingRight="18dp"
+            android:paddingBottom="10dp"
+            android:textColor="@color/text_primary"
+            android:textSize="14sp"
+            android:visibility="gone" />
+
+        <!--
+          Mid-video rebuffering gets a corner chip instead. Covering the picture with a full sheet
+          every time the connection hiccups would be far more intrusive than the pause itself.
+        -->
+        <LinearLayout
+            android:id="@+id/rebuffer_chip"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/bg_player_chip"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingLeft="18dp"
+            android:paddingTop="10dp"
+            android:paddingRight="18dp"
+            android:paddingBottom="10dp"
+            android:visibility="gone">
+
+            <ProgressBar
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:indeterminateTint="@color/accent" />
+
+            <TextView
+                android:id="@+id/rebuffer_text"
+                android:accessibilityLiveRegion="polite"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:textColor="@color/text_primary"
+                android:textSize="14sp" />
+        </LinearLayout>
+
+    </LinearLayout>
+
+    <!-- Track pickers are added here so they cover the video, not the other way round. -->
+    <FrameLayout
+        android:id="@+id/overlay_container"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+</FrameLayout>

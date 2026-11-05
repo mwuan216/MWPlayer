@@ -1,0 +1,282 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      Built for a D-pad first, but leanback stays optional: a phone reports no leanback feature at
+      all, and requiring it is a hard install barrier rather than a hint.
+    -->
+    <uses-feature
+        android:name="android.software.leanback"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.touchscreen"
+        android:required="false" />
+
+    <!-- Taps, ticks and holds felt in the hand: played on the vibrator itself, since some phones
+         (Xiaomi's HyperOS) drop a view's haptic feedback without a word. Granted at install. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!--
+      Sideloaded rather than on a store, so updating means fetching an APK from the project's own
+      GitHub releases and handing it to Android's installer, and the TV's "allow apps from this
+      source" switch has to be on first. Android always asks the viewer to confirm. It is taken out
+      of the F-Droid build (src/fdroid).
+
+      UPDATE_PACKAGES_WITHOUT_USER_ACTION, which let Android 12 and later install TMPlayer's own
+      update without asking (SelfInstaller, HX5), is not declared since 1.28.3: next to
+      REQUEST_INSTALL_PACKAGES it made Play Protect call the sideloaded APK harmful. Declaring it
+      again turns the silent update back on; SelfInstaller.silentAllowed checks for it.
+    -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!--
+      A video kept for the train has to keep coming down with the app closed, which on Android
+      means a foreground service and the notification that goes with it. Data sync is the type
+      that fits: bytes being fetched at the viewer's request, with an end.
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!--
+      "Keep playing audio with the screen off or in another app", off until the viewer turns it
+      on: the sound of the video left playing, from a media notification (PlaybackService).
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!--
+      Casting to a TV by DLNA (HX40): the Wi-Fi chip passes the multicast replies to the search for
+      TVs only while an app holds this lock, and TMPlayer holds it only while the cast picker is
+      open. An install time permission, no prompt. The cast itself is kept going with the screen
+      off by DlnaCastService (the media playback type above) and a Wi-Fi lock.
+    -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <!--
+      Keeps the two background checks (new videos in starred chats, the sponsor reminder) scheduled
+      across a restart: JobScheduler drops a persisted job without it. Nothing runs at boot itself.
+    -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!--
+      The Android TV home screen's "Play next" row, written only when the viewer turns it on in
+      Settings (WatchNextPublisher). The TV provider refuses the write without this; it grants
+      nothing else, and a phone has no such provider to write to.
+    -->
+    <uses-permission android:name="com.android.providers.tv.permission.WRITE_EPG_DATA" />
+
+    <!-- Which app answers YouTube links, so a trailer goes to Google's app as a video id and to
+         another client, such as SmartTube, as its watch link (TrailerOpener). -->
+    <queries>
+        <!-- The folder picker "Other folder" and Save to folder rely on (HX57); without this Android 11
+             and later may report no app for it even though the system's own file picker is there. -->
+        <intent>
+            <action android:name="android.intent.action.OPEN_DOCUMENT_TREE" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="vnd.youtube" />
+        </intent>
+    </queries>
+
+    <application
+        android:name=".App"
+        android:allowBackup="false"
+        android:banner="@drawable/tv_banner"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="@string/app_name"
+        android:resizeableActivity="true"
+        android:supportsRtl="true"
+        android:localeConfig="@xml/locales_config"
+        android:enableOnBackInvokedCallback="true"
+        android:theme="@style/Theme.TMPlayer">
+
+        <!--
+          Sentry ships a ContentProvider that starts the SDK before Application.onCreate, which is
+          exactly the behaviour this app must not have: nothing may be initialised, and no endpoint
+          may be contacted, until the viewer has turned crash reporting on in Settings. With this
+          off, CrashReports.start is the only thing that can ever bring the SDK up.
+        -->
+        <meta-data
+            android:name="io.sentry.auto-init"
+            android:value="false" />
+
+        <!--
+          Casting to a Chromecast or Google TV (CP73): where Google's Cast framework reads its
+          options, Google's Default Media Receiver and the media notification. Taken back out of
+          the F-Droid build, which has neither the framework nor the class (src/fdroid).
+        -->
+        <meta-data
+            android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
+            android:value="com.tmplayer.cast.CastOptionsProvider" />
+
+        <activity
+            android:name=".MainActivity"
+            android:configChanges="locale|layoutDirection"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize">
+            <!--
+              Both launcher categories: a TV launcher only looks for the leanback one, a phone
+              launcher only for the plain one, and the app has to appear in whichever it is on.
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!--
+              Telegram links (CP79), offered in the chooser beside Telegram itself and never the
+              default handler: autoVerify is off and t.me's own site does not name this app, so
+              Android asks which app opens a link, and picking TMPlayer plays that post's video.
+            -->
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" />
+                <data android:scheme="http" />
+                <data android:host="t.me" />
+                <data android:host="telegram.me" />
+                <data android:host="telegram.dog" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="tg" android:host="resolve" />
+                <data android:scheme="tg" android:host="privatepost" />
+                <data android:scheme="tg" android:host="join" />
+            </intent-filter>
+        </activity>
+
+        <!--
+          Leanback's own theme: the playback fragment reads its control styling from it.
+
+          Deliberately the default launch mode. Under singleTask, stepping to the next episode
+          routed the new intent at the live instance, which never re-read its extras, and the
+          finish() that followed closed it: next and previous simply ended playback.
+        -->
+        <!--
+          Orientation is decided by the video rather than by the manifest. sensorLandscape forced a
+          vertical clip into a landscape window, where it played as a tall sliver between two black
+          fields; fullUser lets the activity ask for landscape once it knows the picture is wide,
+          and leave a portrait video upright. A television reports one orientation and ignores all
+          of this.
+
+          Picture in picture so leaving the app pauses nothing: before this, pressing Home during a
+          video stopped it outright.
+        -->
+        <activity
+            android:name=".player.PlayerActivity"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|locale|layoutDirection"
+            android:exported="false"
+            android:screenOrientation="fullUser"
+            android:supportsPictureInPicture="true"
+            android:theme="@style/Theme.TMPlayer.Player" />
+
+        <!--
+          The pictures on the TV home screen channels, for the launcher (another app) to read.
+          Exported because which app the launcher is cannot be known to grant it a URI; it serves
+          only copies of those pictures, read only, from one directory. See TvArtProvider.
+        -->
+        <provider
+            android:name=".data.TvArtProvider"
+            android:authorities="${applicationId}.tvart"
+            android:exported="true" />
+
+        <!-- Hands the downloaded update to the installer; nothing else is ever shared. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.updates"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/update_paths" />
+        </provider>
+    
+        <!--
+          Downloads asked for by name, as opposed to the cache the player fills as it streams.
+          Not exported: nothing outside this app has any business starting it.
+        -->
+        <service
+            android:name=".data.DownloadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <!--
+          Save to folder (FolderExport): copies of downloads into a folder the viewer picked, kept
+          going with the app out of sight. Not exported, for the same reason.
+        -->
+        <service
+            android:name=".data.FolderExportService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <!--
+          Moving the downloads folder to another volume, or back to internal storage (HX26), kept
+          going with the app out of sight. Not exported, for the same reason.
+        -->
+        <service
+            android:name=".data.DownloadRelocationService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <!--
+          Background audio on a phone: holds the player activity's own media session while the
+          player is out of sight. No MediaSessionService intent filter, so neither another app nor
+          a media button can start it with no video behind it. There is no MediaButtonReceiver
+          either: the live session takes headset and Bluetooth buttons itself, and a button pressed
+          after it closed found no service to start and crashed the app (Media3 throws).
+        -->
+        <service
+            android:name=".player.PlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
+        <!--
+          Keeps a DLNA cast alive with the screen off (HX40): the cast server lives in the player,
+          and Google's Cast framework gives it a foreground service of its own, DLNA has none.
+          Running only while a video is on the TV. Not exported.
+        -->
+        <service
+            android:name=".cast.DlnaCastService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
+        <!-- The phone's background checks (BackgroundChecks); only the system's job scheduler binds it. -->
+        <service
+            android:name=".data.BackgroundChecks"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+
+        <!--
+          The support notification's buttons (NoticeActions): Buy me a coffee and Star on GitHub
+          open the page in the browser through an activity with no window, Not now only takes the
+          notification down. Reached by this app's own notifications alone.
+        -->
+        <activity
+            android:name=".data.NoticeLinkActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.NoDisplay" />
+        <receiver
+            android:name=".data.NoticeDismissReceiver"
+            android:exported="false" />
+
+        <!--
+          After TMPlayer has updated itself (HX5): deletes the downloaded APK and, after an install
+          that closed the app, posts "Updated, tap to open". Android sends MY_PACKAGE_REPLACED to
+          the app's own package only, so nothing else reaches it.
+        -->
+        <receiver
+            android:name=".data.UpdatedReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+</application>
+</manifest>
