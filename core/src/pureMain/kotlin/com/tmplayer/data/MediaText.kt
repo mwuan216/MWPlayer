@@ -62,8 +62,8 @@ object MediaText {
         val name = fileName?.lowercase() ?: return emptyList()
         return when {
             RESOLUTION_4K.containsMatchIn(name) -> listOf("4K")
-            name.contains("1080p") || name.contains("1080i") || (BARE_1080.containsMatchIn(name) && RELEASE_WORDS.containsMatchIn(name)) -> listOf("1080p")
-            name.contains("720p") || (BARE_720.containsMatchIn(name) && RELEASE_WORDS.containsMatchIn(name)) -> listOf("720p")
+            name.contains("1080p") || name.contains("1080i") || name.contains("p1080") || name.contains("fullhd") || (BARE_1080.containsMatchIn(name) && RELEASE_WORDS.containsMatchIn(name)) -> listOf("1080p")
+            name.contains("720p") || name.contains("p720") || (BARE_720.containsMatchIn(name) && RELEASE_WORDS.containsMatchIn(name)) -> listOf("720p")
             name.contains("480p") || name.contains("360p") -> listOf("SD")
             else -> emptyList()
         }
@@ -225,8 +225,10 @@ object MediaText {
     private val GENERIC_NAMES = listOf(
         // Camera rolls, Telegram's own saves and screen recorders: a prefix, then the date and time.
         Regex("""(vid|img|mov|pxl|mvimg|video|movie|clip|file|document|telegram|tg|record|recording|screen[ _-]?record(ing)?|screenrecorder|wa)[ _-]*\d[\d _.:-]*(wa\d+)?([ _-]?\(\d+\))?"""),
-        // "video", "video (2)", "untitled".
-        Regex("""(video|vid|movie|clip|file|untitled|new video)([ _-]*\(?\d+\)?)?"""),
+        // "video", "video (2)", "untitled", crawler placeholders ("index", "master", "output", "stream", "phim").
+        Regex("""(video|vid|movie|clip|file|untitled|new video|index|master|output|stream|playlist|phim)([ _-]*\(?\d+\)?)?"""),
+        // A bare episode number with no movie title ("tap-12", "tập 12", "ep12", "s01e12").
+        Regex("""((s|season|phần|phan|mùa|mua)[ _.-]*\d{1,2}[ _.-]*)?(ep|episode|tập|tap)[ _.-]*\d{1,4}([ _.-]*(vietsub|thuyết[ _.-]?minh|thuyet[ _.-]?minh|lồng[ _.-]?tiếng|long[ _.-]?tieng|end|full|\d{3,4}p|p\d{3,4}))*"""),
         // A number and nothing else, or a date and time and nothing else.
         Regex("""[\d _.:-]+"""),
         // A hash or a UUID.

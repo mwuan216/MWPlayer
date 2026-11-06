@@ -389,4 +389,25 @@ class SeriesShelfTest {
         assertEquals(2, entries.size)
         assertTrue(entries.filterIsInstance<ShelfEntry.File>().all { it.item.versions.isEmpty() })
     }
+
+    @Test
+    fun `vietnamese crawler episodes group into a show and pass the Shows filter`() {
+        val items = listOf(
+            video(
+                "tap-12.mp4",
+                caption = MediaText.captionOf("🎬 Lan Hương Như Cố - Tập 12 (Vietsub)\n#Phimapi #p1080\n🔗 https://phimapi.crawler/lan-huong-nhu-co"),
+            ),
+            video(
+                "tap-11.mp4",
+                caption = MediaText.captionOf("🎬 Lan Hương Như Cố - Tập 11 (Vietsub)\n#Phimapi #p1080\n🔗 https://phimapi.crawler/lan-huong-nhu-co"),
+            ),
+        )
+        val entries = SeriesShelf.arrange(items)
+        val show = shows(entries).single()
+        assertEquals("Lan Hương Như Cố", show.title)
+        assertEquals("lan hương như cố", show.key)
+        assertEquals(listOf(11, 12), show.episodes.map { it.episode })
+        assertEquals(1, VideoFiltering.filter(entries, VideoFilter.Shows).size)
+        assertEquals(0, VideoFiltering.filter(entries, VideoFilter.Singles).size)
+    }
 }

@@ -96,8 +96,8 @@ object VideoFiltering {
         VideoFilter.InProgress -> VideoSorting.progressOf(entry, progress) == Progress.InProgress
         VideoFilter.Watched -> VideoSorting.progressOf(entry, progress) == Progress.Watched
         VideoFilter.OnDevice -> VideoSorting.items(entry).any { it.onDevice }
-        VideoFilter.Shows -> entry is ShelfEntry.Show
-        VideoFilter.Singles -> entry is ShelfEntry.File
+        VideoFilter.Shows -> entry is ShelfEntry.Show || (entry is ShelfEntry.File && SeriesShelf.episodeOf(entry.item).isSeries)
+        VideoFilter.Singles -> entry is ShelfEntry.File && !SeriesShelf.episodeOf(entry.item).isSeries
         VideoFilter.HighDefinition -> VideoSorting.items(entry).any { copy ->
             (GlobalSearch.qualityOf(copy)?.let(GlobalSearch::qualityRank) ?: 0) >= HD_RANK
         }

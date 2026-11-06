@@ -285,8 +285,13 @@ class OnlineMetadata(
             // season with no S01E01 in its name ("Scam 1992 Complete Hindi") is found as a show
             // once no film matches. The year or the file's length still has to back it
             // ([MetaConfidence]) before it is shown.
+            val searchLanguages = buildList {
+                add(lang)
+                if ("vi" in query.languages || query.title.any { it in "ăâđêôơưĂÂĐÊÔƠƯ" }) add("vi")
+                add(ENGLISH)
+            }.distinct()
             for (asFilm in if (film) listOf(true, false) else listOf(false)) {
-                for (searchLang in listOf(lang, ENGLISH).distinct()) {
+                for (searchLang in searchLanguages) {
                     when (val outcome = tmdbSearch(key, query, searchLang, asFilm)) {
                         is SearchOutcome.Found -> {
                             found = outcome.candidate

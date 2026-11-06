@@ -96,13 +96,22 @@ object MediaName {
      * episode but no title ("Episode 4"), the title stays the file name's.
      */
     fun parse(fileName: String, caption: String?, maxYear: Int = thisYear() + 1): ParsedName {
-        val fromName = parse(fileName, maxYear)
-        if (fromName.isEpisode) return fromName
+        val nameRead = read(stripExtension(fileName), maxYear)
+        val fromName = nameRead.parsed.copy(title = nameRead.parsed.title.ifEmpty { nameRead.whole })
         val line = caption?.lineSequence()?.map { it.trim() }?.firstOrNull { it.isNotEmpty() }
             ?: return fromName
         val fromCaption = read(line, maxYear).parsed
+        if (fromName.isEpisode && nameRead.parsed.title.isNotEmpty()) {
+            if (fromCaption.isEpisode && fromCaption.title.any { it.code > 127 } && nameRead.parsed.title.none { it.code > 127 }) {
+                return fromName.copy(
+                    title = fromCaption.title,
+                    year = fromName.year ?: fromCaption.year,
+                )
+            }
+            return fromName
+        }
         if (!fromCaption.isEpisode) return fromName
-        val nameTitle = fromName.title.takeIf { fileName.isNotBlank() }.orEmpty()
+        val nameTitle = nameRead.parsed.title.takeIf { fileName.isNotBlank() }.orEmpty()
         return fromCaption.copy(
             title = fromCaption.title.ifEmpty { nameTitle },
             year = fromCaption.year ?: fromName.year,
@@ -748,6 +757,8 @@ object MediaName {
         "marathi" to "mr", "bengali" to "bn", "punjabi" to "pa", "english" to "en", "korean" to "ko",
         "japanese" to "ja", "chinese" to "zh", "spanish" to "es", "french" to "fr", "russian" to "ru",
         "german" to "de", "italian" to "it", "turkish" to "tr", "arabic" to "ar",
+        "vietnamese" to "vi", "vietsub" to "vi", "thuyết minh" to "vi", "thuyet minh" to "vi",
+        "lồng tiếng" to "vi", "long tieng" to "vi", "vie" to "vi",
         // "Hindi-Japan": how a dubbed anime's release names its original audio.
         "japan" to "ja",
         // The short forms a multi-audio release lists: "Tam + Tel + Hin".
@@ -806,6 +817,7 @@ object MediaName {
         Regex("""\bs(\d{1,2})[\s.-]?e(\d{1,3})(?:-?e(\d{1,3})|-(\d{1,3})(?![\dpPiI]))?\b""", RegexOption.IGNORE_CASE),
         Regex("""\b(\d{1,2})x(\d{1,3})\b""", RegexOption.IGNORE_CASE),
         Regex("""\bseason\s?(\d{1,2})\s?episode\s?(\d{1,3})\b""", RegexOption.IGNORE_CASE),
+        Regex("""\b(?:season|s|phần|phan|mùa|mua)\s?(\d{1,2})[\s._:-]*(?:episode|ep|tập|tap)[\s._:-]*(\d{1,4})(?:\s*-\s*(?:episode|ep|tập|tap)?\s*(\d{1,4})(?![\dpPiI]))?\b""", RegexOption.IGNORE_CASE),
     )
 
     /**
@@ -819,26 +831,26 @@ object MediaName {
     /** A bracketed group name at the very front, before any title. Never a year. */
     private val GROUP_TAG = Regex("""^\s*\[(?!\s*(?:19|20)\d{2}\s*\])[^\]]{1,40}\]\s*""")
 
-    private val SEASON_ONLY = Regex("""\b(?:s|season\s?)(\d{1,2})\b""", RegexOption.IGNORE_CASE)
+    private val SEASON_ONLY = Regex("""\b(?:s|season\s?|phần\s?|phan\s?|mùa\s?|mua\s?)(\d{1,2})\b""", RegexOption.IGNORE_CASE)
 
     /**
      * The word has to be there. A bare "E04" is too easy to find inside a title, and guessing
      * wrong turns a standalone video into episode four of a series that does not exist.
      */
-    private val EPISODE_ONLY = Regex("""\bep(?:isode)?[\s-]?(\d{1,3})\b""", RegexOption.IGNORE_CASE)
+    private val EPISODE_ONLY = Regex("""\b(?:ep(?:isode)?|tập|tap)[\s._:-]*(\d{1,4})\b""", RegexOption.IGNORE_CASE)
 
     /**
      * A combined range of episodes in one file, "EP(29-32)", "Ep 29-32": the first and the last
      * ([ParsedName.lastEpisode]), the parenthesised form the "COMBINED" releases that post several
      * episodes together tend to write.
      */
-    private val EPISODE_RANGE = Regex("""\bep(?:isode)?[\s-]?\(?\s*(\d{1,3})\s*-\s*(\d{1,3})\s*\)?""", RegexOption.IGNORE_CASE)
+    private val EPISODE_RANGE = Regex("""\b(?:ep(?:isode)?|tập|tap)[\s._:-]*\(?\s*(\d{1,4})\s*-\s*(\d{1,4})\s*\)?""", RegexOption.IGNORE_CASE)
 
     /** "E05" with no word in front, which only [looseEpisode] reads. */
     private val BARE_EPISODE = Regex("""\be(\d{1,3})\b""", RegexOption.IGNORE_CASE)
 
     /** The second code of a two-episode file, "-E02" or "&E02", just after the first. */
-    private val EXTRA_EPISODE = Regex("""^\s*[-&+]?\s*e\d{1,3}\b""", RegexOption.IGNORE_CASE)
+    private val EXTRA_EPISODE = Regex("""^\s*(?:[-&+]?\s*(?:e|ep|tập|tap)\s*\d{1,4}|/\s*\d{1,4}|\b(?:end|cuối|cuoi)\b)\b""", RegexOption.IGNORE_CASE)
 
     /**
      * The technical vocabulary, used only to locate where the title stops.
@@ -849,7 +861,7 @@ object MediaName {
     private val TAGS = Regex(
         """\b(""" + listOf(
             // Resolution and scan
-            "\\d{3,4}[pi]", "4k", "uhd", "hd", "sd",
+            "\\d{3,4}[pi]", "p1080", "p720", "4k", "uhd", "fhd", "full ?hd", "hd", "sd",
             // Source
             "bluray", "blu-ray", "bdrip", "brrip", "bdremux", "remux", "web-?rip", "web-?dl",
             "webrip", "web", "hdrip", "hdtvrip", "dvdrip", "dvdr", "hdtv", "pdtv",
@@ -867,15 +879,17 @@ object MediaName {
             // title: "Harbour Notes Tamil" should be grouped under "Harbour Notes".
             "tamil", "telugu", "hindi", "malayalam", "kannada", "marathi", "bengali", "punjabi",
             "english", "korean", "japanese", "chinese", "spanish", "french", "russian", "german",
-            "italian", "turkish", "arabic",
+            "italian", "turkish", "arabic", "vietnamese",
             // Edition labels describe a particular cut, not the base title, so they only get in
             // the way of grouping neighbouring files.
             "director'?s ?cut", "theatrical", "imax", "remastered", "criterion",
             "anniversary", "special ?edition", "final ?cut",
             // Release furniture
             "proper", "repack", "extended", "unrated", "uncut", "limited", "internal",
-            "complete", "retail", "subbed", "dubbed", "esubs?", "msubs?", "hq", "hs", "nuked",
-            "full ?movie", "\\d+(?:\\.\\d+)? ?[mg]b",
+            "complete", "retail", "subbed", "dubbed", "esubs?", "msubs?", "vietsub", "viet ?sub",
+            "vsub", "thuyết ?minh", "thuyet ?minh", "lồng ?tiếng", "long ?tieng",
+            "phụ ?đề", "phu ?de", "tập ?cuối", "tap ?cuoi", "hoàn ?tất", "hoan ?tat",
+            "hq", "hs", "nuked", "full ?movie", "\\d+(?:\\.\\d+)? ?[mg]b",
         ).joinToString("|") + """)\b""",
         RegexOption.IGNORE_CASE,
     )
