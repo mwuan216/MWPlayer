@@ -37,7 +37,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import com.tmplayer.ui.theme.TMPlayerTheme
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.MimeTypes
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
@@ -100,7 +105,10 @@ class OnlinePlayerActivity : ComponentActivity() {
             OnlinePlayerSession.detail = detail
             OnlinePlayerSession.serverIndex = serverIdx
             OnlinePlayerSession.episodeIndex = epIdx
-            context.startActivity(Intent(context, OnlinePlayerActivity::class.java))
+            val intent = Intent(context, OnlinePlayerActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
         }
     }
 
@@ -110,30 +118,20 @@ class OnlinePlayerActivity : ComponentActivity() {
         hideSystemUI()
 
         setContent {
-            OnlinePlayerScreen(
-                onClose = { finish() },
-                onToggleOrientation = { toggleOrientation() }
-            )
+            TMPlayerTheme {
+                OnlinePlayerScreen(
+                    onClose = { finish() },
+                    onToggleOrientation = { toggleOrientation() }
+                )
+            }
         }
     }
 
     private fun hideSystemUI() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            window.insetsController?.let { controller ->
-                controller.hide(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
-                controller.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            }
-        } else {
-            @Suppress("DEPRECATION")
-            window.decorView.systemUiVisibility = (
-                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                    or View.SYSTEM_UI_FLAG_FULLSCREEN
-                    or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                    or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                    or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                    or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-            )
-        }
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        val controller = WindowInsetsControllerCompat(window, window.decorView)
+        controller.hide(WindowInsetsCompat.Type.systemBars())
+        controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
     }
 
     private fun toggleOrientation() {
@@ -180,6 +178,7 @@ fun OnlinePlayerScreen(
     var isPlaying by remember { mutableStateOf(true) }
     var isLoading by remember { mutableStateOf(true) }
     var isEnded by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
     var currentPosition by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
     var showControls by remember { mutableStateOf(true) }
@@ -217,6 +216,12 @@ fun OnlinePlayerScreen(
             .setConnectTimeoutMs(15_000)
             .setReadTimeoutMs(20_000)
             .setAllowCrossProtocolRedirects(true)
+            .setDefaultRequestProperties(
+                mapOf(
+                    "Referer" to (streamInfo?.referer ?: "https://phimapi.com/"),
+                    "Origin" to (streamInfo?.referer ?: "https://phimapi.com/").trimEnd('/')
+                )
+            )
 
         val mediaSourceFactory = DefaultMediaSourceFactory(context)
             .setDataSourceFactory(httpSourceFactory)
@@ -232,10 +237,23 @@ fun OnlinePlayerScreen(
         if (stream != null && stream.streamUrl.isNotBlank()) {
             isLoading = true
             isEnded = false
-            val item = MediaItem.fromUri(stream.streamUrl)
-            exoPlayer.setMediaItem(item)
-            exoPlayer.prepare()
-            exoPlayer.playWhenReady = true
+            errorMessage = null
+            try {
+                val mediaItem = MediaItem.Builder()
+                    .setUri(stream.streamUrl)
+                    .apply {
+                        if (stream.streamUrl.contains(".m3u8") || stream.streamUrl.contains("/stream/")) {
+                            setMimeType(MimeTypes.APPLICATION_M3U8)
+                        }
+                    }
+                    .build()
+                exoPlayer.setMediaItem(mediaItem)
+                exoPlayer.prepare()
+                exoPlayer.playWhenReady = true
+            } catch (e: Exception) {
+                isLoading = false
+                errorMessage = "Không thể phát luồng: ${e.message}"
+            }
         }
     }
 
@@ -246,8 +264,15 @@ fun OnlinePlayerScreen(
                 isLoading = (state == Player.STATE_BUFFERING)
                 isEnded = (state == Player.STATE_ENDED)
                 if (state == Player.STATE_READY) {
+                    isLoading = false
+                    errorMessage = null
                     duration = exoPlayer.duration.coerceAtLeast(0L)
                 }
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                isLoading = false
+                errorMessage = "Lỗi phát video (${error.errorCodeName}): ${error.message}"
             }
 
             override fun onIsPlayingChanged(playing: Boolean) {
@@ -304,6 +329,63 @@ fun OnlinePlayerScreen(
         if (isLoading) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(color = Tone.accent, strokeWidth = 3.dp)
+            }
+        }
+
+        // Error Overlay
+        if (errorMessage != null) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.85f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.padding(24.dp)
+                ) {
+                    Icon(
+                        imageVector = TmIcons.Warning,
+                        contentDescription = null,
+                        tint = Tone.caution,
+                        modifier = Modifier.size(48.dp)
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        text = errorMessage ?: "Lỗi phát video",
+                        color = Color.White,
+                        fontSize = 14.sp,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                    Spacer(Modifier.height(16.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        ControlPill(
+                            text = "Thử lại",
+                            icon = TmIcons.Refresh,
+                            onClick = {
+                                errorMessage = null
+                                isLoading = true
+                                val stream = streamInfo
+                                if (stream != null && stream.streamUrl.isNotBlank()) {
+                                    val mediaItem = MediaItem.Builder().setUri(stream.streamUrl).build()
+                                    exoPlayer.setMediaItem(mediaItem)
+                                    exoPlayer.prepare()
+                                    exoPlayer.playWhenReady = true
+                                }
+                            }
+                        )
+                        if (detail.servers.size > 1) {
+                            ControlPill(
+                                text = "Đổi Server",
+                                icon = TmIcons.Episodes,
+                                onClick = {
+                                    serverIdx = (serverIdx + 1) % detail.servers.size
+                                    OnlinePlayerSession.serverIndex = serverIdx
+                                }
+                            )
+                        }
+                    }
+                }
             }
         }
 

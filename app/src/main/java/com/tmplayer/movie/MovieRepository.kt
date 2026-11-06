@@ -262,6 +262,13 @@ object MovieRepository {
             if ("/video/" in embed) {
                 val clean = embed.substringBefore('?').trimEnd('/')
                 streamUrl = clean.replace("/video/", "/stream/") + "/master.m3u8"
+            } else if ("url=" in embed) {
+                val rawUrl = embed.substringAfter("url=").substringBefore('&')
+                streamUrl = try {
+                    java.net.URLDecoder.decode(rawUrl, "UTF-8")
+                } catch (_: Exception) {
+                    rawUrl
+                }
             } else {
                 streamUrl = embed
             }

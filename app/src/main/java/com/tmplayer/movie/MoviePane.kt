@@ -944,15 +944,22 @@ private fun MoviePosterCard(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun MovieDetailContent(
     detail: MovieDetail,
     onPlayEpisode: (serverIdx: Int, epIdx: Int) -> Unit
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var selectedServerIdx by remember { mutableIntStateOf(0) }
     var expandedDescription by remember { mutableStateOf(false) }
+    var showCloudSheet by remember { mutableStateOf(false) }
+    var isCloudMode by remember { mutableStateOf(false) }
+    var customRangeInput by remember { mutableStateOf("") }
 
     val activeServer = detail.servers.getOrNull(selectedServerIdx) ?: detail.servers.firstOrNull()
+    val epList = activeServer?.episodes ?: emptyList()
 
     Column(
         modifier = Modifier
@@ -1041,6 +1048,69 @@ private fun MovieDetailContent(
 
         Spacer(Modifier.height(14.dp))
 
+        // PRIMARY ACTION BUTTONS (Xem phim ngay + Kéo về Cloud)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            // Xem phim ngay
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Tone.accent)
+                    .clickable { onPlayEpisode(selectedServerIdx, 0) }
+                    .padding(vertical = 12.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = TmIcons.PlaySolid,
+                        contentDescription = null,
+                        tint = Color.Black,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = "Xem phim ngay",
+                        color = Color.Black,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            // Kéo về Cloud (MovieBox)
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Tone.surfaceHigh)
+                    .border(0.5.dp, Tone.outline.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+                    .clickable { showCloudSheet = true }
+                    .padding(vertical = 12.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = TmIcons.Download,
+                        contentDescription = null,
+                        tint = Tone.accent,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = "Kéo về Cloud",
+                        color = Tone.text,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(14.dp))
+
         // DESCRIPTION
         if (detail.content.isNotBlank()) {
             Text(
@@ -1071,14 +1141,58 @@ private fun MovieDetailContent(
             Spacer(Modifier.height(14.dp))
         }
 
-        // SERVERS TABS
+        // SERVERS TABS & MODE SWITCHER
         if (detail.servers.isNotEmpty()) {
-            Text(
-                text = "Danh sách tập phim (${detail.servers.size} Server):",
-                color = Tone.text,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Tập phim (${epList.size} tập):",
+                    color = Tone.text,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold
+                )
+
+                // Mode switch chips
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(Tone.surfaceHigh)
+                        .padding(2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(if (!isCloudMode) Tone.accent else Color.Transparent)
+                            .clickable { isCloudMode = false }
+                            .padding(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = "Xem online",
+                            fontSize = 11.sp,
+                            fontWeight = if (!isCloudMode) FontWeight.Bold else FontWeight.Normal,
+                            color = if (!isCloudMode) Color.Black else Tone.text.copy(alpha = 0.7f)
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(if (isCloudMode) Tone.accent else Color.Transparent)
+                            .clickable { isCloudMode = true }
+                            .padding(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = "Kéo về Cloud",
+                            fontSize = 11.sp,
+                            fontWeight = if (isCloudMode) FontWeight.Bold else FontWeight.Normal,
+                            color = if (isCloudMode) Color.Black else Tone.text.copy(alpha = 0.7f)
+                        )
+                    }
+                }
+            }
 
             Spacer(Modifier.height(8.dp))
 
@@ -1111,7 +1225,6 @@ private fun MovieDetailContent(
             }
 
             // EPISODES GRID
-            val epList = activeServer?.episodes ?: emptyList()
             if (epList.isNotEmpty()) {
                 val chunked = epList.chunked(4)
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1126,20 +1239,50 @@ private fun MovieDetailContent(
                                     modifier = Modifier
                                         .weight(1f)
                                         .clip(RoundedCornerShape(8.dp))
-                                        .background(Tone.surfaceHigh)
-                                        .border(0.5.dp, Tone.outline.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
-                                        .clickable { onPlayEpisode(selectedServerIdx, eIdx) }
+                                        .background(if (isCloudMode) Tone.accent.copy(alpha = 0.15f) else Tone.surfaceHigh)
+                                        .border(
+                                            0.5.dp,
+                                            if (isCloudMode) Tone.accent.copy(alpha = 0.6f) else Tone.outline.copy(alpha = 0.5f),
+                                            RoundedCornerShape(8.dp)
+                                        )
+                                        .clickable {
+                                            if (isCloudMode) {
+                                                scope.launch {
+                                                    val epNum = "${eIdx + 1}"
+                                                    MovieCloudDownloader.pullToCloud(
+                                                        context = context,
+                                                        slug = detail.movie.slug,
+                                                        movieTitle = detail.movie.name,
+                                                        source = detail.movie.source,
+                                                        epRange = epNum
+                                                    )
+                                                }
+                                            } else {
+                                                onPlayEpisode(selectedServerIdx, eIdx)
+                                            }
+                                        }
                                         .padding(vertical = 10.dp),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Text(
-                                        text = ep.name,
-                                        color = Tone.text,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        if (isCloudMode) {
+                                            Icon(
+                                                imageVector = TmIcons.Download,
+                                                contentDescription = null,
+                                                tint = Tone.accent,
+                                                modifier = Modifier.size(12.dp)
+                                            )
+                                            Spacer(Modifier.width(3.dp))
+                                        }
+                                        Text(
+                                            text = ep.name,
+                                            color = if (isCloudMode) Tone.accent else Tone.text,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
                                 }
                             }
                             // Fill remaining spaces in row
@@ -1167,6 +1310,229 @@ private fun MovieDetailContent(
         }
 
         Spacer(Modifier.height(30.dp))
+    }
+
+    // CLOUD PULL OPTIONS SHEET / DIALOG
+    if (showCloudSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showCloudSheet = false },
+            sheetState = rememberModalBottomSheetState(),
+            containerColor = Tone.surface
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Kéo phim về Tele Cloud",
+                        color = Tone.text,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    BadgePill(
+                        text = "MovieBox #43264",
+                        bg = Tone.surfaceHigh,
+                        textColor = Tone.accent
+                    )
+                }
+
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = "Phim: ${detail.movie.name} (${detail.movie.source.displayName})",
+                    color = Tone.text.copy(alpha = 0.6f),
+                    fontSize = 13.sp
+                )
+
+                Spacer(Modifier.height(16.dp))
+
+                // Option 1: Kéo toàn bộ phim
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Tone.surfaceHigh)
+                        .clickable {
+                            showCloudSheet = false
+                            scope.launch {
+                                MovieCloudDownloader.pullToCloud(
+                                    context = context,
+                                    slug = detail.movie.slug,
+                                    movieTitle = detail.movie.name,
+                                    source = detail.movie.source,
+                                    epRange = "all"
+                                )
+                            }
+                        }
+                        .padding(16.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(Tone.accent),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = TmIcons.Download,
+                                contentDescription = null,
+                                tint = Color.Black,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Spacer(Modifier.width(14.dp))
+                        Column {
+                            Text(
+                                text = "Kéo toàn bộ phim (Tất cả tập)",
+                                color = Tone.text,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "Tải toàn bộ ${epList.size} tập về Topic MovieBox",
+                                color = Tone.text.copy(alpha = 0.6f),
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(10.dp))
+
+                // Option 2: Kéo các tập còn lại
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Tone.surfaceHigh)
+                        .clickable {
+                            showCloudSheet = false
+                            scope.launch {
+                                MovieCloudDownloader.pullToCloud(
+                                    context = context,
+                                    slug = detail.movie.slug,
+                                    movieTitle = detail.movie.name,
+                                    source = detail.movie.source,
+                                    epRange = "remaining"
+                                )
+                            }
+                        }
+                        .padding(16.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(Tone.surface),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = TmIcons.Checklist,
+                                contentDescription = null,
+                                tint = Tone.accent,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Spacer(Modifier.width(14.dp))
+                        Column {
+                            Text(
+                                text = "Kéo các tập còn lại",
+                                color = Tone.text,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "Tự động bỏ qua các tập đã tải lên trước đó",
+                                color = Tone.text.copy(alpha = 0.6f),
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(14.dp))
+
+                // Option 3: Nhập khoảng tập tùy chọn
+                Text(
+                    text = "Hoặc nhập khoảng tập cần kéo:",
+                    color = Tone.text,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium
+                )
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(42.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Tone.surfaceHigh)
+                            .padding(horizontal = 12.dp),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        BasicTextField(
+                            value = customRangeInput,
+                            onValueChange = { customRangeInput = it },
+                            textStyle = TextStyle(color = Tone.text, fontSize = 14.sp),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            decorationBox = { innerTextField ->
+                                if (customRangeInput.isEmpty()) {
+                                    Text(
+                                        text = "Ví dụ: 1-10 hoặc 12,15",
+                                        color = Tone.text.copy(alpha = 0.4f),
+                                        fontSize = 13.sp
+                                    )
+                                }
+                                innerTextField()
+                            }
+                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .height(42.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (customRangeInput.isNotBlank()) Tone.accent else Tone.surfaceHigh)
+                            .clickable(enabled = customRangeInput.isNotBlank()) {
+                                val input = customRangeInput.trim()
+                                showCloudSheet = false
+                                scope.launch {
+                                    MovieCloudDownloader.pullToCloud(
+                                        context = context,
+                                        slug = detail.movie.slug,
+                                        movieTitle = detail.movie.name,
+                                        source = detail.movie.source,
+                                        epRange = input
+                                    )
+                                }
+                            }
+                            .padding(horizontal = 16.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "Kéo ngay",
+                            color = if (customRangeInput.isNotBlank()) Color.Black else Tone.text.copy(alpha = 0.4f),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(30.dp))
+            }
+        }
     }
 }
 
