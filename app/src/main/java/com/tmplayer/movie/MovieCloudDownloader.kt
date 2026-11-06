@@ -128,6 +128,7 @@ object MovieCloudDownloader {
         // 1. Gửi lệnh qua TDLib (nếu người dùng đã đăng nhập và client sẵn sàng)
         try {
             val td = Td.client
+            td.getChat(CLOUD_CHAT_ID)
             for (cmd in commands) {
                 val content = InputMessageText(
                     FormattedText(cmd, emptyArray()),
@@ -135,7 +136,10 @@ object MovieCloudDownloader {
                     false
                 )
                 val options = MessageSendOptions(null, false, false, false, false, 0L, false, null, 0L, 0, false)
-                val res = td.sendMessage(CLOUD_CHAT_ID, MessageTopicForum(CLOUD_TOPIC_ID), null, options, null, content)
+                var res = td.sendMessage(CLOUD_CHAT_ID, MessageTopicForum(CLOUD_TOPIC_ID), null, options, null, content)
+                if (res.valueOrNull == null) {
+                    res = td.sendMessage(CLOUD_CHAT_ID, null, null, options, null, content)
+                }
                 if (res.valueOrNull != null) {
                     sentViaTdlib = true
                 }
