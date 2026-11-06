@@ -173,6 +173,13 @@
             android:supportsPictureInPicture="true"
             android:theme="@style/Theme.TMPlayer.Player" />
 
+        <activity
+            android:name=".movie.OnlinePlayerActivity"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|locale|layoutDirection"
+            android:exported="false"
+            android:screenOrientation="fullUser"
+            android:theme="@style/Theme.TMPlayer.Player" />
+
         <!--
           The pictures on the TV home screen channels, for the launcher (another app) to read.
           Exported because which app the launcher is cannot be known to grant it a URI; it serves

@@ -61,7 +61,7 @@ data class NavGroupEntries(val group: NavGroup, val entries: List<NavEntry>)
  * The tabs about the viewer's own watching, in the order the Watch group lists them. Home leads:
  * it is the first destination on every device, and its rows are made of the other two.
  */
-private val WATCH_TABS = listOf(BrowseTab.Home, BrowseTab.History, BrowseTab.Favorites)
+private val WATCH_TABS = listOf(BrowseTab.Home, BrowseTab.Movie, BrowseTab.History, BrowseTab.Favorites)
 
 /**
  * Which group a section sits in. Every section is in Watch now: Chats is a top-level entry beside

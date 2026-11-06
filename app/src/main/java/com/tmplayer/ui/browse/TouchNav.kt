@@ -132,7 +132,7 @@ import com.tmplayer.ui.theme.rememberReducedMotion
  * a button that opens the search over the page rather than a page of its own, and the profile
  * picture last, which opens [ProfilePopover] with the viewer's own lists and Settings.
  */
-internal enum class TouchDestination { Home, Chats }
+internal enum class TouchDestination { Home, Movie, Chats }
 
 /** The profile picture's place on the bar: after every [TouchDestination] and Search. */
 internal val PROFILE_SLOT = TouchDestination.entries.size + 1
@@ -159,6 +159,7 @@ internal class TouchNav(
     val watchedCount: Int = 0,
     val updateVersion: String?,
     val onHome: () -> Unit,
+    val onMovie: () -> Unit = {},
     val onChats: () -> Unit,
     val onSearch: () -> Unit,
     /** Settings, from the picture's popover (the phone, the television's account menu). */
@@ -367,6 +368,7 @@ internal fun TouchNavHost(
                             account = nav.account,
                             badged = nav.downloadCount > 0 || nav.updateVersion != null,
                             onHome = retap(TouchDestination.Home, nav.onHome),
+                            onMovie = retap(TouchDestination.Movie, nav.onMovie),
                             onChats = retap(TouchDestination.Chats, nav.onChats),
                             onSearch = nav.onSearch,
                             onProfile = { profileOpen = true },
@@ -526,10 +528,11 @@ internal fun TouchBrowseShell(
         TouchPageSpec(
             current = when {
                 selected.isHome -> TouchDestination.Home
+                selected.isMovie -> TouchDestination.Movie
                 selected.onChatsPage -> TouchDestination.Chats
                 else -> null
             },
-            inProfile = !selected.isHome && !selected.onChatsPage,
+            inProfile = !selected.isHome && !selected.isMovie && !selected.onChatsPage,
             hidden = searchOpen,
             actions = actions,
             position = barPosition,
@@ -655,6 +658,7 @@ private fun FloatingBar(
     account: Account?,
     badged: Boolean,
     onHome: () -> Unit,
+    onMovie: () -> Unit = {},
     onChats: () -> Unit,
     onSearch: () -> Unit,
     onProfile: () -> Unit,
@@ -747,6 +751,7 @@ private fun FloatingBar(
             )
             val buttons: @Composable () -> Unit = {
                 BarButton(TmIcons.Home, s.browseTabHome, current == TouchDestination.Home, onHome)
+                BarButton(TmIcons.Trailer, "Movie", current == TouchDestination.Movie, onMovie)
                 BarButton(TmIcons.Chats, s.browseTabChats, current == TouchDestination.Chats, onChats)
                 BarButton(TmIcons.Search, s.commonSearch, false, onSearch, role = Role.Button, modifier = searchShared)
                 ProfileButton(account, inProfile, badged, onProfile)

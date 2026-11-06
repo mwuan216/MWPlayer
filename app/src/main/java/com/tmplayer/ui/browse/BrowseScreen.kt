@@ -641,8 +641,8 @@ internal fun BrowseScreen(
     }
 
     // The chat the television's list was left for is put back only on the way back from it: a
-    // page with no chat list in between (Home, History) means the viewer moved on.
-    LaunchedEffect(tab) { if (tab.isHome || tab.listsVideos) ChatListReturn.forget() }
+    // page with no chat list in between (Home, Movie, History) means the viewer moved on.
+    LaunchedEffect(tab) { if (tab.isHome || tab.isMovie || tab.listsVideos) ChatListReturn.forget() }
     val goToChats: () -> Unit = {
         pickFilter(ChatFilter.All)
         onPickTab(BrowseSection.of(BrowseTab.Chats))
@@ -658,7 +658,11 @@ internal fun BrowseScreen(
         LaunchedEffect(homeComing) { if (!homeComing) HomeFirstPaint.markReady() }
         // Home does not wait for the chat list (HX8): with rows of its own (its cached copy, its
         // starred and found chats) it is drawn while the list is still on its way.
-        val paneState = if (tab.isHome && state is UiState.Loading && homeRows.isNotEmpty()) UiState.Content(BrowseData(emptyList(), account)) else state
+        val paneState = when {
+            tab.isMovie -> UiState.Content(BrowseData(emptyList(), account))
+            tab.isHome && state is UiState.Loading && homeRows.isNotEmpty() -> UiState.Content(BrowseData(emptyList(), account))
+            else -> state
+        }
         androidx.compose.runtime.CompositionLocalProvider(LocalJustStarred provides justStarred) {
         StateScaffold(
             paneState,
@@ -732,6 +736,8 @@ internal fun BrowseScreen(
                             )
                         }
                         }
+                    } else if (tab.isMovie) {
+                        com.tmplayer.movie.MoviePane(Modifier.fillMaxSize())
                     } else if (tab.listsVideos) {
                         // One branch for both tabs, so the chip row stays the same composition when
                         // OK switches tab and the remote's focus stays on the chip it pressed.
@@ -960,6 +966,7 @@ internal fun BrowseScreen(
             refreshOf = { page ->
                 when {
                     page.isHome -> onRefreshHome
+                    page.isMovie -> null
                     !page.listsVideos -> onRefresh
                     else -> null
                 }
@@ -971,7 +978,7 @@ internal fun BrowseScreen(
             countOf = { section ->
                 val chats = (state as? UiState.Content)?.value?.chats
                 when {
-                    section.isHome -> 0
+                    section.isHome || section.isMovie -> 0
                     section.listsVideos -> when (historyTab) {
                         HistoryTab.Continue -> continuing.size
                         HistoryTab.Watched -> watchedHistory.size
@@ -982,7 +989,7 @@ internal fun BrowseScreen(
             },
             // Home refreshes with a pull, and a page with nothing to offer has no pill at all.
             actions = unlessHidden(
-                tab.isHome || !(tab.listsVideos || (tab == BrowseSection.of(BrowseTab.Favorites) && favorites.isNotEmpty())),
+                tab.isHome || tab.isMovie || !(tab.listsVideos || (tab == BrowseSection.of(BrowseTab.Favorites) && favorites.isNotEmpty())),
             ) actions@{
                 // History's Select and Clear sit in the bar, one press each: a clear here is said
                 // with Undo, so a mis-tap costs nothing. Favourites' clear has no Undo and stays
@@ -1125,14 +1132,20 @@ internal fun BrowseScreen(
                 nav = tvNav,
                 current = when {
                     tab.isHome -> TvBarTab.Home
+                    tab.isMovie -> TvBarTab.Movie
                     tab.onChatsPage -> TvBarTab.Chats
                     else -> null
                 },
-                inProfile = !tab.isHome && !tab.onChatsPage,
+                inProfile = !tab.isHome && !tab.isMovie && !tab.onChatsPage,
                 searchOpen = tvSearchOpen,
                 onHome = {
                     tvSearchOpen = false
                     onPickTab(BrowseSection.of(BrowseTab.Home))
+                    query = ""
+                },
+                onMovie = {
+                    tvSearchOpen = false
+                    onPickTab(BrowseSection.of(BrowseTab.Movie))
                     query = ""
                 },
                 onChats = {

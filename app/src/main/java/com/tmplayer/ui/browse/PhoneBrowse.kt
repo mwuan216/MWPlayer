@@ -219,6 +219,7 @@ internal fun PhoneBrowse(
             downloadCount = downloadCount,
             updateVersion = updateVersion,
             onHome = { onPickTab(BrowseSection.of(BrowseTab.Home)) },
+            onMovie = { onPickTab(BrowseSection.of(BrowseTab.Movie)) },
             onChats = { onPickTab(chatsPageOf(lastChats, sections)) },
             onSearch = openSearch,
             onSettings = onOpenSettings,
@@ -336,16 +337,20 @@ private fun decodeFilters(raw: String): Pair<SearchFilters, SearchSort>? {
     }.getOrNull()
 }
 
-/** Which page of the Home and Chats pager [section] is: 0 for Home, 1 for Chats or a folder, null for neither. */
+/** Which page of the Home and Chats pager [section] is: 0 for Home, 1 for Movie, 2 for Chats or a folder, null for neither. */
 internal fun swipePage(section: BrowseSection): Int? = when {
     section.isHome -> HOME_PAGE
+    section.isMovie -> MOVIE_PAGE
     section.onChatsPage -> CHATS_PAGE
     else -> null
 }
 
-/** What page [page] of the pager shows: Home, or [chats], the chip the Chats page was left on. */
-internal fun swipeSection(page: Int, chats: BrowseSection): BrowseSection =
-    if (page == CHATS_PAGE) chats else BrowseSection.of(BrowseTab.Home)
+/** What page [page] of the pager shows: Home, Movie, or [chats], the chip the Chats page was left on. */
+internal fun swipeSection(page: Int, chats: BrowseSection): BrowseSection = when (page) {
+    HOME_PAGE -> BrowseSection.of(BrowseTab.Home)
+    MOVIE_PAGE -> BrowseSection.of(BrowseTab.Movie)
+    else -> chats
+}
 
 /**
  * The Chats page to come back to: the chip it was left on ([lastChats], written down by
@@ -445,10 +450,10 @@ private fun PhonePageFrame(
     Scaffold(
         // Home has no top bar to collapse: the behaviour's limit is never measured there, so it
         // would take every drag for itself and the page would not scroll.
-        modifier = if (pinned || section.isHome) Modifier else Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
+        modifier = if (pinned || section.isHome || section.isMovie) Modifier else Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         topBar = {
-            if (section.isHome) {
-                // No title: Home's featured carousel is the top of the page.
+            if (section.isHome || section.isMovie) {
+                // No title: Home's featured carousel is the top of the page, Movie has its own header.
             } else if (pinned) {
                 // From the start, in the same bar and type as Settings' title.
                 TopAppBar(title = { Text(s.browseTabChats, maxLines = 1, overflow = TextOverflow.Ellipsis) })
@@ -529,8 +534,9 @@ private fun PhonePageFrame(
 internal val LocalUnderStatusBar = androidx.compose.runtime.compositionLocalOf { 0.dp }
 
 private const val HOME_PAGE = 0
-private const val CHATS_PAGE = 1
-private const val SWIPE_PAGE_COUNT = 2
+private const val MOVIE_PAGE = 1
+private const val CHATS_PAGE = 2
+private const val SWIPE_PAGE_COUNT = 3
 
 /** The content key of the Home and Chats pager, which a swipe between them does not change. */
 private const val SWIPE_PAGES = "home-chats"

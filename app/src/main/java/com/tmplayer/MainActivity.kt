@@ -1877,6 +1877,7 @@ private fun Root() {
             downloadCount = activeDownloadCount,
             updateVersion = offeredUpdate,
             onHome = { browseTo(BrowseSection.of(BrowseTab.Home)) },
+            onMovie = { browseTo(BrowseSection.of(BrowseTab.Movie)) },
             onChats = {
                 val back = BrowseSection.decode(lastChatsKey)
                 browseTo(back ?: BrowseSection.of(BrowseTab.Chats))
@@ -2186,6 +2187,7 @@ private fun Root() {
                         inProfile = screen is Screen.Downloads,
                         searchOpen = false,
                         onHome = { stayOnBar(); touchNav.onHome() },
+                        onMovie = { stayOnBar(); touchNav.onMovie() },
                         onChats = { stayOnBar(); touchNav.onChats() },
                         onSearch = {
                             com.tmplayer.ui.browse.TvBarSignals.searchAsked.value = true

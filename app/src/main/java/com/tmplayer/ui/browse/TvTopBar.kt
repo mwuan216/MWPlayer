@@ -89,7 +89,7 @@ internal val TV_BAR_END: Dp = Tv.SafeH + Tv.FocusClearance
 
 
 /** The phone's two tabs, which the television's bar carries in the same order. */
-internal enum class TvBarTab { Home, Chats }
+internal enum class TvBarTab { Home, Movie, Chats }
 
 /** Asks from the bar that a page outside the browser (Downloads) cannot answer itself. */
 internal object TvBarSignals {
@@ -124,6 +124,7 @@ internal fun TvTopBar(
     inProfile: Boolean,
     searchOpen: Boolean,
     onHome: () -> Unit,
+    onMovie: () -> Unit = {},
     onChats: () -> Unit,
     onSearch: () -> Unit,
     /** Called before any item of the account's menu goes anywhere (closes the search, say). */
@@ -147,6 +148,7 @@ internal fun TvTopBar(
     var profileOpen by remember { mutableStateOf(false) }
     val ground = Tone.background
     val homeFocus = remember { FocusRequester() }
+    val movieFocus = remember { FocusRequester() }
     val chatsFocus = remember { FocusRequester() }
     val searchFocus = remember { FocusRequester() }
     val profileFocus = remember { FocusRequester() }
@@ -208,6 +210,7 @@ internal fun TvTopBar(
             ) {
                 BarTab(s.commonSearch, TmIcons.Search, searchOpen, onSearch, Modifier.focusRequester(searchRequester).tvReturnPoint(searchRequester))
                 BarTab(s.browseTabHome, TmIcons.Home, current == TvBarTab.Home && !searchOpen, onHome, Modifier.focusRequester(focusOf(TvBarTab.Home, homeFocus)).tvReturnPoint(focusOf(TvBarTab.Home, homeFocus)))
+                BarTab("Movie", TmIcons.Trailer, current == TvBarTab.Movie && !searchOpen, onMovie, Modifier.focusRequester(focusOf(TvBarTab.Movie, movieFocus)).tvReturnPoint(focusOf(TvBarTab.Movie, movieFocus)))
                 BarTab(s.browseTabChats, TmIcons.Chats, current == TvBarTab.Chats && !searchOpen, onChats, Modifier.focusRequester(focusOf(TvBarTab.Chats, chatsFocus)).tvReturnPoint(focusOf(TvBarTab.Chats, chatsFocus)))
             }
             Spacer(Modifier.width(18.dp))
