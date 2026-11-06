@@ -30,6 +30,7 @@ data class MovieItem(
     val lang: String = "Vietsub",
     val type: String = "",
     val episodeCurrent: String = "",
+    val rating: String = "",
     val source: MovieSource = MovieSource.KKPhim
 )
 
@@ -84,10 +85,13 @@ data class FilterOption(
 object MovieFilterData {
     val categories = listOf(
         FilterOption("", "Tất cả"),
+        FilterOption("phim-moi-cap-nhat", "Mới cập nhật"),
         FilterOption("phim-bo", "Phim bộ"),
         FilterOption("phim-le", "Phim lẻ"),
+        FilterOption("phim-chieu-rap", "Chiếu rạp"),
         FilterOption("hoat-hinh", "Hoạt hình"),
-        FilterOption("tv-shows", "TV Shows")
+        FilterOption("tv-shows", "TV Shows"),
+        FilterOption("subteam", "Subteam")
     )
 
     val genres = listOf(

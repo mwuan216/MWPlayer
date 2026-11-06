@@ -83,8 +83,27 @@ object MovieRepository {
 
     suspend fun getCategoryMovies(source: MovieSource, categorySlug: String, page: Int = 1): List<MovieItem> {
         val url = when (source) {
-            MovieSource.KKPhim -> "https://phimapi.com/v1/api/danh-sach/$categorySlug?page=$page&limit=16"
-            MovieSource.VSMov -> "https://vsmov.com/api/danh-sach/$categorySlug?page=$page"
+            MovieSource.KKPhim -> "https://phimapi.com/v1/api/danh-sach/$categorySlug?page=$page&limit=18"
+            MovieSource.VSMov -> {
+                // VSMov routes genres/anime under /the-loai/ instead of /danh-sach/
+                val path = when (categorySlug) {
+                    "hoat-hinh", "co-trang", "hanh-dong", "tinh-cam", "hai-huoc", "tam-ly",
+                    "kinh-di", "khoa-hoc-vien-tuong", "vo-thuat", "phieu-luu", "hinh-su" -> "the-loai/$categorySlug"
+                    "phim-moi-cap-nhat" -> "danh-sach/phim-moi-cap-nhat"
+                    else -> "danh-sach/$categorySlug"
+                }
+                "https://vsmov.com/api/$path?page=$page"
+            }
+        }
+        val referer = if (source == MovieSource.VSMov) "https://vsmov.com/" else "https://phimapi.com/"
+        val jsonStr = fetchJson(url, referer) ?: return emptyList()
+        return parseMovieList(jsonStr, source)
+    }
+
+    suspend fun getGenreMovies(source: MovieSource, genreSlug: String, page: Int = 1): List<MovieItem> {
+        val url = when (source) {
+            MovieSource.KKPhim -> "https://phimapi.com/v1/api/the-loai/$genreSlug?page=$page&limit=18"
+            MovieSource.VSMov -> "https://vsmov.com/api/the-loai/$genreSlug?page=$page"
         }
         val referer = if (source == MovieSource.VSMov) "https://vsmov.com/" else "https://phimapi.com/"
         val jsonStr = fetchJson(url, referer) ?: return emptyList()
@@ -93,7 +112,7 @@ object MovieRepository {
 
     suspend fun getCountryMovies(source: MovieSource, countrySlug: String, page: Int = 1): List<MovieItem> {
         val url = when (source) {
-            MovieSource.KKPhim -> "https://phimapi.com/v1/api/quoc-gia/$countrySlug?page=$page&limit=16"
+            MovieSource.KKPhim -> "https://phimapi.com/v1/api/quoc-gia/$countrySlug?page=$page&limit=18"
             MovieSource.VSMov -> "https://vsmov.com/api/quoc-gia/$countrySlug?page=$page"
         }
         val referer = if (source == MovieSource.VSMov) "https://vsmov.com/" else "https://phimapi.com/"
@@ -123,16 +142,24 @@ object MovieRepository {
                 append("$baseUrl/tim-kiem?keyword=$encKw&page=$page")
                 if (source == MovieSource.KKPhim) append("&limit=18")
             } else if (category.isNotBlank()) {
-                append("$baseUrl/danh-sach/$category?page=$page")
-                if (source == MovieSource.KKPhim) append("&limit=18")
+                if (source == MovieSource.VSMov && category in listOf("hoat-hinh", "co-trang")) {
+                    append("$baseUrl/the-loai/$category?page=$page")
+                } else {
+                    append("$baseUrl/danh-sach/$category?page=$page")
+                    if (source == MovieSource.KKPhim) append("&limit=18")
+                }
             } else if (genre.isNotBlank()) {
                 append("$baseUrl/the-loai/$genre?page=$page")
                 if (source == MovieSource.KKPhim) append("&limit=18")
             } else if (country.isNotBlank()) {
                 append("$baseUrl/quoc-gia/$country?page=$page")
                 if (source == MovieSource.KKPhim) append("&limit=18")
-            } else if (year.isNotBlank() && source == MovieSource.KKPhim) {
-                append("$baseUrl/nam-phat-hanh/$year?page=$page&limit=18")
+            } else if (year.isNotBlank()) {
+                if (source == MovieSource.KKPhim) {
+                    append("$baseUrl/nam-phat-hanh/$year?page=$page&limit=18")
+                } else {
+                    append("$baseUrl/nam/$year?page=$page")
+                }
             } else {
                 val latestBase = if (source == MovieSource.VSMov) "https://vsmov.com/api" else "https://phimapi.com"
                 append("$latestBase/danh-sach/phim-moi-cap-nhat?page=$page")
@@ -178,14 +205,21 @@ object MovieRepository {
 
             val cdn = root.optJSONObject("data")?.optString("APP_DOMAIN_CDN_IMAGE", "https://phimimg.com")
                 ?: "https://phimimg.com"
+            val pathImage = root.optString("pathImage", "")
 
             fun fixImg(u: String?): String {
                 if (u.isNullOrBlank()) return ""
-                return if (u.startsWith("http://") || u.startsWith("https://")) u else "${cdn.trimEnd('/')}/${u.trimStart('/')}"
+                if (u.startsWith("http://") || u.startsWith("https://")) return u
+                val prefix = if (pathImage.isNotBlank()) pathImage else cdn
+                return "${prefix.trimEnd('/')}/${u.trimStart('/')}"
             }
 
             val thumb = fixImg(mvObj.optString("thumb_url"))
             val poster = fixImg(mvObj.optString("poster_url")).ifBlank { thumb }
+
+            val tmdb = mvObj.optJSONObject("tmdb")
+            val vote = tmdb?.optDouble("vote_average", 0.0) ?: 0.0
+            val rating = if (vote > 0.0) String.format(java.util.Locale.US, "%.1f", vote) else ""
 
             val item = MovieItem(
                 name = mvObj.optString("name", "Phim"),
@@ -198,6 +232,7 @@ object MovieRepository {
                 lang = mvObj.optString("lang", "Vietsub"),
                 type = mvObj.optString("type", ""),
                 episodeCurrent = mvObj.optString("episode_current", ""),
+                rating = rating,
                 source = source
             )
 
@@ -295,10 +330,13 @@ object MovieRepository {
             val itemsArr = dObj?.optJSONArray("items") ?: root.optJSONArray("items") ?: return emptyList()
 
             val cdn = dObj?.optString("APP_DOMAIN_CDN_IMAGE", "https://phimimg.com") ?: "https://phimimg.com"
+            val pathImage = root.optString("pathImage", "")
 
             fun fixImg(u: String?): String {
                 if (u.isNullOrBlank()) return ""
-                return if (u.startsWith("http://") || u.startsWith("https://")) u else "${cdn.trimEnd('/')}/${u.trimStart('/')}"
+                if (u.startsWith("http://") || u.startsWith("https://")) return u
+                val prefix = if (pathImage.isNotBlank()) pathImage else cdn
+                return "${prefix.trimEnd('/')}/${u.trimStart('/')}"
             }
 
             val list = mutableListOf<MovieItem>()
@@ -306,6 +344,10 @@ object MovieRepository {
                 val obj = itemsArr.optJSONObject(i) ?: continue
                 val thumb = fixImg(obj.optString("thumb_url").ifBlank { obj.optString("poster_url") })
                 val poster = fixImg(obj.optString("poster_url")).ifBlank { thumb }
+
+                val tmdb = obj.optJSONObject("tmdb")
+                val vote = tmdb?.optDouble("vote_average", 0.0) ?: 0.0
+                val rating = if (vote > 0.0) String.format(java.util.Locale.US, "%.1f", vote) else ""
 
                 list.add(
                     MovieItem(
@@ -315,10 +357,11 @@ object MovieRepository {
                         thumbUrl = thumb,
                         posterUrl = poster,
                         year = obj.optString("year", ""),
-                        quality = obj.optString("quality", "HD"),
-                        lang = obj.optString("lang", "Vietsub"),
+                        quality = obj.optString("quality").ifBlank { "HD" },
+                        lang = obj.optString("lang").ifBlank { "Vietsub" },
                         type = obj.optString("type", ""),
                         episodeCurrent = obj.optString("episode_current", ""),
+                        rating = rating,
                         source = source
                     )
                 )
@@ -334,8 +377,15 @@ object MovieRepository {
             val root = JSONObject(jsonStr)
             val dObj = root.optJSONObject("data")
             val params = dObj?.optJSONObject("params") ?: root.optJSONObject("params")
-            val pagination = params?.optJSONObject("pagination")
-            pagination?.optInt("totalPages", 1) ?: root.optJSONObject("pagination")?.optInt("totalPages", 1) ?: 1
+            val pagination = params?.optJSONObject("pagination") ?: root.optJSONObject("pagination")
+            val pages = pagination?.optInt("totalPages", 0) ?: 0
+            if (pages > 0) return pages
+            val totalItems = pagination?.optInt("totalItems", 0) ?: 0
+            val perPage = pagination?.optInt("totalItemsPerPage", 24) ?: 24
+            if (totalItems > 0 && perPage > 0) {
+                return (totalItems + perPage - 1) / perPage
+            }
+            1
         } catch (e: Exception) {
             1
         }

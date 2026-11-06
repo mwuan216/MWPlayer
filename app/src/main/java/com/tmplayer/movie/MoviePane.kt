@@ -22,13 +22,16 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -41,11 +44,11 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -65,25 +68,23 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tmplayer.ui.components.LocalBottomChrome
 import com.tmplayer.ui.icons.TmIcons
 import com.tmplayer.ui.theme.Tone
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
  * Màn hình Movie Online: KKPhim & VSMov
- * Bao gồm:
- * - Chuyển nguồn nhanh (KKPhim / VSMov)
- * - Ô tìm kiếm phim online
- * - Hàng bộ lọc: Danh mục (Phim bộ, Phim lẻ, Hoạt hình, TV Shows), Thể loại, Quốc gia, Năm
- * - Catalog trang chủ: Banner nổi bật, các danh sách ngang (Mới cập nhật, Phim bộ, Phim lẻ, Trung Quốc, Hàn Quốc, Hoạt hình...)
- * - Grid xem tất cả / kết quả tìm kiếm / kết quả lọc với phân trang
- * - Bottom Sheet xem chi tiết, chọn server, chọn tập và mở Player xem trực tiếp!
+ * Tính năng nâng cấp:
+ * - Multi-movie Featured Carousel (Slide nhiều phim nổi bật tự động chuyển)
+ * - Tận dụng đa dạng API (Phim chiếu rạp, Cổ trang, Hàn Quốc, Trung Quốc, Subteam, Anime...)
+ * - Scroll tự update vô tận (Infinite Scroll) không cần bấm chuyển trang
+ * - Tinh giản bộ lọc: Quick category pills + ModalBottomSheet bộ lọc đa tiêu chí (Thể loại, Quốc gia, Năm)
+ * - Tích hợp xem online với OnlinePlayerActivity đồng bộ giao diện và cử chỉ
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -97,36 +98,48 @@ fun MoviePane(
 
     var activeSource by remember { mutableStateOf(MovieSource.KKPhim) }
     var searchQuery by remember { mutableStateOf("") }
-    var isSearching by remember { mutableStateOf(false) }
 
-    // Filter states
+    // Quick category pill selection
     var selectedCategory by remember { mutableStateOf("") }
+
+    // Advanced filter sheet states
+    var showFilterSheet by remember { mutableStateOf(false) }
     var selectedGenre by remember { mutableStateOf("") }
     var selectedCountry by remember { mutableStateOf("") }
     var selectedYear by remember { mutableStateOf("") }
 
-    // Section view all target (null means home view)
+    // Section view all target (null means home catalog view)
     var viewAllCategory by remember { mutableStateOf<Pair<String, String>?>(null) } // slug to title
 
-    // Home sections data
+    // Home rich shelves data
     var latestMovies by remember { mutableStateOf<List<MovieItem>>(emptyList()) }
+    var cinemaMovies by remember { mutableStateOf<List<MovieItem>>(emptyList()) }
     var seriesMovies by remember { mutableStateOf<List<MovieItem>>(emptyList()) }
     var singleMovies by remember { mutableStateOf<List<MovieItem>>(emptyList()) }
+    var costumeMovies by remember { mutableStateOf<List<MovieItem>>(emptyList()) }
     var chinaMovies by remember { mutableStateOf<List<MovieItem>>(emptyList()) }
     var koreaMovies by remember { mutableStateOf<List<MovieItem>>(emptyList()) }
     var animeMovies by remember { mutableStateOf<List<MovieItem>>(emptyList()) }
+    var subteamMovies by remember { mutableStateOf<List<MovieItem>>(emptyList()) }
     var isHomeLoading by remember { mutableStateOf(true) }
 
-    // Grid filter / search data
+    // Grid filter / search data (Infinite scroll)
     var gridMovies by remember { mutableStateOf<List<MovieItem>>(emptyList()) }
     var gridPage by remember { mutableIntStateOf(1) }
     var gridTotalPages by remember { mutableIntStateOf(1) }
     var isGridLoading by remember { mutableStateOf(false) }
+    var isGridLoadingMore by remember { mutableStateOf(false) }
+    val gridState = rememberLazyGridState()
 
     // Detail Sheet
     var selectedMovieSlug by remember { mutableStateOf<String?>(null) }
     var movieDetail by remember { mutableStateOf<MovieDetail?>(null) }
     var isDetailLoading by remember { mutableStateOf(false) }
+
+    val activeFilterCount = (if (selectedCategory.isNotBlank()) 1 else 0) +
+        (if (selectedGenre.isNotBlank()) 1 else 0) +
+        (if (selectedCountry.isNotBlank()) 1 else 0) +
+        (if (selectedYear.isNotBlank()) 1 else 0)
 
     val isCatalogGridActive = searchQuery.isNotBlank() ||
         selectedCategory.isNotBlank() ||
@@ -141,40 +154,43 @@ fun MoviePane(
             isHomeLoading = true
             try {
                 latestMovies = MovieRepository.getLatestMovies(activeSource, 1)
+                cinemaMovies = MovieRepository.getCategoryMovies(activeSource, "phim-chieu-rap", 1)
                 seriesMovies = MovieRepository.getCategoryMovies(activeSource, "phim-bo", 1)
                 singleMovies = MovieRepository.getCategoryMovies(activeSource, "phim-le", 1)
+                costumeMovies = MovieRepository.getGenreMovies(activeSource, "co-trang", 1)
                 chinaMovies = MovieRepository.getCountryMovies(activeSource, "trung-quoc", 1)
                 koreaMovies = MovieRepository.getCountryMovies(activeSource, "han-quoc", 1)
                 animeMovies = MovieRepository.getCategoryMovies(activeSource, "hoat-hinh", 1)
-            } catch (e: Exception) {
-                // Ignore errors
+                if (activeSource == MovieSource.VSMov) {
+                    subteamMovies = MovieRepository.getCategoryMovies(activeSource, "subteam", 1)
+                }
+            } catch (_: Exception) {
             } finally {
                 isHomeLoading = false
             }
         }
     }
 
-    // Load Grid Data (Filter / Search / View All)
-    fun loadGrid(page: Int) {
+    // Load Grid Data Initial
+    fun loadGridInitial() {
         scope.launch {
             isGridLoading = true
-            gridPage = page
+            gridPage = 1
             try {
                 if (searchQuery.isNotBlank()) {
-                    val res = MovieRepository.searchMovies(activeSource, searchQuery, page)
+                    val res = MovieRepository.searchMovies(activeSource, searchQuery, 1)
                     gridMovies = res
-                    gridTotalPages = if (res.size >= 18) page + 1 else page
+                    gridTotalPages = if (res.size >= 18) 2 else 1
                 } else if (viewAllCategory != null) {
                     val slug = viewAllCategory!!.first
-                    val res = if (slug == "trung-quoc" || slug == "han-quoc") {
-                        MovieRepository.getCountryMovies(activeSource, slug, page)
-                    } else if (slug == "latest") {
-                        MovieRepository.getLatestMovies(activeSource, page)
-                    } else {
-                        MovieRepository.getCategoryMovies(activeSource, slug, page)
+                    val res = when (slug) {
+                        "trung-quoc", "han-quoc", "au-my" -> MovieRepository.getCountryMovies(activeSource, slug, 1)
+                        "co-trang" -> MovieRepository.getGenreMovies(activeSource, slug, 1)
+                        "latest" -> MovieRepository.getLatestMovies(activeSource, 1)
+                        else -> MovieRepository.getCategoryMovies(activeSource, slug, 1)
                     }
                     gridMovies = res
-                    gridTotalPages = if (res.size >= 12) page + 1 else page
+                    gridTotalPages = if (res.size >= 12) 2 else 1
                 } else {
                     val (items, total) = MovieRepository.filterMovies(
                         source = activeSource,
@@ -183,16 +199,80 @@ fun MoviePane(
                         country = selectedCountry,
                         year = selectedYear,
                         keyword = "",
-                        page = page
+                        page = 1
                     )
                     gridMovies = items
                     gridTotalPages = total
                 }
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 gridMovies = emptyList()
             } finally {
                 isGridLoading = false
             }
+        }
+    }
+
+    // Load More Grid Data (Endless Pagination)
+    fun loadGridMore() {
+        if (isGridLoadingMore || isGridLoading || gridPage >= gridTotalPages) return
+        scope.launch {
+            isGridLoadingMore = true
+            val nextPage = gridPage + 1
+            try {
+                val newItems = if (searchQuery.isNotBlank()) {
+                    val res = MovieRepository.searchMovies(activeSource, searchQuery, nextPage)
+                    if (res.size >= 18) gridTotalPages = nextPage + 1
+                    res
+                } else if (viewAllCategory != null) {
+                    val slug = viewAllCategory!!.first
+                    val res = when (slug) {
+                        "trung-quoc", "han-quoc", "au-my" -> MovieRepository.getCountryMovies(activeSource, slug, nextPage)
+                        "co-trang" -> MovieRepository.getGenreMovies(activeSource, slug, nextPage)
+                        "latest" -> MovieRepository.getLatestMovies(activeSource, nextPage)
+                        else -> MovieRepository.getCategoryMovies(activeSource, slug, nextPage)
+                    }
+                    if (res.size >= 12) gridTotalPages = nextPage + 1
+                    res
+                } else {
+                    val (items, total) = MovieRepository.filterMovies(
+                        source = activeSource,
+                        category = selectedCategory,
+                        genre = selectedGenre,
+                        country = selectedCountry,
+                        year = selectedYear,
+                        keyword = "",
+                        page = nextPage
+                    )
+                    gridTotalPages = total
+                    items
+                }
+
+                if (newItems.isNotEmpty()) {
+                    val existingSlugs = gridMovies.map { it.slug }.toSet()
+                    val distinctNew = newItems.filter { it.slug !in existingSlugs }
+                    gridMovies = gridMovies + distinctNew
+                    gridPage = nextPage
+                }
+            } catch (_: Exception) {
+            } finally {
+                isGridLoadingMore = false
+            }
+        }
+    }
+
+    // Endless scroll detection
+    val shouldLoadMore = remember {
+        derivedStateOf {
+            val layoutInfo = gridState.layoutInfo
+            val totalItems = layoutInfo.totalItemsCount
+            val lastVisibleIndex = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            totalItems > 0 && lastVisibleIndex >= totalItems - 6
+        }
+    }
+
+    LaunchedEffect(shouldLoadMore.value) {
+        if (shouldLoadMore.value && !isGridLoading && !isGridLoadingMore && gridPage < gridTotalPages) {
+            loadGridMore()
         }
     }
 
@@ -201,14 +281,14 @@ fun MoviePane(
         if (!isCatalogGridActive) {
             loadHome()
         } else {
-            loadGrid(1)
+            loadGridInitial()
         }
     }
 
     // Trigger grid load when filter / search / viewAll changes
     LaunchedEffect(searchQuery, selectedCategory, selectedGenre, selectedCountry, selectedYear, viewAllCategory) {
         if (isCatalogGridActive) {
-            loadGrid(1)
+            loadGridInitial()
         }
     }
 
@@ -220,7 +300,7 @@ fun MoviePane(
             movieDetail = null
             try {
                 movieDetail = MovieRepository.getMovieDetail(activeSource, slug)
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 movieDetail = null
             } finally {
                 isDetailLoading = false
@@ -240,6 +320,7 @@ fun MoviePane(
                 .background(Tone.surface)
                 .padding(horizontal = 16.dp, vertical = 10.dp)
         ) {
+            // Row 1: Title & Source Switcher
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -284,7 +365,7 @@ fun MoviePane(
 
             Spacer(Modifier.height(10.dp))
 
-            // SEARCH BAR
+            // Row 2: Search Input Bar
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -335,50 +416,153 @@ fun MoviePane(
                     )
                 }
             }
-        }
 
-        // FILTER CHIPS ROW (Categories, Genres, Countries, Years)
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(Tone.surface)
-                .padding(bottom = 8.dp)
-        ) {
-            // Category Row
-            FilterScrollRow(
-                options = MovieFilterData.categories,
-                selected = selectedCategory,
-                onSelect = {
-                    selectedCategory = it
-                    viewAllCategory = null
-                }
-            )
+            Spacer(Modifier.height(10.dp))
 
-            // Genre Row
-            FilterScrollRow(
-                options = MovieFilterData.genres,
-                selected = selectedGenre,
-                onSelect = {
-                    selectedGenre = it
-                    viewAllCategory = null
-                }
-            )
-
-            // Country & Year Combined Row
+            // Row 3: Quick Category Pills + Filter Sheet Button (Clean & Compact)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp, vertical = 2.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                // Clear all filters button if any is selected
-                if (selectedCategory.isNotBlank() || selectedGenre.isNotBlank() || selectedCountry.isNotBlank() || selectedYear.isNotBlank() || viewAllCategory != null) {
+                // Filter Button with Badge
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(if (activeFilterCount > 0) Tone.accent else Tone.surfaceHigh)
+                        .border(
+                            0.5.dp,
+                            if (activeFilterCount > 0) Tone.accent else Tone.outline.copy(alpha = 0.5f),
+                            RoundedCornerShape(16.dp)
+                        )
+                        .clickable { showFilterSheet = true }
+                        .padding(horizontal = 12.dp, vertical = 7.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = TmIcons.FilterHorizontal,
+                            contentDescription = null,
+                            tint = if (activeFilterCount > 0) Color.Black else Tone.text,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Text(
+                            text = if (activeFilterCount > 0) "Bộ lọc ($activeFilterCount)" else "Bộ lọc",
+                            color = if (activeFilterCount > 0) Color.Black else Tone.text,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                // Quick Category Pills
+                val quickPills = listOf(
+                    "" to "Tất cả",
+                    "phim-bo" to "Phim bộ",
+                    "phim-le" to "Phim lẻ",
+                    "phim-chieu-rap" to "Chiếu rạp",
+                    "hoat-hinh" to "Hoạt hình",
+                    "co-trang" to "Cổ trang",
+                    "han-quoc" to "Hàn Quốc",
+                    "trung-quoc" to "Trung Quốc"
+                )
+
+                quickPills.forEach { (slug, label) ->
+                    val isSelected = when (slug) {
+                        "han-quoc", "trung-quoc" -> selectedCountry == slug
+                        "co-trang" -> selectedGenre == slug
+                        else -> selectedCategory == slug && selectedCountry.isBlank() && selectedGenre.isBlank()
+                    }
+
                     Box(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(Tone.accent.copy(alpha = 0.2f))
-                            .border(1.dp, Tone.accent, RoundedCornerShape(8.dp))
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(if (isSelected) Tone.accent else Tone.surfaceHigh)
+                            .clickable {
+                                viewAllCategory = null
+                                when (slug) {
+                                    "han-quoc", "trung-quoc" -> {
+                                        selectedCountry = if (selectedCountry == slug) "" else slug
+                                        selectedCategory = ""
+                                        selectedGenre = ""
+                                    }
+                                    "co-trang" -> {
+                                        selectedGenre = if (selectedGenre == slug) "" else slug
+                                        selectedCategory = ""
+                                        selectedCountry = ""
+                                    }
+                                    else -> {
+                                        selectedCategory = if (selectedCategory == slug) "" else slug
+                                        selectedCountry = ""
+                                        selectedGenre = ""
+                                    }
+                                }
+                            }
+                            .padding(horizontal = 12.dp, vertical = 7.dp)
+                    ) {
+                        Text(
+                            text = label,
+                            color = if (isSelected) Color.Black else Tone.text.copy(alpha = 0.85f),
+                            fontSize = 12.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                        )
+                    }
+                }
+            }
+
+            // Row 4: Dismissible Active Filters Row (Only shown if filters are chosen)
+            if (activeFilterCount > 0 || viewAllCategory != null) {
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (viewAllCategory != null) {
+                        ActiveChip(
+                            label = "Mục: ${viewAllCategory!!.second}",
+                            onDismiss = { viewAllCategory = null }
+                        )
+                    }
+                    if (selectedCategory.isNotBlank()) {
+                        val catLabel = MovieFilterData.categories.firstOrNull { it.slug == selectedCategory }?.label ?: selectedCategory
+                        ActiveChip(
+                            label = "Danh mục: $catLabel",
+                            onDismiss = { selectedCategory = "" }
+                        )
+                    }
+                    if (selectedGenre.isNotBlank()) {
+                        val gLabel = MovieFilterData.genres.firstOrNull { it.slug == selectedGenre }?.label ?: selectedGenre
+                        ActiveChip(
+                            label = "Thể loại: $gLabel",
+                            onDismiss = { selectedGenre = "" }
+                        )
+                    }
+                    if (selectedCountry.isNotBlank()) {
+                        val cLabel = MovieFilterData.countries.firstOrNull { it.slug == selectedCountry }?.label ?: selectedCountry
+                        ActiveChip(
+                            label = "Quốc gia: $cLabel",
+                            onDismiss = { selectedCountry = "" }
+                        )
+                    }
+                    if (selectedYear.isNotBlank()) {
+                        ActiveChip(
+                            label = "Năm: $selectedYear",
+                            onDismiss = { selectedYear = "" }
+                        )
+                    }
+
+                    // Reset all button
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Tone.surfaceHigh)
                             .clickable {
                                 selectedCategory = ""
                                 selectedGenre = ""
@@ -387,35 +571,10 @@ fun MoviePane(
                                 viewAllCategory = null
                                 searchQuery = ""
                             }
-                            .padding(horizontal = 10.dp, vertical = 4.dp),
-                        contentAlignment = Alignment.Center
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
                     ) {
-                        Text("✕ Đặt lại", color = Tone.accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Text("Xóa tất cả", color = Tone.accent, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                     }
-                }
-
-                // Country options
-                MovieFilterData.countries.forEach { opt ->
-                    FilterChip(
-                        label = opt.label,
-                        isSelected = selectedCountry == opt.slug,
-                        onClick = {
-                            selectedCountry = if (selectedCountry == opt.slug) "" else opt.slug
-                            viewAllCategory = null
-                        }
-                    )
-                }
-
-                // Year options
-                MovieFilterData.years.forEach { opt ->
-                    FilterChip(
-                        label = opt.label,
-                        isSelected = selectedYear == opt.slug,
-                        onClick = {
-                            selectedYear = if (selectedYear == opt.slug) "" else opt.slug
-                            viewAllCategory = null
-                        }
-                    )
                 }
             }
         }
@@ -430,7 +589,7 @@ fun MoviePane(
         ) {
             if (isCatalogGridActive) {
                 // =============================================================
-                // CATALOG GRID VIEW (FILTER / SEARCH / VIEW ALL)
+                // CATALOG GRID VIEW (INFINITE SCROLL / ENDLESS PAGINATION)
                 // =============================================================
                 if (isGridLoading) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -455,78 +614,55 @@ fun MoviePane(
                         }
                     }
                 } else {
-                    Column(Modifier.fillMaxSize()) {
-                        LazyVerticalGrid(
-                            columns = GridCells.Adaptive(minSize = 130.dp),
-                            contentPadding = PaddingValues(
-                                start = 12.dp,
-                                end = 12.dp,
-                                top = 12.dp,
-                                bottom = bottomChrome + 64.dp
-                            ),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            items(gridMovies, key = { it.slug }) { item ->
-                                MoviePosterCard(
-                                    movie = item,
-                                    onClick = { selectedMovieSlug = item.slug }
-                                )
-                            }
+                    LazyVerticalGrid(
+                        state = gridState,
+                        columns = GridCells.Adaptive(minSize = 130.dp),
+                        contentPadding = PaddingValues(
+                            start = 12.dp,
+                            end = 12.dp,
+                            top = 12.dp,
+                            bottom = bottomChrome + 48.dp
+                        ),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        items(gridMovies, key = { it.slug }) { item ->
+                            MoviePosterCard(
+                                movie = item,
+                                onClick = { selectedMovieSlug = item.slug }
+                            )
                         }
 
-                        // Pagination bar
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(Tone.surface)
-                                .padding(horizontal = 16.dp, vertical = 8.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(if (gridPage > 1) Tone.surfaceHigh else Color.Transparent)
-                                    .clickable(enabled = gridPage > 1) { loadGrid(gridPage - 1) }
-                                    .padding(horizontal = 14.dp, vertical = 8.dp)
-                            ) {
-                                Text(
-                                    "‹ Trang trước",
-                                    color = if (gridPage > 1) Tone.text else Tone.text.copy(alpha = 0.3f),
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Medium
-                                )
+                        // Bottom loading indicator for endless scroll
+                        if (isGridLoadingMore) {
+                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 16.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    CircularProgressIndicator(color = Tone.accent, strokeWidth = 2.dp, modifier = Modifier.size(24.dp))
+                                }
                             }
-
-                            Text(
-                                "Trang $gridPage" + (if (gridTotalPages > 1) " / $gridTotalPages" else ""),
-                                color = Tone.accent,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(if (gridPage < gridTotalPages) Tone.surfaceHigh else Color.Transparent)
-                                    .clickable(enabled = gridPage < gridTotalPages) { loadGrid(gridPage + 1) }
-                                    .padding(horizontal = 14.dp, vertical = 8.dp)
-                            ) {
-                                Text(
-                                    "Trang tiếp ›",
-                                    color = if (gridPage < gridTotalPages) Tone.text else Tone.text.copy(alpha = 0.3f),
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Medium
-                                )
+                        } else if (gridPage >= gridTotalPages && gridMovies.size >= 12) {
+                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 16.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text("Đã xem hết danh sách", color = Tone.text.copy(alpha = 0.4f), fontSize = 12.sp)
+                                }
                             }
                         }
                     }
                 }
             } else {
                 // =============================================================
-                // HOME SHELVES VIEW (HERO CAROUSEL + HORIZONTAL ROWS)
+                // HOME SHELVES VIEW (HERO CAROUSEL + HORIZONTAL SHELVES)
                 // =============================================================
                 if (isHomeLoading) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -536,36 +672,47 @@ fun MoviePane(
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(top = 10.dp, bottom = bottomChrome + 40.dp),
-                        verticalArrangement = Arrangement.spacedBy(18.dp)
+                        verticalArrangement = Arrangement.spacedBy(20.dp)
                     ) {
-                        // FEATURED HERO BANNER
+                        // FEATURED MULTI-MOVIE HERO CAROUSEL
                         if (latestMovies.isNotEmpty()) {
-                            item(key = "featured_hero") {
-                                val featured = latestMovies.first()
-                                MovieFeaturedHero(
-                                    movie = featured,
-                                    onClick = { selectedMovieSlug = featured.slug }
+                            item(key = "featured_hero_carousel") {
+                                MovieHeroCarousel(
+                                    movies = latestMovies.take(6),
+                                    onMovieClick = { selectedMovieSlug = it.slug }
                                 )
                             }
                         }
 
                         // SHELF 1: PHIM MỚI CẬP NHẬT
-                        if (latestMovies.size > 1) {
+                        if (latestMovies.size > 6) {
                             item(key = "shelf_latest") {
                                 MovieShelfRow(
                                     title = "🌟 Phim Mới Cập Nhật",
-                                    movies = latestMovies.drop(1),
+                                    movies = latestMovies.drop(6),
                                     onViewAll = { viewAllCategory = "latest" to "Phim Mới Cập Nhật" },
                                     onMovieClick = { selectedMovieSlug = it.slug }
                                 )
                             }
                         }
 
-                        // SHELF 2: PHIM BỘ ĐANG HOT
+                        // SHELF 2: PHIM CHIẾU RẠP ĐẶC SẮC
+                        if (cinemaMovies.isNotEmpty()) {
+                            item(key = "shelf_cinema") {
+                                MovieShelfRow(
+                                    title = "🎬 Phim Chiếu Rạp",
+                                    movies = cinemaMovies,
+                                    onViewAll = { viewAllCategory = "phim-chieu-rap" to "Phim Chiếu Rạp" },
+                                    onMovieClick = { selectedMovieSlug = it.slug }
+                                )
+                            }
+                        }
+
+                        // SHELF 3: PHIM BỘ ĐANG HOT
                         if (seriesMovies.isNotEmpty()) {
                             item(key = "shelf_series") {
                                 MovieShelfRow(
-                                    title = "🎬 Phim Bộ Đang Hot",
+                                    title = "🍿 Phim Bộ Đang Hot",
                                     movies = seriesMovies,
                                     onViewAll = { viewAllCategory = "phim-bo" to "Phim Bộ" },
                                     onMovieClick = { selectedMovieSlug = it.slug }
@@ -573,11 +720,11 @@ fun MoviePane(
                             }
                         }
 
-                        // SHELF 3: PHIM LẺ ĐẶC SẮC
+                        // SHELF 4: PHIM LẺ ĐẶC SẮC
                         if (singleMovies.isNotEmpty()) {
                             item(key = "shelf_single") {
                                 MovieShelfRow(
-                                    title = "🍿 Phim Lẻ Đặc Sắc",
+                                    title = "🎥 Phim Lẻ Đặc Sắc",
                                     movies = singleMovies,
                                     onViewAll = { viewAllCategory = "phim-le" to "Phim Lẻ" },
                                     onMovieClick = { selectedMovieSlug = it.slug }
@@ -585,19 +732,19 @@ fun MoviePane(
                             }
                         }
 
-                        // SHELF 4: PHIM TRUNG QUỐC
-                        if (chinaMovies.isNotEmpty()) {
-                            item(key = "shelf_china") {
+                        // SHELF 5: PHIM CỔ TRANG ĐẶC TUYỂN
+                        if (costumeMovies.isNotEmpty()) {
+                            item(key = "shelf_costume") {
                                 MovieShelfRow(
-                                    title = "🏮 Phim Trung Quốc",
-                                    movies = chinaMovies,
-                                    onViewAll = { viewAllCategory = "trung-quoc" to "Phim Trung Quốc" },
+                                    title = "🏮 Phim Cổ Trang",
+                                    movies = costumeMovies,
+                                    onViewAll = { viewAllCategory = "co-trang" to "Phim Cổ Trang" },
                                     onMovieClick = { selectedMovieSlug = it.slug }
                                 )
                             }
                         }
 
-                        // SHELF 5: PHIM HÀN QUỐC
+                        // SHELF 6: PHIM HÀN QUỐC
                         if (koreaMovies.isNotEmpty()) {
                             item(key = "shelf_korea") {
                                 MovieShelfRow(
@@ -609,19 +756,151 @@ fun MoviePane(
                             }
                         }
 
-                        // SHELF 6: HOẠT HÌNH & ANIME
+                        // SHELF 7: PHIM TRUNG QUỐC
+                        if (chinaMovies.isNotEmpty()) {
+                            item(key = "shelf_china") {
+                                MovieShelfRow(
+                                    title = "🏮 Phim Trung Quốc",
+                                    movies = chinaMovies,
+                                    onViewAll = { viewAllCategory = "trung-quoc" to "Phim Trung Quốc" },
+                                    onMovieClick = { selectedMovieSlug = it.slug }
+                                )
+                            }
+                        }
+
+                        // SHELF 8: HOẠT HÌNH & ANIME
                         if (animeMovies.isNotEmpty()) {
                             item(key = "shelf_anime") {
                                 MovieShelfRow(
                                     title = "🎌 Hoạt Hình & Anime",
                                     movies = animeMovies,
-                                    onViewAll = { viewAllCategory = "hoat-hinh" to "Hoạt Hình" },
+                                    onViewAll = { viewAllCategory = "hoat-hinh" to "Hoạt Hình & Anime" },
+                                    onMovieClick = { selectedMovieSlug = it.slug }
+                                )
+                            }
+                        }
+
+                        // SHELF 9: SUBTEAM / THUYẾT MINH (VSMov)
+                        if (subteamMovies.isNotEmpty()) {
+                            item(key = "shelf_subteam") {
+                                MovieShelfRow(
+                                    title = "👥 Phim Thuyết Minh & Subteam",
+                                    movies = subteamMovies,
+                                    onViewAll = { viewAllCategory = "subteam" to "Subteam" },
                                     onMovieClick = { selectedMovieSlug = it.slug }
                                 )
                             }
                         }
                     }
                 }
+            }
+        }
+    }
+
+    // =========================================================================
+    // ADVANCED FILTER MODAL BOTTOM SHEET
+    // =========================================================================
+    if (showFilterSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showFilterSheet = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = Tone.surface
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp, vertical = 12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Bộ lọc phim (${activeSource.badge})",
+                        color = Tone.text,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Đặt lại",
+                        color = Tone.accent,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.clickable {
+                            selectedCategory = ""
+                            selectedGenre = ""
+                            selectedCountry = ""
+                            selectedYear = ""
+                            viewAllCategory = null
+                        }
+                    )
+                }
+
+                Spacer(Modifier.height(16.dp))
+
+                // Section 1: Categories
+                Text("📂 Danh mục", color = Tone.text, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
+                FlowChipsRow(
+                    options = MovieFilterData.categories,
+                    selected = selectedCategory,
+                    onSelect = { selectedCategory = it }
+                )
+
+                Spacer(Modifier.height(16.dp))
+
+                // Section 2: Genres
+                Text("🎭 Thể loại", color = Tone.text, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
+                FlowChipsRow(
+                    options = MovieFilterData.genres,
+                    selected = selectedGenre,
+                    onSelect = { selectedGenre = it }
+                )
+
+                Spacer(Modifier.height(16.dp))
+
+                // Section 3: Countries
+                Text("🌏 Quốc gia", color = Tone.text, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
+                FlowChipsRow(
+                    options = MovieFilterData.countries,
+                    selected = selectedCountry,
+                    onSelect = { selectedCountry = it }
+                )
+
+                Spacer(Modifier.height(16.dp))
+
+                // Section 4: Years
+                Text("📅 Năm phát hành", color = Tone.text, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
+                FlowChipsRow(
+                    options = MovieFilterData.years,
+                    selected = selectedYear,
+                    onSelect = { selectedYear = it }
+                )
+
+                Spacer(Modifier.height(24.dp))
+
+                // Apply Button
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Tone.accent)
+                        .clickable {
+                            showFilterSheet = false
+                            viewAllCategory = null
+                        }
+                        .padding(vertical = 12.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("Áp dụng bộ lọc", color = Color.Black, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                }
+
+                Spacer(Modifier.height(24.dp))
             }
         }
     }
@@ -668,6 +947,63 @@ fun MoviePane(
 // =============================================================================
 
 @Composable
+private fun FlowChipsRow(
+    options: List<FilterOption>,
+    selected: String,
+    onSelect: (String) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        options.forEach { opt ->
+            val isSelected = selected == opt.slug
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(if (isSelected) Tone.accent else Tone.surfaceHigh)
+                    .border(
+                        0.5.dp,
+                        if (isSelected) Tone.accent else Tone.outline.copy(alpha = 0.4f),
+                        RoundedCornerShape(10.dp)
+                    )
+                    .clickable { onSelect(if (isSelected) "" else opt.slug) }
+                    .padding(horizontal = 12.dp, vertical = 7.dp)
+            ) {
+                Text(
+                    text = opt.label,
+                    color = if (isSelected) Color.Black else Tone.text.copy(alpha = 0.85f),
+                    fontSize = 12.sp,
+                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ActiveChip(
+    label: String,
+    onDismiss: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(Tone.accent.copy(alpha = 0.18f))
+            .border(0.5.dp, Tone.accent, RoundedCornerShape(12.dp))
+            .clickable(onClick = onDismiss)
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Text(text = label, color = Tone.accent, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        Icon(imageVector = TmIcons.Close, contentDescription = null, tint = Tone.accent, modifier = Modifier.size(12.dp))
+    }
+}
+
+@Composable
 private fun SourceTabButton(
     title: String,
     isSelected: Boolean,
@@ -689,129 +1025,178 @@ private fun SourceTabButton(
     }
 }
 
+/**
+ * Slide Hero nhiều phim với Pager và Auto-scroll
+ */
 @Composable
-private fun FilterScrollRow(
-    options: List<FilterOption>,
-    selected: String,
-    onSelect: (String) -> Unit
+private fun MovieHeroCarousel(
+    movies: List<MovieItem>,
+    onMovieClick: (MovieItem) -> Unit
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 3.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp)
-    ) {
-        options.forEach { opt ->
-            FilterChip(
-                label = opt.label,
-                isSelected = selected == opt.slug,
-                onClick = { onSelect(if (selected == opt.slug) "" else opt.slug) }
-            )
+    val pagerState = rememberPagerState(pageCount = { movies.size })
+
+    // Auto-scroll every 5.5s
+    LaunchedEffect(pagerState, movies.size) {
+        if (movies.size > 1) {
+            while (true) {
+                delay(5500)
+                if (!pagerState.isScrollInProgress) {
+                    val next = (pagerState.currentPage + 1) % movies.size
+                    pagerState.animateScrollToPage(next)
+                }
+            }
         }
     }
-}
 
-@Composable
-private fun FilterChip(
-    label: String,
-    isSelected: Boolean,
-    onClick: () -> Unit
-) {
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(if (isSelected) Tone.accent else Tone.surfaceHigh)
-            .border(
-                0.5.dp,
-                if (isSelected) Tone.accent else Tone.outline.copy(alpha = 0.4f),
-                RoundedCornerShape(8.dp)
-            )
-            .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 5.dp)
-    ) {
-        Text(
-            text = label,
-            color = if (isSelected) Color.Black else Tone.text.copy(alpha = 0.8f),
-            fontSize = 12.sp,
-            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-        )
-    }
-}
-
-@Composable
-private fun MovieFeaturedHero(
-    movie: MovieItem,
-    onClick: () -> Unit
-) {
-    Box(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .height(200.dp)
             .padding(horizontal = 16.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .background(Tone.surfaceHigh)
-            .clickable(onClick = onClick)
     ) {
-        // Poster / Backdrop Image
-        AsyncMovieImage(
-            url = movie.posterUrl.ifBlank { movie.thumbUrl },
-            modifier = Modifier.fillMaxSize(),
-            contentScale = ContentScale.Crop
-        )
-
-        // Gradient Scrim
         Box(
             modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.88f)),
-                        startY = 60f
-                    )
-                )
-        )
-
-        // Movie Info Overlay
-        Column(
-            modifier = Modifier
                 .fillMaxWidth()
-                .align(Alignment.BottomStart)
-                .padding(16.dp)
+                .height(210.dp)
+                .clip(RoundedCornerShape(18.dp))
+                .background(Tone.surfaceHigh)
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (movie.quality.isNotBlank()) {
-                    BadgePill(text = movie.quality, bg = Tone.accent, textColor = Color.Black)
-                    Spacer(Modifier.width(6.dp))
-                }
-                if (movie.lang.isNotBlank()) {
-                    BadgePill(text = movie.lang, bg = Color.White.copy(alpha = 0.2f), textColor = Color.White)
-                    Spacer(Modifier.width(6.dp))
-                }
-                if (movie.episodeCurrent.isNotBlank()) {
-                    BadgePill(text = movie.episodeCurrent, bg = Color.Black.copy(alpha = 0.5f), textColor = Tone.accent)
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxSize()
+            ) { page ->
+                val movie = movies.getOrNull(page) ?: return@HorizontalPager
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clickable { onMovieClick(movie) }
+                ) {
+                    // Backdrop / Poster Image
+                    AsyncMovieImage(
+                        url = movie.posterUrl.ifBlank { movie.thumbUrl },
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+
+                    // Gradient Scrim
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    colors = listOf(
+                                        Color.Transparent,
+                                        Color.Black.copy(alpha = 0.45f),
+                                        Color.Black.copy(alpha = 0.92f)
+                                    ),
+                                    startY = 40f
+                                )
+                            )
+                    )
+
+                    // Info Overlay
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .align(Alignment.BottomStart)
+                            .padding(14.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (movie.rating.isNotBlank()) {
+                                BadgePill(text = "⭐ ${movie.rating}", bg = Tone.accent, textColor = Color.Black)
+                                Spacer(Modifier.width(6.dp))
+                            }
+                            if (movie.quality.isNotBlank()) {
+                                BadgePill(text = movie.quality, bg = Color.White.copy(alpha = 0.2f), textColor = Color.White)
+                                Spacer(Modifier.width(6.dp))
+                            }
+                            if (movie.lang.isNotBlank()) {
+                                BadgePill(text = movie.lang, bg = Color.Black.copy(alpha = 0.5f), textColor = Tone.accent)
+                                Spacer(Modifier.width(6.dp))
+                            }
+                            if (movie.year.isNotBlank()) {
+                                BadgePill(text = movie.year, bg = Color.White.copy(alpha = 0.15f), textColor = Color.White)
+                            }
+                        }
+
+                        Spacer(Modifier.height(6.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.Bottom
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = movie.name,
+                                    color = Color.White,
+                                    fontSize = 17.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                if (movie.originName.isNotBlank()) {
+                                    Text(
+                                        text = movie.originName,
+                                        color = Color.White.copy(alpha = 0.7f),
+                                        fontSize = 12.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+
+                            Spacer(Modifier.width(10.dp))
+
+                            // Play pill button
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(20.dp))
+                                    .background(Tone.accent)
+                                    .clickable { onMovieClick(movie) }
+                                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = TmIcons.PlaySolid,
+                                        contentDescription = null,
+                                        tint = Color.Black,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(
+                                        text = "Xem",
+                                        color = Color.Black,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
-            Spacer(Modifier.height(4.dp))
-
-            Text(
-                text = movie.name,
-                color = Color.White,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-
-            if (movie.originName.isNotBlank()) {
-                Text(
-                    text = movie.originName + if (movie.year.isNotBlank()) " (${movie.year})" else "",
-                    color = Color.White.copy(alpha = 0.75f),
-                    fontSize = 12.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+            // Indicator Dots inside bottom right
+            if (movies.size > 1) {
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    repeat(movies.size) { index ->
+                        val isCurrent = pagerState.currentPage == index
+                        Box(
+                            modifier = Modifier
+                                .height(4.dp)
+                                .width(if (isCurrent) 16.dp else 5.dp)
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(if (isCurrent) Tone.accent else Color.White.copy(alpha = 0.4f))
+                        )
+                    }
+                }
             }
         }
     }
@@ -885,8 +1270,24 @@ private fun MoviePosterCard(
                 modifier = Modifier.fillMaxSize()
             )
 
-            // Top-left badge: Quality or Episode
-            if (movie.episodeCurrent.isNotBlank()) {
+            // Top-left badge: Rating or Episode
+            if (movie.rating.isNotBlank()) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(4.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color.Black.copy(alpha = 0.75f))
+                        .padding(horizontal = 5.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = "⭐ ${movie.rating}",
+                        color = Tone.accent,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            } else if (movie.episodeCurrent.isNotBlank()) {
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopStart)
@@ -1003,11 +1404,14 @@ private fun MovieDetailContent(
                 Spacer(Modifier.height(6.dp))
 
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (detail.movie.rating.isNotBlank()) {
+                        BadgePill("⭐ ${detail.movie.rating}", bg = Tone.accent, textColor = Color.Black)
+                    }
                     if (detail.movie.year.isNotBlank()) {
                         BadgePill(detail.movie.year, bg = Tone.surfaceHigh, textColor = Tone.text)
                     }
                     if (detail.movie.quality.isNotBlank()) {
-                        BadgePill(detail.movie.quality, bg = Tone.accent, textColor = Color.Black)
+                        BadgePill(detail.movie.quality, bg = Tone.surfaceHigh, textColor = Tone.accent)
                     }
                     if (detail.movie.lang.isNotBlank()) {
                         BadgePill(detail.movie.lang, bg = Tone.surfaceHigh, textColor = Tone.text)
@@ -1285,7 +1689,6 @@ private fun MovieDetailContent(
                                     }
                                 }
                             }
-                            // Fill remaining spaces in row
                             if (rowEps.size < 4) {
                                 repeat(4 - rowEps.size) {
                                     Spacer(Modifier.weight(1f))

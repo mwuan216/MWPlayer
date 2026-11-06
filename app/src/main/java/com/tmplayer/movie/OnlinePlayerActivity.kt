@@ -1,14 +1,15 @@
 package com.tmplayer.movie
 
+import android.app.Activity
+import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
+import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
-import android.view.View
-import android.view.WindowInsets
-import android.view.WindowInsetsController
+import android.provider.Settings
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -16,11 +17,16 @@ import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -33,16 +39,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
-import com.tmplayer.ui.theme.TMPlayerTheme
-import androidx.media3.common.PlaybackException
-import androidx.media3.common.MimeTypes
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
@@ -66,13 +65,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.media3.common.C
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -82,12 +88,15 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.tmplayer.ui.icons.TmIcons
+import com.tmplayer.ui.theme.TMPlayerTheme
 import com.tmplayer.ui.theme.Tone
 import kotlinx.coroutines.delay
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /**
  * Trình phát video phim trực tuyến cho MovieBot / MWPlayer
- * Hỗ trợ HLS .m3u8, MP4 đa luồng, chọn server, chọn tập, điều khiển tốc độ, tua 10s...
+ * Đồng bộ các cử chỉ vuốt, phím điều khiển, chế độ khóa, PiP, tỉ lệ khung hình như Player chính.
  */
 object OnlinePlayerSession {
     var detail: MovieDetail? = null
@@ -98,7 +107,8 @@ object OnlinePlayerSession {
 @OptIn(UnstableApi::class)
 class OnlinePlayerActivity : ComponentActivity() {
 
-    private var player: ExoPlayer? = null
+    internal var exoPlayerInstance: ExoPlayer? = null
+    private var inPipMode: Boolean = false
 
     companion object {
         fun launch(context: Context, detail: MovieDetail, serverIdx: Int = 0, epIdx: Int = 0) {
@@ -120,10 +130,33 @@ class OnlinePlayerActivity : ComponentActivity() {
         setContent {
             TMPlayerTheme {
                 OnlinePlayerScreen(
+                    activity = this,
                     onClose = { finish() },
-                    onToggleOrientation = { toggleOrientation() }
+                    onToggleOrientation = { toggleOrientation() },
+                    onEnterPip = { enterPip() }
                 )
             }
+        }
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && exoPlayerInstance?.isPlaying == true) {
+            enterPip()
+        }
+    }
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        inPipMode = isInPictureInPictureMode
+    }
+
+    private fun enterPip() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                val params = PictureInPictureParams.Builder().build()
+                enterPictureInPictureMode(params)
+            } catch (_: Exception) {}
         }
     }
 
@@ -144,21 +177,26 @@ class OnlinePlayerActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        player?.release()
-        player = null
+        exoPlayerInstance?.release()
+        exoPlayerInstance = null
     }
 }
 
 @OptIn(UnstableApi::class)
 @Composable
 fun OnlinePlayerScreen(
+    activity: OnlinePlayerActivity,
     onClose: () -> Unit,
-    onToggleOrientation: () -> Unit
+    onToggleOrientation: () -> Unit,
+    onEnterPip: () -> Unit
 ) {
     val detail = OnlinePlayerSession.detail ?: run {
         onClose()
         return
     }
+
+    val context = LocalContext.current
+    val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
 
     var serverIdx by remember { mutableIntStateOf(OnlinePlayerSession.serverIndex) }
     var epIdx by remember { mutableIntStateOf(OnlinePlayerSession.episodeIndex) }
@@ -187,9 +225,43 @@ fun OnlinePlayerScreen(
     var playbackSpeed by remember { mutableFloatStateOf(1.0f) }
     var resizeMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
 
-    // Auto-hide overlay
-    LaunchedEffect(lastInteraction, showControls) {
-        if (showControls) {
+    // Screen lock state
+    var isLocked by remember { mutableStateOf(false) }
+
+    // Gesture HUD states
+    var brightnessLevel by remember { mutableFloatStateOf(-1f) }
+    var volumeLevel by remember { mutableFloatStateOf(-1f) }
+    var isScrubbing by remember { mutableStateOf(false) }
+    var scrubTargetMs by remember { mutableLongStateOf(0L) }
+    var scrubDeltaMs by remember { mutableLongStateOf(0L) }
+    var isHoldingSpeed by remember { mutableStateOf(false) }
+    var doubleTapSeekSide by remember { mutableStateOf<Int?>(null) } // -1 left, 1 right
+    var doubleTapSeekSeconds by remember { mutableIntStateOf(0) }
+
+    // Auto-hide HUD overlays
+    LaunchedEffect(brightnessLevel) {
+        if (brightnessLevel >= 0f) {
+            delay(1500)
+            brightnessLevel = -1f
+        }
+    }
+    LaunchedEffect(volumeLevel) {
+        if (volumeLevel >= 0f) {
+            delay(1500)
+            volumeLevel = -1f
+        }
+    }
+    LaunchedEffect(doubleTapSeekSeconds) {
+        if (doubleTapSeekSeconds != 0) {
+            delay(800)
+            doubleTapSeekSide = null
+            doubleTapSeekSeconds = 0
+        }
+    }
+
+    // Auto-hide controls overlay
+    LaunchedEffect(lastInteraction, showControls, isLocked) {
+        if (showControls && !isLocked) {
             delay(4500)
             if (System.currentTimeMillis() - lastInteraction >= 4000 && isPlaying) {
                 showControls = false
@@ -207,8 +279,6 @@ fun OnlinePlayerScreen(
             }
         }
     }
-
-    val context = androidx.compose.ui.platform.LocalContext.current
 
     val exoPlayer = remember {
         val httpSourceFactory = DefaultHttpDataSource.Factory()
@@ -228,7 +298,9 @@ fun OnlinePlayerScreen(
 
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(mediaSourceFactory)
-            .build()
+            .build().also {
+                activity.exoPlayerInstance = it
+            }
     }
 
     // Update media source when stream changes
@@ -297,33 +369,186 @@ fun OnlinePlayerScreen(
         }
     }
 
-    Box(
+    fun getScreenBrightness(): Float {
+        val cur = activity.window.attributes.screenBrightness
+        if (cur >= 0f) return cur
+        return runCatching {
+            Settings.System.getInt(activity.contentResolver, Settings.System.SCREEN_BRIGHTNESS) / 255f
+        }.getOrDefault(0.5f)
+    }
+
+    fun setScreenBrightness(level: Float) {
+        val clamped = level.coerceIn(0.02f, 1.0f)
+        activity.window.attributes = activity.window.attributes.apply {
+            screenBrightness = clamped
+        }
+        brightnessLevel = clamped
+    }
+
+    fun getScreenVolume(): Float {
+        val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        if (max <= 0) return 0f
+        return audioManager.getStreamVolume(AudioManager.STREAM_MUSIC) / max.toFloat()
+    }
+
+    fun setScreenVolume(fraction: Float) {
+        val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        if (max <= 0) return
+        val clamped = fraction.coerceIn(0f, 1f)
+        val step = (clamped * max).roundToInt()
+        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, step, 0)
+        volumeLevel = step / max.toFloat()
+    }
+
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
-            .clickable(
-                indication = null,
-                interactionSource = remember { MutableInteractionSource() }
-            ) {
-                showControls = !showControls
-                lastInteraction = System.currentTimeMillis()
-            }
     ) {
-        // Video Surface
-        AndroidView(
-            factory = { ctx ->
-                PlayerView(ctx).apply {
-                    this.player = exoPlayer
-                    useController = false
-                    this.resizeMode = resizeMode
-                    setBackgroundColor(android.graphics.Color.BLACK)
+        val screenWidthPx = constraints.maxWidth.toFloat()
+        val screenHeightPx = constraints.maxHeight.toFloat()
+
+        // GESTURE DETECTOR LAYER
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(isLocked, showControls) {
+                    if (isLocked) {
+                        detectTapGestures(
+                            onTap = {
+                                // Briefly show unlock pill
+                                showControls = !showControls
+                            }
+                        )
+                        return@pointerInput
+                    }
+
+                    var dragMode = 0 // 0 none, 1 brightness, 2 volume, 3 scrub
+                    var initialBrightness = 0.5f
+                    var initialVolume = 0.5f
+                    var initialSeekPos = 0L
+
+                    detectDragGestures(
+                        onDragStart = { offset ->
+                            initialBrightness = getScreenBrightness()
+                            initialVolume = getScreenVolume()
+                            initialSeekPos = exoPlayer.currentPosition
+                            dragMode = 0
+                        },
+                        onDragEnd = {
+                            if (dragMode == 3 && duration > 0) {
+                                exoPlayer.seekTo(scrubTargetMs)
+                                currentPosition = scrubTargetMs
+                            }
+                            dragMode = 0
+                            isScrubbing = false
+                        },
+                        onDragCancel = {
+                            dragMode = 0
+                            isScrubbing = false
+                        },
+                        onDrag = { change, dragAmount ->
+                            change.consume()
+                            val (dx, dy) = dragAmount
+                            val pos = change.position
+
+                            if (dragMode == 0) {
+                                if (abs(dx) > abs(dy) * 1.5f && abs(dx) > 12f) {
+                                    dragMode = 3 // Horizontal Scrub
+                                    isScrubbing = true
+                                } else if (abs(dy) > abs(dx) * 1.5f && abs(dy) > 12f) {
+                                    dragMode = if (pos.x < screenWidthPx / 2f) 1 else 2 // Left = Brightness, Right = Volume
+                                }
+                            }
+
+                            when (dragMode) {
+                                1 -> { // Brightness
+                                    val deltaFraction = -dy / (screenHeightPx * 0.7f)
+                                    val next = (getScreenBrightness() + deltaFraction).coerceIn(0.02f, 1f)
+                                    setScreenBrightness(next)
+                                }
+                                2 -> { // Volume
+                                    val deltaFraction = -dy / (screenHeightPx * 0.7f)
+                                    val next = (getScreenVolume() + deltaFraction).coerceIn(0f, 1f)
+                                    setScreenVolume(next)
+                                }
+                                3 -> { // Scrub
+                                    if (duration > 0) {
+                                        val scrubFactor = 120_000L // full screen swipe = 2 minutes
+                                        val deltaMs = (dx / screenWidthPx * scrubFactor).toLong()
+                                        initialSeekPos = (initialSeekPos + deltaMs).coerceIn(0L, duration)
+                                        scrubTargetMs = initialSeekPos
+                                        scrubDeltaMs = scrubTargetMs - currentPosition
+                                        isScrubbing = true
+                                    }
+                                }
+                            }
+                        }
+                    )
                 }
-            },
-            update = { view ->
-                view.resizeMode = resizeMode
-            },
-            modifier = Modifier.fillMaxSize()
-        )
+                .pointerInput(isLocked) {
+                    if (isLocked) return@pointerInput
+                    detectTapGestures(
+                        onTap = {
+                            showControls = !showControls
+                            lastInteraction = System.currentTimeMillis()
+                        },
+                        onDoubleTap = { offset ->
+                            lastInteraction = System.currentTimeMillis()
+                            val x = offset.x
+                            if (x < screenWidthPx * 0.35f) {
+                                // Double tap left: Rewind 10s
+                                doubleTapSeekSide = -1
+                                doubleTapSeekSeconds += 10
+                                val target = (exoPlayer.currentPosition - 10_000).coerceAtLeast(0L)
+                                exoPlayer.seekTo(target)
+                                currentPosition = target
+                            } else if (x > screenWidthPx * 0.65f) {
+                                // Double tap right: Fast forward 10s
+                                doubleTapSeekSide = 1
+                                doubleTapSeekSeconds += 10
+                                val dur = exoPlayer.duration
+                                val target = (exoPlayer.currentPosition + 10_000).let { if (dur > 0) it.coerceAtMost(dur) else it }
+                                exoPlayer.seekTo(target)
+                                currentPosition = target
+                            } else {
+                                // Double tap center: Play / Pause
+                                if (isPlaying) exoPlayer.pause() else exoPlayer.play()
+                            }
+                        },
+                        onLongPress = {
+                            // Hold to fast forward 2.0x
+                            isHoldingSpeed = true
+                            exoPlayer.playbackParameters = PlaybackParameters(2.0f)
+                        }
+                    )
+                }
+        ) {
+            // Video Surface
+            AndroidView(
+                factory = { ctx ->
+                    PlayerView(ctx).apply {
+                        this.player = exoPlayer
+                        useController = false
+                        this.resizeMode = resizeMode
+                        setBackgroundColor(android.graphics.Color.BLACK)
+                    }
+                },
+                update = { view ->
+                    view.resizeMode = resizeMode
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+
+        // Release hold fast forward
+        LaunchedEffect(isHoldingSpeed) {
+            if (isHoldingSpeed) {
+                delay(3000)
+                isHoldingSpeed = false
+                exoPlayer.playbackParameters = PlaybackParameters(playbackSpeed)
+            }
+        }
 
         // Loading Spinner
         if (isLoading) {
@@ -332,30 +557,165 @@ fun OnlinePlayerScreen(
             }
         }
 
+        // =====================================================================
+        // HUD FEEDBACK OVERLAYS (Brightness, Volume, Scrub, Double Tap, Hold)
+        // =====================================================================
+
+        // BRIGHTNESS HUD (Left)
+        if (brightnessLevel >= 0f) {
+            Box(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .align(Alignment.CenterStart)
+                    .padding(start = 28.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                LevelIndicatorHud(
+                    icon = TmIcons.Trailer, // Sun/Brightness placeholder
+                    label = "${(brightnessLevel * 100).roundToInt()}%",
+                    progress = brightnessLevel
+                )
+            }
+        }
+
+        // VOLUME HUD (Right)
+        if (volumeLevel >= 0f) {
+            Box(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .align(Alignment.CenterEnd)
+                    .padding(end = 28.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                LevelIndicatorHud(
+                    icon = if (volumeLevel <= 0f) TmIcons.VolumeOff else TmIcons.VolumeUp,
+                    label = "${(volumeLevel * 100).roundToInt()}%",
+                    progress = volumeLevel
+                )
+            }
+        }
+
+        // SCRUB TIME PREVIEW HUD (Center)
+        if (isScrubbing) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color.Black.copy(alpha = 0.82f))
+                    .padding(horizontal = 20.dp, vertical = 14.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = formatTimeMs(scrubTargetMs),
+                        color = Color.White,
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    val sign = if (scrubDeltaMs >= 0) "+" else ""
+                    Text(
+                        text = "[$sign${formatTimeMs(abs(scrubDeltaMs))}] / ${formatTimeMs(duration)}",
+                        color = Tone.accent,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+        }
+
+        // DOUBLE TAP RIPPLE PILLS
+        if (doubleTapSeekSide != null && doubleTapSeekSeconds > 0) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 48.dp),
+                contentAlignment = if (doubleTapSeekSide == -1) Alignment.CenterStart else Alignment.CenterEnd
+            ) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(24.dp))
+                        .background(Color.Black.copy(alpha = 0.75f))
+                        .padding(horizontal = 18.dp, vertical = 12.dp)
+                ) {
+                    Text(
+                        text = if (doubleTapSeekSide == -1) "« $doubleTapSeekSeconds giây" else "$doubleTapSeekSeconds giây »",
+                        color = Tone.accent,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+
+        // HOLD TO 2.0X SPEED HUD (Top Center)
+        if (isHoldingSpeed) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .statusBarsPadding()
+                    .padding(top = 16.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Tone.accent)
+                    .padding(horizontal = 16.dp, vertical = 6.dp)
+            ) {
+                Text(
+                    text = "2.0x  ▶▶",
+                    color = Color.Black,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+
+        // UNLOCK BUTTON (When Locked)
+        if (isLocked) {
+            AnimatedVisibility(
+                visible = showControls,
+                enter = fadeIn() + scaleIn(),
+                exit = fadeOut() + scaleOut(),
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .statusBarsPadding()
+                    .padding(16.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(24.dp))
+                        .background(Color.Black.copy(alpha = 0.75f))
+                        .clickable {
+                            isLocked = false
+                            showControls = true
+                        }
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(imageVector = TmIcons.LockOpen, contentDescription = null, tint = Tone.accent, modifier = Modifier.size(18.dp))
+                    Text("Chạm để mở khóa", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+
         // Error Overlay
         if (errorMessage != null) {
             Box(
                 Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.85f)),
+                    .background(Color.Black.copy(alpha = 0.88f)),
                 contentAlignment = Alignment.Center
             ) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier.padding(24.dp)
                 ) {
-                    Icon(
-                        imageVector = TmIcons.Warning,
-                        contentDescription = null,
-                        tint = Tone.caution,
-                        modifier = Modifier.size(48.dp)
-                    )
+                    Icon(imageVector = TmIcons.Close, contentDescription = null, tint = Tone.caution, modifier = Modifier.size(48.dp))
                     Spacer(Modifier.height(12.dp))
                     Text(
                         text = errorMessage ?: "Lỗi phát video",
                         color = Color.White,
                         fontSize = 14.sp,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        textAlign = TextAlign.Center
                     )
                     Spacer(Modifier.height(16.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -389,9 +749,9 @@ fun OnlinePlayerScreen(
             }
         }
 
-        // Controls Overlay
+        // Controls Overlay (When not locked)
         AnimatedVisibility(
-            visible = showControls,
+            visible = showControls && !isLocked,
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier.fillMaxSize()
@@ -442,6 +802,23 @@ fun OnlinePlayerScreen(
                             )
                         }
                     }
+
+                    // Screen Lock button
+                    ControlButton(
+                        icon = TmIcons.Lock,
+                        onClick = {
+                            isLocked = true
+                            showControls = false
+                        }
+                    )
+                    Spacer(Modifier.width(8.dp))
+
+                    // Picture-in-Picture
+                    ControlButton(
+                        icon = TmIcons.PictureInPicture,
+                        onClick = onEnterPip
+                    )
+                    Spacer(Modifier.width(8.dp))
 
                     // Aspect ratio / resize mode
                     ControlButton(
@@ -727,6 +1104,41 @@ fun OnlinePlayerScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun LevelIndicatorHud(
+    icon: ImageVector,
+    label: String,
+    progress: Float
+) {
+    Column(
+        modifier = Modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(Color.Black.copy(alpha = 0.78f))
+            .padding(horizontal = 12.dp, vertical = 16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Icon(icon, contentDescription = null, tint = Tone.accent, modifier = Modifier.size(24.dp))
+        // Vertical Progress Bar
+        Box(
+            modifier = Modifier
+                .width(6.dp)
+                .height(100.dp)
+                .clip(RoundedCornerShape(3.dp))
+                .background(Color.White.copy(alpha = 0.25f)),
+            contentAlignment = Alignment.BottomCenter
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .fillMaxHeight(progress.coerceIn(0f, 1f))
+                    .background(Tone.accent)
+            )
+        }
+        Text(text = label, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
     }
 }
 
