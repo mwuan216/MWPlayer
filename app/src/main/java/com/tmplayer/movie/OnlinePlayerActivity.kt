@@ -20,10 +20,12 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -57,12 +59,14 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -96,10 +100,17 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
+import com.tmplayer.data.SettingsStore
+import com.tmplayer.player.SubtitleColour
+import com.tmplayer.player.SubtitleLook
+import com.tmplayer.player.SubtitlePosition
+import com.tmplayer.player.SubtitleSize
+import com.tmplayer.player.SubtitleStyle
 import com.tmplayer.ui.icons.TmIcons
 import com.tmplayer.ui.theme.TMPlayerTheme
 import com.tmplayer.ui.theme.Tone
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -207,6 +218,9 @@ fun OnlinePlayerScreen(
 
     val context = LocalContext.current
     val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
+    val settings = remember { SettingsStore(context) }
+    val subtitleStyle by settings.subtitleStyle.collectAsState(initial = SubtitleStyle())
+    val scope = rememberCoroutineScope()
 
     var serverIdx by remember { mutableIntStateOf(OnlinePlayerSession.serverIndex) }
     var epIdx by remember { mutableIntStateOf(OnlinePlayerSession.episodeIndex) }
@@ -601,24 +615,32 @@ fun OnlinePlayerScreen(
                         setBackgroundColor(android.graphics.Color.BLACK)
                         subtitleView?.apply {
                             setApplyEmbeddedStyles(true)
-                            setApplyEmbeddedFontSizes(true)
-                            setFixedTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
-                            setBottomPaddingFraction(0.15f)
-                            setStyle(
-                                CaptionStyleCompat(
-                                    android.graphics.Color.WHITE,
-                                    android.graphics.Color.TRANSPARENT,
-                                    android.graphics.Color.TRANSPARENT,
-                                    CaptionStyleCompat.EDGE_TYPE_OUTLINE,
-                                    android.graphics.Color.BLACK,
-                                    null
-                                )
-                            )
+                            setApplyEmbeddedFontSizes(false)
+                            setFractionalTextSize(subtitleStyle.size.fraction)
+                            val bottomPad = when (subtitleStyle.position) {
+                                SubtitlePosition.Bottom -> 0.22f
+                                SubtitlePosition.Raised -> 0.30f
+                                SubtitlePosition.High -> 0.40f
+                            }
+                            setBottomPaddingFraction(bottomPad)
+                            setStyle(SubtitleLook.captionStyle(subtitleStyle))
                         }
                     }
                 },
                 update = { view ->
                     view.resizeMode = resizeMode
+                    view.subtitleView?.apply {
+                        setApplyEmbeddedStyles(true)
+                        setApplyEmbeddedFontSizes(false)
+                        setFractionalTextSize(subtitleStyle.size.fraction)
+                        val bottomPad = when (subtitleStyle.position) {
+                            SubtitlePosition.Bottom -> 0.22f
+                            SubtitlePosition.Raised -> 0.30f
+                            SubtitlePosition.High -> 0.40f
+                        }
+                        setBottomPaddingFraction(bottomPad)
+                        setStyle(SubtitleLook.captionStyle(subtitleStyle))
+                    }
                 },
                 modifier = Modifier.fillMaxSize()
             )
@@ -1105,8 +1127,8 @@ fun OnlinePlayerScreen(
         }
 
         // SUBTITLE SELECTOR DIALOG / SHEET
-        if (showSubtitleSheet && streamInfo?.subtitles?.isNotEmpty() == true) {
-            val subs = streamInfo!!.subtitles
+        if (showSubtitleSheet) {
+            val subs = streamInfo?.subtitles ?: emptyList()
             Box(
                 Modifier
                     .fillMaxSize()
@@ -1116,7 +1138,7 @@ fun OnlinePlayerScreen(
             ) {
                 Surface(
                     modifier = Modifier
-                        .widthIn(max = 340.dp)
+                        .widthIn(max = 380.dp)
                         .padding(24.dp)
                         .clickable(enabled = false) {},
                     shape = RoundedCornerShape(20.dp),
@@ -1124,7 +1146,9 @@ fun OnlinePlayerScreen(
                     shadowElevation = 16.dp
                 ) {
                     Column(
-                        modifier = Modifier.padding(20.dp)
+                        modifier = Modifier
+                            .padding(20.dp)
+                            .verticalScroll(rememberScrollState())
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -1158,7 +1182,7 @@ fun OnlinePlayerScreen(
                                     applySubtitleSelection(null, false)
                                     showSubtitleSheet = false
                                 }
-                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                                .padding(horizontal = 16.dp, vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
@@ -1187,7 +1211,7 @@ fun OnlinePlayerScreen(
                                         applySubtitleSelection(sub, true)
                                         showSubtitleSheet = false
                                     }
-                                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                                    .padding(horizontal = 16.dp, vertical = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
@@ -1211,6 +1235,129 @@ fun OnlinePlayerScreen(
                                 }
                             }
                             Spacer(Modifier.height(8.dp))
+                        }
+
+                        Spacer(Modifier.height(6.dp))
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .height(1.dp)
+                                .background(Color.White.copy(alpha = 0.12f))
+                        )
+                        Spacer(Modifier.height(12.dp))
+
+                        Text("Kiểu hiển thị (Đồng bộ Cài đặt)", color = Tone.accent, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(10.dp))
+
+                        // Cỡ chữ
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Cỡ chữ", color = Color.White.copy(alpha = 0.85f), fontSize = 13.sp)
+                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                listOf(
+                                    SubtitleSize.Small to "Nhỏ",
+                                    SubtitleSize.Medium to "Vừa",
+                                    SubtitleSize.Large to "Lớn",
+                                    SubtitleSize.ExtraLarge to "Rất lớn"
+                                ).forEach { (sz, szLabel) ->
+                                    val isCur = subtitleStyle.size == sz
+                                    Box(
+                                        Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(if (isCur) Tone.accent else Color.White.copy(alpha = 0.1f))
+                                            .clickable {
+                                                scope.launch { settings.setSubtitleStyle(subtitleStyle.copy(size = sz)) }
+                                            }
+                                            .padding(horizontal = 8.dp, vertical = 5.dp)
+                                    ) {
+                                        Text(
+                                            szLabel,
+                                            color = if (isCur) Color.Black else Color.White,
+                                            fontSize = 11.sp,
+                                            fontWeight = if (isCur) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(Modifier.height(10.dp))
+
+                        // Vị trí
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Vị trí", color = Color.White.copy(alpha = 0.85f), fontSize = 13.sp)
+                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                listOf(
+                                    SubtitlePosition.Bottom to "Dưới",
+                                    SubtitlePosition.Raised to "Nâng cao",
+                                    SubtitlePosition.High to "Cao"
+                                ).forEach { (pos, posLabel) ->
+                                    val isCur = subtitleStyle.position == pos
+                                    Box(
+                                        Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(if (isCur) Tone.accent else Color.White.copy(alpha = 0.1f))
+                                            .clickable {
+                                                scope.launch { settings.setSubtitleStyle(subtitleStyle.copy(position = pos)) }
+                                            }
+                                            .padding(horizontal = 8.dp, vertical = 5.dp)
+                                    ) {
+                                        Text(
+                                            posLabel,
+                                            color = if (isCur) Color.Black else Color.White,
+                                            fontSize = 11.sp,
+                                            fontWeight = if (isCur) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(Modifier.height(10.dp))
+
+                        // Màu chữ
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Màu sắc", color = Color.White.copy(alpha = 0.85f), fontSize = 13.sp)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                listOf(
+                                    SubtitleColour.White to Color.White,
+                                    SubtitleColour.Yellow to Color(0xFFFFE14D),
+                                    SubtitleColour.Cyan to Color(0xFF5CE6FF),
+                                    SubtitleColour.Green to Color(0xFF7CF08A),
+                                    SubtitleColour.Pink to Color(0xFFFF9AE0)
+                                ).forEach { (col, cVal) ->
+                                    val isCur = subtitleStyle.colour == col
+                                    Box(
+                                        Modifier
+                                            .size(24.dp)
+                                            .clip(CircleShape)
+                                            .background(cVal)
+                                            .clickable {
+                                                scope.launch { settings.setSubtitleStyle(subtitleStyle.copy(colour = col)) }
+                                            }
+                                            .then(
+                                                if (isCur) Modifier.border(2.dp, Tone.accent, CircleShape)
+                                                else Modifier
+                                            ),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        if (isCur) {
+                                            Box(Modifier.size(6.dp).clip(CircleShape).background(Color.Black))
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
