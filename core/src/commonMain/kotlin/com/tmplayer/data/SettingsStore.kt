@@ -88,6 +88,7 @@ private val MIN_SIZE = longPreferencesKey("min_size_bytes")
 private val MAX_SIZE = longPreferencesKey("max_size_bytes")
 private val CHAT_FILTER = stringPreferencesKey("chat_filter")
 private val CHAT_SORT = stringPreferencesKey("chat_sort")
+private val CHAT_FOLDER_ORDER = stringPreferencesKey("chat_folder_order")
 /** "Only my folders", retired: read once by [SettingsStore.takeOnlyFolders] and removed. */
 private val HIDE_DEFAULT_GROUPS = booleanPreferencesKey("hide_default_groups")
 
@@ -1943,6 +1944,26 @@ class SettingsStore(private val prefs: DataStore<Preferences>) : AllowedChatsSou
 
     suspend fun setChatSort(name: String) {
         prefs.edit { it[CHAT_SORT] = name }
+    }
+
+    /** Custom user-defined order of chat folder chips on the Chats page (keys separated by commas). */
+    val chatFolderOrder: Flow<List<String>> = read { prefs ->
+        prefs[CHAT_FOLDER_ORDER]
+            ?.split(",")
+            ?.map { it.trim() }
+            ?.filter { it.isNotEmpty() }
+            .orEmpty()
+    }
+
+    suspend fun setChatFolderOrder(order: List<String>) {
+        val clean = order.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+        prefs.edit { prefs ->
+            if (clean.isEmpty()) {
+                prefs.remove(CHAT_FOLDER_ORDER)
+            } else {
+                prefs[CHAT_FOLDER_ORDER] = clean.joinToString(",")
+            }
+        }
     }
 
     // ---- "Only my folders", retired ----------------------------------------------------------

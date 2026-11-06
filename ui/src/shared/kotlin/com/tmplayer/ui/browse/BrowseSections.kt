@@ -278,15 +278,18 @@ val BrowseSection.onChatsPage: Boolean
  */
 @androidx.compose.runtime.Immutable
 sealed interface ChatPageChip {
+    val key: String
     val label: String
     val icon: ImageVector
 
     data class Filter(val filter: ChatFilter) : ChatPageChip {
+        override val key: String get() = filter.name
         override val label: String get() = if (filter == ChatFilter.All) L.browseFilterAllChats else filter.label
         override val icon: ImageVector get() = filter.icon
     }
 
     data class Folder(val folder: BrowseSection.Folder, val iconName: String = "") : ChatPageChip {
+        override val key: String get() = "folder-${folder.id}"
         override val label: String get() = folder.name
         override val icon: ImageVector get() = folderIcon(iconName)
     }
@@ -325,13 +328,29 @@ private fun filterOf(folder: ChatFolderSummary): ChatFilter? {
  * Channels, Bots) included when the viewer added them. Then TMPlayer's own filters (Unread,
  * Channels, Groups, People, Archived) that no folder already is, so there is never a second
  * "Unread"; Archived is always there, since a Telegram folder never lists the archive.
+ *
+ * When [customOrder] is non-empty, the chips are arranged according to the user's saved drag-and-drop
+ * order, with any newly added folders placed after them in their default relative order.
  */
-fun chatPageChips(folders: List<ChatFolderSummary>, mainListPosition: Int = 0): List<ChatPageChip> {
+fun chatPageChips(
+    folders: List<ChatFolderSummary>,
+    mainListPosition: Int = 0,
+    customOrder: List<String> = emptyList(),
+): List<ChatPageChip> {
     val tabs: MutableList<ChatPageChip> = folders.mapTo(ArrayList()) { ChatPageChip.Folder(BrowseSection.Folder(it.id, it.title), it.icon) }
     tabs.add(mainListPosition.coerceIn(0, tabs.size), ChatPageChip.Filter(ChatFilter.All))
     val covered = folders.mapNotNull(::filterOf).toSet()
     val extras = ChatFilter.entries.filter { it != ChatFilter.All && it !in covered }.map { ChatPageChip.Filter(it) }
-    return tabs + extras
+    val defaultList = tabs + extras
+    if (customOrder.isEmpty()) return defaultList
+
+    val byKey = defaultList.associateByTo(LinkedHashMap()) { it.key }
+    val result = ArrayList<ChatPageChip>(defaultList.size)
+    for (k in customOrder) {
+        byKey.remove(k)?.let { result.add(it) }
+    }
+    result.addAll(byKey.values)
+    return result
 }
 
 /** Whether [chip] is the one lit for [section] under [filter]. */

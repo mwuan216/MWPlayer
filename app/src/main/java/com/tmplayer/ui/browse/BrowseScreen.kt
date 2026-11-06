@@ -184,6 +184,19 @@ import com.tmplayer.ui.components.CoverArt
 import androidx.compose.ui.draw.alpha
 import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.zIndex
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.rememberUpdatedState
 
 /**
  * What the line under the app bar's title counts.
@@ -423,6 +436,19 @@ internal fun BrowseScreen(
     val pickFilter: (ChatFilter) -> Unit = { panelScope.launch { browseSettings.setChatFilter(it.name) } }
     val pickSort: (ChatSort) -> Unit = { panelScope.launch { browseSettings.setChatSort(it.name) } }
     val pickHistory: (HistoryTab) -> Unit = { panelScope.launch { browseSettings.setHistoryTab(it.name) } }
+    val storedFolderOrder by remember(browseSettings) { browseSettings.chatFolderOrder }
+        .collectAsState(initial = emptyList())
+    var optimisticFolderOrder by remember { mutableStateOf<List<String>?>(null) }
+    val chatFolderOrder = optimisticFolderOrder ?: storedFolderOrder
+    LaunchedEffect(storedFolderOrder) {
+        if (optimisticFolderOrder == storedFolderOrder) {
+            optimisticFolderOrder = null
+        }
+    }
+    val saveChatFolderOrder: (List<String>) -> Unit = { order ->
+        optimisticFolderOrder = order
+        panelScope.launch { browseSettings.setChatFolderOrder(order) }
+    }
     // History's order, one for its three lists: most recent first, or by title (ChatSort's two).
     val historySort by remember(browseSettings) { browseSettings.historySort.map(ChatSort::decode) }
         .collectAsState(initial = ChatSort.Recent)
@@ -547,6 +573,7 @@ internal fun BrowseScreen(
         ChipRow(
             insets = insets,
             onFocus = { chipsFocused = it },
+            onReorder = saveChatFolderOrder,
             chips = buildList {
                 if (section.isChats) {
                     add(
@@ -559,7 +586,7 @@ internal fun BrowseScreen(
                         ) { pickSort(chatSort.toggled) },
                     )
                 }
-                chatPageChips(folders, mainListPosition).forEach { chip ->
+                chatPageChips(folders, mainListPosition, chatFolderOrder).forEach { chip ->
                     when (chip) {
                         is ChatPageChip.Filter -> add(
                             ChipSpec(chip.filter.name, chip.label, chip.icon, selected = chip.isSelected(section, chatFilter)) {
@@ -2043,6 +2070,7 @@ private fun ChipRow(
     chips: List<ChipSpec>,
     insets: BrowseInsets,
     onFocus: (Boolean) -> Unit,
+    onReorder: ((List<String>) -> Unit)? = null,
 ) {
     val touch = isTouch()
     // Coming up from the list lands on the chip in use (or the last one the remote was on), not on
@@ -2067,9 +2095,9 @@ private fun ChipRow(
     // On a phone one pill slides from chip to chip behind the row (ChipSlider); a television's
     // chips keep their own fills, which its focus colours replace.
     if (touch) {
-        ChipSliderBox(rowModifier) { ChipRowItems(chips, insets, chosen, touch, rtl, Modifier) }
+        ChipSliderBox(rowModifier) { ChipRowItems(chips, insets, chosen, touch, rtl, Modifier, scroll, onReorder) }
     } else {
-        ChipRowItems(chips, insets, chosen, touch, rtl, rowModifier)
+        ChipRowItems(chips, insets, chosen, touch, rtl, rowModifier, scroll, onReorder)
     }
 }
 
@@ -2081,13 +2109,146 @@ private fun ChipRowItems(
     touch: Boolean,
     rtl: Boolean,
     modifier: Modifier,
+    scroll: androidx.compose.foundation.ScrollState? = null,
+    onReorder: ((List<String>) -> Unit)? = null,
 ) {
+    var currentChips by remember { mutableStateOf(chips) }
+    var draggingKey by remember { mutableStateOf<String?>(null) }
+    var tvReorderingKey by remember { mutableStateOf<String?>(null) }
+    if (draggingKey == null) {
+        currentChips = chips
+    }
+    val layoutXMap = remember { mutableStateMapOf<String, Float>() }
+    val widthMap = remember { mutableStateMapOf<String, Int>() }
+    var grabOffsetX by remember { mutableFloatStateOf(0f) }
+    var dragFingerX by remember { mutableFloatStateOf(0f) }
+    val haptic = LocalHapticFeedback.current
+    val latestOnReorder by rememberUpdatedState(onReorder)
+
+    fun trySwapDragged(hitKey: String) {
+        val dragWidth = widthMap[hitKey] ?: 0
+        val targetLeft = dragFingerX - grabOffsetX
+        val dragCenter = targetLeft + dragWidth / 2f
+        val list = currentChips
+        val dragIdx = list.indexOfFirst { it.key == hitKey }
+        if (dragIdx < 0) return
+        val dragSlotX = layoutXMap[hitKey] ?: targetLeft
+        var swapWith = -1
+        for (nIdx in listOf(dragIdx - 1, dragIdx + 1)) {
+            val neighbor = list.getOrNull(nIdx) ?: continue
+            if (neighbor.key == SORT_CHIP) continue
+            val nX = layoutXMap[neighbor.key] ?: continue
+            val nW = widthMap[neighbor.key] ?: continue
+            val nCenter = nX + nW / 2f
+            if ((nX > dragSlotX && dragCenter > nCenter) ||
+                (nX < dragSlotX && dragCenter < nCenter)
+            ) {
+                swapWith = nIdx
+                break
+            }
+        }
+        if (swapWith >= 0) {
+            val leftIdx = minOf(dragIdx, swapWith)
+            val rightIdx = maxOf(dragIdx, swapWith)
+            val leftKey = list[leftIdx].key
+            val rightKey = list[rightIdx].key
+            val x0 = layoutXMap[leftKey] ?: 0f
+            val wLeft = widthMap[leftKey] ?: 0
+            val x1 = layoutXMap[rightKey] ?: (x0 + wLeft)
+            val wRight = widthMap[rightKey] ?: 0
+            val gap = x1 - (x0 + wLeft)
+            layoutXMap[rightKey] = x0
+            layoutXMap[leftKey] = x0 + wRight + gap
+
+            val mutable = list.toMutableList()
+            val moved = mutable.removeAt(dragIdx)
+            mutable.add(swapWith, moved)
+            currentChips = mutable
+            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        }
+    }
+
+    val edgeThresholdPx = with(LocalDensity.current) { 56.dp.toPx() }
+    val maxStepPx = with(LocalDensity.current) { 10.dp.toPx() }
+    if (touch && draggingKey != null && scroll != null) {
+        val activeKey = draggingKey!!
+        LaunchedEffect(activeKey) {
+            while (true) {
+                withFrameNanos { }
+                val viewW = scroll.viewportSize
+                if (viewW <= 0) continue
+                val fingerInViewport = dragFingerX - scroll.value
+                val step = when {
+                    fingerInViewport < edgeThresholdPx && scroll.value > 0 -> {
+                        val ratio = ((edgeThresholdPx - fingerInViewport) / edgeThresholdPx).coerceIn(0.15f, 1f)
+                        -maxStepPx * ratio
+                    }
+                    fingerInViewport > viewW - edgeThresholdPx && scroll.value < scroll.maxValue -> {
+                        val ratio = ((fingerInViewport - (viewW - edgeThresholdPx)) / edgeThresholdPx).coerceIn(0.15f, 1f)
+                        maxStepPx * ratio
+                    }
+                    else -> 0f
+                }
+                if (step != 0f) {
+                    val consumed = scroll.dispatchRawDelta(step)
+                    if (consumed != 0f) {
+                        dragFingerX += consumed
+                        trySwapDragged(activeKey)
+                    }
+                }
+            }
+        }
+    }
+
+    val dragGestureModifier = if (touch && onReorder != null) {
+        Modifier.pointerInput(Unit) {
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false)
+                val hitKey = currentChips
+                    .firstOrNull { c ->
+                        c.key != SORT_CHIP &&
+                            layoutXMap[c.key]?.let { x ->
+                                val w = widthMap[c.key] ?: 0
+                                down.position.x >= x && down.position.x <= x + w
+                            } == true
+                    }?.key ?: return@awaitEachGesture
+
+                val longPress = awaitLongPressOrCancellation(down.id) ?: return@awaitEachGesture
+                val startX = layoutXMap[hitKey] ?: return@awaitEachGesture
+                grabOffsetX = longPress.position.x - startX
+                dragFingerX = longPress.position.x
+                draggingKey = hitKey
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+
+                try {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        if (!change.pressed) {
+                            change.consume()
+                            break
+                        }
+                        change.consume()
+                        dragFingerX = change.position.x
+                        trySwapDragged(hitKey)
+                    }
+                } finally {
+                    val finalOrder = currentChips.filter { it.key != SORT_CHIP }.map { it.key }
+                    draggingKey = null
+                    latestOnReorder?.invoke(finalOrder)
+                }
+            }
+        }
+    } else {
+        Modifier
+    }
+
     Row(
-        modifier,
+        modifier.then(dragGestureModifier),
         horizontalArrangement = Arrangement.spacedBy(if (touch) 8.dp else 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        chips.forEach { chip ->
+        currentChips.forEach { chip ->
             key(chip.key) {
                 // The chosen chip scrolls into view, so a choice remembered from last time is
                 // never hidden past the edge of a narrow screen.
@@ -2096,28 +2257,89 @@ private fun ChipRowItems(
                 var size by remember { mutableStateOf(IntSize.Zero) }
                 val margin = with(LocalDensity.current) { insets.end.toPx() }
                 val onScreen = LocalPageOnScreen.current
-                if (chip.selected && size != IntSize.Zero && onScreen) {
+                if (chip.selected && size != IntSize.Zero && onScreen && draggingKey == null) {
                     LaunchedEffect(Unit) {
                         runCatching { view.bringIntoView(Rect(-margin, 0f, size.width + margin, size.height.toFloat())) }
                     }
                 }
-                val last = chip === chips.last()
+                val isDragging = draggingKey == chip.key
+                val isTvReordering = tvReorderingKey == chip.key
+                val last = chip === currentChips.last()
                 Box(
                     Modifier
+                        .zIndex(if (isDragging || isTvReordering) 10f else 0f)
                         .bringIntoViewRequester(view)
+                        .onGloballyPositioned { coords ->
+                            layoutXMap[chip.key] = coords.positionInParent().x
+                            widthMap[chip.key] = coords.size.width
+                        }
                         .onSizeChanged { size = it }
                         .then(if (chip.selected) Modifier.focusRequester(chosen) else Modifier)
                         // The row stops at its end (Right, or Left in a right-to-left language) rather than
                         // jumping up to the heading.
                         .then(
                             when {
-                                !last || touch -> Modifier
+                                !last || touch || isTvReordering -> Modifier
                                 rtl -> Modifier.focusProperties { left = FocusRequester.Cancel }
                                 else -> Modifier.focusProperties { right = FocusRequester.Cancel }
                             },
                         ),
                 ) {
-                    if (touch) TouchChip(chip) else TvChip(chip)
+                    Box(
+                        Modifier.graphicsLayer {
+                            if (isDragging) {
+                                val slotX = layoutXMap[chip.key] ?: 0f
+                                translationX = (dragFingerX - grabOffsetX) - slotX
+                                scaleX = 1.07f
+                                scaleY = 1.07f
+                                shadowElevation = 8.dp.toPx()
+                                shape = CircleShape
+                            } else if (isTvReordering) {
+                                scaleX = 1.07f
+                                scaleY = 1.07f
+                            }
+                        },
+                    ) {
+                        if (touch) {
+                            TouchChip(chip, dragging = isDragging)
+                        } else {
+                            val canReorderTv = onReorder != null && chip.key != SORT_CHIP
+                            TvChip(
+                                chip = chip,
+                                reordering = isTvReordering,
+                                onHold = if (canReorderTv) {
+                                    {
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        tvReorderingKey = if (isTvReordering) null else chip.key
+                                    }
+                                } else {
+                                    null
+                                },
+                                onMove = if (isTvReordering) {
+                                    { delta ->
+                                        val idx = currentChips.indexOfFirst { it.key == chip.key }
+                                        val targetIdx = idx + (if (rtl) -delta else delta)
+                                        val neighbor = currentChips.getOrNull(targetIdx)
+                                        if (idx >= 0 && neighbor != null && neighbor.key != SORT_CHIP) {
+                                            val mutable = currentChips.toMutableList()
+                                            val moved = mutable.removeAt(idx)
+                                            mutable.add(targetIdx, moved)
+                                            currentChips = mutable
+                                            val order = mutable.filter { it.key != SORT_CHIP }.map { it.key }
+                                            latestOnReorder?.invoke(order)
+                                        }
+                                    }
+                                } else {
+                                    null
+                                },
+                                onFinishReorder = if (isTvReordering) {
+                                    { tvReorderingKey = null }
+                                } else {
+                                    null
+                                },
+                            )
+                        }
+                    }
                 }
             }
             // The order is a different kind of control from the filters after it, so a hairline
@@ -2130,8 +2352,14 @@ private fun ChipRowItems(
 }
 
 @Composable
-private fun TouchChip(chip: ChipSpec) {
-    TouchFilterChip(chip.label, chip.icon, chip.selected, chip.description, chip.onClick)
+private fun TouchChip(chip: ChipSpec, dragging: Boolean = false) {
+    if (dragging) {
+        CompositionLocalProvider(LocalChipSlider provides null) {
+            TouchFilterChip(chip.label, chip.icon, chip.selected, chip.description, chip.onClick, dragging = true)
+        }
+    } else {
+        TouchFilterChip(chip.label, chip.icon, chip.selected, chip.description, chip.onClick, dragging = false)
+    }
 }
 
 /**
@@ -2145,6 +2373,7 @@ internal fun TouchFilterChip(
     selected: Boolean,
     description: String? = null,
     onClick: () -> Unit,
+    dragging: Boolean = false,
 ) {
     // A pick cross-fades the chip into its chosen colours rather than switching them, and the chip
     // gives a little under the finger, as the bar's buttons do.
@@ -2154,7 +2383,11 @@ internal fun TouchFilterChip(
     val scheme = androidx.compose.material3.MaterialTheme.colorScheme
     val sliding = LocalChipSlider.current != null
     val container by androidx.compose.animation.animateColorAsState(
-        if (selected && !sliding) scheme.secondaryContainer else Color.Transparent,
+        when {
+            selected && !sliding -> scheme.secondaryContainer
+            dragging -> scheme.surfaceContainerHighest
+            else -> Color.Transparent
+        },
         Motion.standard(Motion.Fast),
         label = "chipBack",
     )
@@ -2215,7 +2448,13 @@ internal fun TouchChipStrip(content: @Composable RowScope.() -> Unit) {
 }
 
 @Composable
-private fun TvChip(chip: ChipSpec) {
+private fun TvChip(
+    chip: ChipSpec,
+    reordering: Boolean = false,
+    onHold: (() -> Unit)? = null,
+    onMove: ((Int) -> Unit)? = null,
+    onFinishReorder: (() -> Unit)? = null,
+) {
     val interactions = remember { MutableInteractionSource() }
     val focused by interactions.collectIsFocusedAsState()
     val background by animateColorAsState(
@@ -2237,11 +2476,49 @@ private fun TvChip(chip: ChipSpec) {
             .height(48.dp)
             .clip(CircleShape)
             .background(background)
+            .then(if (reordering) Modifier.border(2.dp, Tone.accent, CircleShape) else Modifier)
+            .then(
+                if (reordering && onMove != null && onFinishReorder != null) {
+                    Modifier.onPreviewKeyEvent { event ->
+                        if (event.type == KeyEventType.KeyDown) {
+                            when (event.key) {
+                                Key.DirectionLeft -> {
+                                    onMove(-1)
+                                    true
+                                }
+                                Key.DirectionRight -> {
+                                    onMove(1)
+                                    true
+                                }
+                                Key.DirectionCenter, Key.Enter, Key.NumPadEnter, Key.Back, Key.Escape -> {
+                                    onFinishReorder()
+                                    true
+                                }
+                                else -> false
+                            }
+                        } else {
+                            false
+                        }
+                    }
+                } else {
+                    Modifier
+                }
+            )
             .semantics {
                 selected = chip.selected
                 chip.description?.let { contentDescription = it }
             }
-            .clickable(interactionSource = interactions, indication = null, role = Role.Tab, onClick = chip.onClick)
+            .then(
+                if (onHold != null) {
+                    Modifier.holdable(
+                        interactionSource = interactions,
+                        onClick = if (reordering && onFinishReorder != null) onFinishReorder else chip.onClick,
+                        onHold = onHold,
+                    )
+                } else {
+                    Modifier.clickable(interactionSource = interactions, indication = null, role = Role.Tab, onClick = chip.onClick)
+                }
+            )
             .padding(horizontal = 18.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
