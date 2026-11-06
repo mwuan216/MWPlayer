@@ -838,7 +838,6 @@ fun SeriesPanel(
     val holdMetaLines = remember(series.key, firstPaint) { !extrasState.settled }
     val holdOverview = remember(series.key, firstPaint) { !metaState.settled }
     val holdPoster = remember(series.key, firstPaint) { meta?.posterUrl != null || !metaState.settled }
-    val holdTrailer = remember(series.key, firstPaint) { extras?.trailer != null || !extrasState.settled }
     val yearInFacts = remember(series.key, firstPaint) { metaState.settled }
     val onlineBackdrop = remember(series.key, firstPaint) { meta?.backdropUrl != null || !metaState.settled }
     // A season's episode words held per season: from its first frame while its listing comes.
@@ -1041,28 +1040,26 @@ fun SeriesPanel(
                 if (progress.watched > 0) ProgressLine(progress.watched.toFloat() / progress.total, Modifier.widthIn(max = 240.dp))
             }
         }
+        val hasOverview = meta?.overview?.isNotBlank() == true
         val overview: @Composable () -> Unit = {
             val text = meta?.overview?.takeIf { it.isNotBlank() }
-            if (text != null || holdOverview) {
+            if (text != null) {
                 Column(Modifier.then(if (large) Modifier.widthIn(max = LARGE_READING) else Modifier), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     SynopsisSlot(
                         text,
-                        waiting = !metaState.settled,
-                        hold = holdOverview,
+                        waiting = false,
+                        hold = false,
                         style = if (large) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.bodyMedium,
                         lines = if (large) LARGE_OVERVIEW_LINES else if (wide) 3 else null,
                     )
                     // The credit's line kept with the held words, so it does not add one when they come.
-                    Box(Modifier.neverShrink()) { meta?.let { if (text != null) MetaCredit(it) } }
+                    Box(Modifier.neverShrink()) { meta?.let { MetaCredit(it) } }
                     MetaPeopleLine(extras)
                 }
             }
         }
         val actions: @Composable () -> Unit = {
-            // The trailer's place is held (unseen) while the extras are on their way, so the
-            // download buttons after it never move over when it comes.
             val trailer = extras?.trailer
-            val trailerGhost = trailer == null && holdTrailer
             val others = buildList {
                 // Beside a pill that resumes part way: the same episode from its first frame.
                 if (onStartOver != null && (watch.pointOf(target)?.positionMs ?: 0L) > 0L) {
@@ -1070,7 +1067,9 @@ fun SeriesPanel(
                 }
                 // What a video's page offers beside its pill, for the show (HX20).
                 showActions?.let { addAll(showPageActions(it, progress.finished, marking, s)) }
-                if (trailer != null || holdTrailer) add(PageAction(s.metadataTrailer, TrailerIcon, { trailer?.let(trailers::open); Unit }))
+                if (trailer != null) {
+                    add(PageAction(s.metadataTrailer, TrailerIcon, { trailer.let(trailers::open); Unit }))
+                }
                 if (downloads) {
                     add(
                         when (buttons.state) {
@@ -1133,11 +1132,8 @@ fun SeriesPanel(
                         )
                         // The same short words under the buttons as a video's page and the phone's.
                         others.forEach { action ->
-                            val trailerSlot = trailerGhost && action.label == s.metadataTrailer
                             WideIconAction(
                                 action.label, action.icon, action.run,
-                                ghost = trailerSlot,
-                                waiting = trailerSlot && !extrasState.settled,
                                 progress = action.progress,
                                 enabled = action.enabled,
                                 short = action.short ?: roundLabel(action.label, s),
@@ -1152,8 +1148,6 @@ fun SeriesPanel(
                                 action.label, action.icon, action.run,
                                 short = action.short ?: roundLabel(action.label, s),
                                 toggles = action.toggles,
-                                ghost = trailerGhost && action.label == s.metadataTrailer,
-                                waiting = trailerGhost && action.label == s.metadataTrailer && !extrasState.settled,
                                 progress = action.progress,
                                 enabled = action.enabled,
                             )
@@ -1170,8 +1164,6 @@ fun SeriesPanel(
                                 action.label, action.icon, action.run,
                                 short = action.short ?: roundLabel(action.label, s),
                                 toggles = action.toggles,
-                                ghost = trailerGhost && action.label == s.metadataTrailer,
-                                waiting = trailerGhost && action.label == s.metadataTrailer && !extrasState.settled,
                                 progress = action.progress,
                                 enabled = action.enabled,
                             )
@@ -1181,22 +1173,23 @@ fun SeriesPanel(
                     hero(Modifier.fillMaxWidth())
                     if (others.isNotEmpty()) {
                         // Under a full width Play, centred on it, as on a video's page.
+                        val actionWidth = if (others.size >= 5) 62.dp else RoundActionWidth
+                        val actionGap = if (others.size >= 5) 2.dp else 4.dp
                         FlowRow(
                             Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
+                            horizontalArrangement = Arrangement.spacedBy(actionGap, Alignment.CenterHorizontally),
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             others.forEach { action ->
-                            RoundAction(
-                                action.label, action.icon, action.run,
-                                short = action.short ?: roundLabel(action.label, s),
-                                toggles = action.toggles,
-                                ghost = trailerGhost && action.label == s.metadataTrailer,
-                                waiting = trailerGhost && action.label == s.metadataTrailer && !extrasState.settled,
-                                progress = action.progress,
-                                enabled = action.enabled,
-                            )
-                        }
+                                RoundAction(
+                                    action.label, action.icon, action.run,
+                                    short = action.short ?: roundLabel(action.label, s),
+                                    toggles = action.toggles,
+                                    progress = action.progress,
+                                    enabled = action.enabled,
+                                    width = actionWidth,
+                                )
+                            }
                         }
                     }
                 }
@@ -1261,7 +1254,7 @@ fun SeriesPanel(
             verticalArrangement = Arrangement.spacedBy(if (tv) 8.dp else 6.dp),
         ) {
             item(key = "hero") {
-                Column(verticalArrangement = Arrangement.spacedBy(if (large) 24.dp else 16.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(if (large) 24.dp else 12.dp)) {
                     Box(Modifier.fillMaxWidth().heightIn(min = heroHeight).clipToBounds()) {
                         Box(Modifier.matchParentSize()) {
                             PageBackdrop(
@@ -1303,8 +1296,10 @@ fun SeriesPanel(
                         Column(Modifier.padding(pad), verticalArrangement = Arrangement.spacedBy(12.dp)) { facts() }
                     }
                     actions()
-                    if (!wide) Box(Modifier.padding(pad)) { overview() }
-                    Spacer(Modifier.height(4.dp))
+                    if (!wide && hasOverview) {
+                        Box(Modifier.padding(pad)) { overview() }
+                        Spacer(Modifier.height(4.dp))
+                    }
                 }
             }
             item(key = "seasons") {

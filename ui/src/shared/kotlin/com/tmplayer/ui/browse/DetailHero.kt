@@ -252,10 +252,11 @@ internal fun RoundAction(
      * nothing. It stays reachable, so a remote whose focus was on Download keeps it there.
      */
     enabled: Boolean = true,
+    width: Dp = RoundActionWidth,
 ) {
     if (ghost && waiting) {
         Box(modifier) {
-            RoundAction(label, icon, onClick, short = short, ghost = true)
+            RoundAction(label, icon, onClick, short = short, ghost = true, width = width)
             val shimmer = com.tmplayer.ui.components.rememberShimmer()
             if (isTouch()) {
                 com.tmplayer.ui.components.SkeletonBox(shimmer, Modifier.align(Alignment.TopCenter).padding(top = 4.dp).size(48.dp), CircleShape)
@@ -314,7 +315,7 @@ internal fun RoundAction(
     Column(
         modifier
             .then(requester)
-            .width(RoundActionWidth)
+            .width(width)
             .clip(RoundedCornerShape(Corner.Medium))
             .clickable(interactionSource = interactions, indication = if (enabled) LocalIndication.current else null, enabled = !ghost) {
                 if (enabled) {
@@ -347,7 +348,7 @@ internal fun RoundAction(
         // "Herunterladen" and "Recommencer" in the middle of the word.
         Text(
             short,
-            style = fitLongestWord(short, MaterialTheme.typography.labelSmall, RoundActionWidth),
+            style = fitLongestWord(short, MaterialTheme.typography.labelSmall, width),
             color = ink,
             textAlign = TextAlign.Center,
             maxLines = 3,
