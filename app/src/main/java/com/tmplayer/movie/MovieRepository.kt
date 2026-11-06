@@ -3,6 +3,7 @@ package com.tmplayer.movie
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.net.Uri
 import androidx.collection.LruCache
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
@@ -246,7 +247,7 @@ object MovieRepository {
             if (epArr != null) {
                 for (sIdx in 0 until epArr.length()) {
                     val sObj = epArr.optJSONObject(sIdx) ?: continue
-                    val sName = sObj.optString("server_name", "Server ${sIdx + 1}")
+                    val sName = sObj.optString("server_name", "Server ${sIdx + 1}").replace(Regex("\\s+"), " ").trim()
                     val dataArr = sObj.optJSONArray("server_data")
                     val eps = mutableListOf<MovieEpisode>()
                     if (dataArr != null) {
@@ -396,6 +397,40 @@ object MovieRepository {
             list.sortedByDescending { it.isDefault }
         } catch (e: Exception) {
             emptyList()
+        }
+    }
+
+    suspend fun getNormalizedSubtitleUri(context: Context, subUrl: String): Uri = withContext(Dispatchers.IO) {
+        if (subUrl.isBlank()) return@withContext Uri.EMPTY
+        try {
+            val cacheDir = File(context.cacheDir, "movie_subs").apply { if (!exists()) mkdirs() }
+            val hash = md5(subUrl)
+            val file = File(cacheDir, "$hash.vtt")
+            if (file.exists() && file.length() > 0L) {
+                return@withContext Uri.fromFile(file)
+            }
+
+            val rawText = fetchJson(subUrl, "https://vsmov.com/") ?: return@withContext Uri.parse(subUrl)
+            // Normalize WebVTT:
+            // 1. Ensure WEBVTT header
+            val trimmed = rawText.trimStart()
+            val header = if (trimmed.startsWith("WEBVTT")) "" else "WEBVTT\n\n"
+            // 2. Fix comma in timestamps: 00:01:30,780 --> 00:01:34,371 => 00:01:30.780 --> 00:01:34.371
+            val fixedText = header + rawText.replace(Regex("""(\d{2}:\d{2}(?::\d{2})?),(\d{3})"""), "$1.$2")
+            file.writeText(fixedText, Charsets.UTF_8)
+            Uri.fromFile(file)
+        } catch (e: Exception) {
+            Uri.parse(subUrl)
+        }
+    }
+
+    private fun md5(s: String): String {
+        return try {
+            val md = MessageDigest.getInstance("MD5")
+            val digest = md.digest(s.toByteArray())
+            digest.joinToString("") { "%02x".format(it) }
+        } catch (e: Exception) {
+            s.hashCode().toString()
         }
     }
 

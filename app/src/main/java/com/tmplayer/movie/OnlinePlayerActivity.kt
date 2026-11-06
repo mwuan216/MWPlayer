@@ -23,9 +23,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -131,6 +133,7 @@ class OnlinePlayerActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         hideSystemUI()
 
         setContent {
@@ -353,7 +356,8 @@ fun OnlinePlayerScreen(
             errorMessage = null
             try {
                 val subConfigs = stream.subtitles.map { sub ->
-                    MediaItem.SubtitleConfiguration.Builder(Uri.parse(sub.url))
+                    val finalUri = MovieRepository.getNormalizedSubtitleUri(context, sub.url)
+                    MediaItem.SubtitleConfiguration.Builder(finalUri)
                         .setMimeType(MimeTypes.TEXT_VTT)
                         .setLanguage(sub.language)
                         .setLabel(sub.label)
@@ -598,7 +602,7 @@ fun OnlinePlayerScreen(
                             setApplyEmbeddedStyles(true)
                             setApplyEmbeddedFontSizes(true)
                             setFixedTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
-                            setBottomPaddingFraction(0.08f)
+                            setBottomPaddingFraction(0.15f)
                             setStyle(
                                 CaptionStyleCompat(
                                     android.graphics.Color.WHITE,
@@ -859,26 +863,32 @@ fun OnlinePlayerScreen(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = currentEp?.name ?: "",
-                                color = Tone.accent,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Medium
-                            )
-                            if (currentServer != null) {
-                                Text(
-                                    text = " • ${currentServer.serverName}",
-                                    color = Color.White.copy(alpha = 0.7f),
-                                    fontSize = 12.sp
-                                )
+                        val subType = remember(currentServer, detail.movie.lang) {
+                            val s = (currentServer?.serverName ?: "").lowercase()
+                            val l = detail.movie.lang.lowercase()
+                            val combined = "$s $l"
+                            when {
+                                "lồng tiếng" in combined || "long tieng" in combined -> "Lồng tiếng"
+                                "thuyết minh" in combined || "thuyet minh" in combined -> "Thuyết minh"
+                                "vietsub" in combined || "sub" in combined -> "Vietsub"
+                                else -> currentServer?.serverName?.replace(Regex("\\s+"), " ")?.trim()?.ifBlank { "Vietsub" } ?: "Vietsub"
                             }
-                            Text(
-                                text = " • [${detail.movie.source.badge}]",
-                                color = Color.White.copy(alpha = 0.5f),
-                                fontSize = 11.sp
-                            )
                         }
+                        val epName = currentEp?.name?.trim() ?: ""
+                        val epLabel = when {
+                            epName.isBlank() -> ""
+                            epName.lowercase().startsWith("tập") -> epName
+                            else -> "Tập $epName"
+                        }
+                        Text(
+                            text = if (epLabel.isNotBlank()) "$epLabel • $subType" else subType,
+                            color = Tone.accent,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
 
                     // Screen Lock button
@@ -1011,7 +1021,9 @@ fun OnlinePlayerScreen(
 
                     // Action buttons row
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -1261,10 +1273,13 @@ fun OnlinePlayerScreen(
                                             .padding(horizontal = 12.dp, vertical = 6.dp)
                                     ) {
                                         Text(
-                                            srv.serverName,
+                                            srv.serverName.replace(Regex("\\s+"), " ").trim(),
                                             color = if (isSelected) Color.Black else Color.White,
                                             fontSize = 12.sp,
-                                            fontWeight = FontWeight.SemiBold
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 1,
+                                            softWrap = false,
+                                            overflow = TextOverflow.Ellipsis
                                         )
                                     }
                                 }
@@ -1375,14 +1390,22 @@ private fun ControlPill(
             .clip(RoundedCornerShape(20.dp))
             .background(Color.White.copy(alpha = 0.15f))
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 7.dp),
+            .padding(horizontal = 12.dp, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         if (icon != null) {
             Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
         }
-        Text(text = text, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        Text(
+            text = text,
+            color = Color.White,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 

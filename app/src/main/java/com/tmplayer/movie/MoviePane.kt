@@ -1630,10 +1630,13 @@ private fun MovieDetailContent(
                                 .padding(horizontal = 12.dp, vertical = 6.dp)
                         ) {
                             Text(
-                                text = srv.serverName,
+                                text = srv.serverName.replace(Regex("\\s+"), " ").trim(),
                                 color = if (isSel) Color.Black else Tone.text,
                                 fontSize = 12.sp,
-                                fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium
+                                fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
