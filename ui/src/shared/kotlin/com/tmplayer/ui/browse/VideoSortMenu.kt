@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.tmplayer.data.VideoDurationFilter
 import com.tmplayer.data.VideoFilter
+import com.tmplayer.data.VideoSizeFilter
 import com.tmplayer.data.VideoSort
 import com.tmplayer.i18n.Messages
 import com.tmplayer.ui.components.ChoiceGroup
@@ -67,34 +68,52 @@ fun videoFilterIcon(filter: VideoFilter): ImageVector = when (filter) {
 /** What [duration] is called in the Duration group, and in the "Showing ..." line over the grid. */
 fun videoDurationFilterLabel(duration: VideoDurationFilter, s: Messages): String = when (duration) {
     VideoDurationFilter.All -> s.gridDurationAll
-    VideoDurationFilter.Under5Min -> s.gridDurationUnder5m
-    VideoDurationFilter.Min5To20 -> s.gridDurationShort
-    VideoDurationFilter.Min20To60 -> s.gridDurationMedium
-    VideoDurationFilter.Over60Min -> s.gridDurationLong
+    VideoDurationFilter.Min5Min -> "≥ 5 phút"
+    VideoDurationFilter.Min15Min -> "≥ 15 phút"
+    VideoDurationFilter.Min30Min -> "≥ 30 phút"
+    VideoDurationFilter.Min60Min -> "≥ 1 giờ"
+    VideoDurationFilter.Min90Min -> "≥ 1.5 giờ"
+    VideoDurationFilter.Min120Min -> "≥ 2 giờ"
 }
 
 /** The glyph beside [duration] in the menu. */
 fun videoDurationFilterIcon(duration: VideoDurationFilter): ImageVector = when (duration) {
     VideoDurationFilter.All -> TmIcons.Grid
-    VideoDurationFilter.Under5Min,
-    VideoDurationFilter.Min5To20,
-    VideoDurationFilter.Min20To60,
-    VideoDurationFilter.Over60Min,
-    -> TmIcons.Clock
+    else -> TmIcons.Clock
+}
+
+/** What [size] is called in the Size group, and in the filter header. */
+fun videoSizeFilterLabel(size: VideoSizeFilter, s: Messages): String = when (size) {
+    VideoSizeFilter.All -> "Tất cả dung lượng"
+    VideoSizeFilter.Min100MB -> "≥ 100 MB"
+    VideoSizeFilter.Min300MB -> "≥ 300 MB"
+    VideoSizeFilter.Min500MB -> "≥ 500 MB"
+    VideoSizeFilter.Min1GB -> "≥ 1 GB"
+    VideoSizeFilter.Min2GB -> "≥ 2 GB"
+    VideoSizeFilter.Min4GB -> "≥ 4 GB"
+}
+
+/** The glyph beside [size] in the menu. */
+fun videoSizeFilterIcon(size: VideoSizeFilter): ImageVector = when (size) {
+    VideoSizeFilter.All -> TmIcons.Grid
+    else -> TmIcons.Download
 }
 
 /**
  * What a chat's Sort menu holds, the same on a phone, a television and a computer: the order
- * ([VideoSort]), which videos show ([VideoFilter]), and the duration filter ([VideoDurationFilter]).
+ * ([VideoSort]), which videos show ([VideoFilter]), duration filter ([VideoDurationFilter]),
+ * and size filter ([VideoSizeFilter]).
  * Each pick applies at once.
  */
 class VideoMenuState(
     val sort: VideoSort,
     val filter: VideoFilter,
     val durationFilter: VideoDurationFilter = VideoDurationFilter.All,
+    val sizeFilter: VideoSizeFilter = VideoSizeFilter.All,
     val onSort: (VideoSort) -> Unit,
     val onFilter: (VideoFilter) -> Unit,
     val onDurationFilter: (VideoDurationFilter) -> Unit = {},
+    val onSizeFilter: (VideoSizeFilter) -> Unit = {},
 )
 
 /** The menu's groups, as [GroupedChoicePopover] draws them and the television's sheet lists them. */
@@ -117,13 +136,25 @@ fun videoMenuGroups(state: VideoMenuState, s: Messages): List<ChoiceGroup> = bui
     )
     add(
         ChoiceGroup(
-            s.gridDurationLabel,
+            "Thời lượng tối thiểu",
             VideoDurationFilter.entries.map { duration ->
                 GroupedChoice(
                     videoDurationFilterLabel(duration, s),
                     videoDurationFilterIcon(duration),
                     duration == state.durationFilter,
                 ) { state.onDurationFilter(duration) }
+            },
+        ),
+    )
+    add(
+        ChoiceGroup(
+            "Dung lượng tối thiểu",
+            VideoSizeFilter.entries.map { size ->
+                GroupedChoice(
+                    videoSizeFilterLabel(size, s),
+                    videoSizeFilterIcon(size),
+                    size == state.sizeFilter,
+                ) { state.onSizeFilter(size) }
             },
         ),
     )

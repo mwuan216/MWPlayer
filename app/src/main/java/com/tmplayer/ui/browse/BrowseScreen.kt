@@ -274,6 +274,9 @@ internal fun BrowseScreen(
     /** Plays a Watch later video, as a Continue watching one is played. */
     onOpenWatchLater: (WatchLaterRecord) -> Unit = {},
     onRemoveWatchLater: (WatchLaterRecord) -> Unit = {},
+    favoriteVideos: List<com.tmplayer.data.FavoriteVideoRecord> = emptyList(),
+    onRemoveFavoriteVideo: (com.tmplayer.data.FavoriteVideoRecord) -> Unit = {},
+    onClearFavoriteVideos: () -> Unit = {},
     /** Unstars every chat in one go, the counterpart to the star in each chat's menu. */
     onClearFavorites: () -> Unit = {},
     /** The chat that reopens on launch, marked on its row so the jump is never unexplained. */
@@ -382,6 +385,8 @@ internal fun BrowseScreen(
     var listRefocus by remember { mutableStateOf(0) }
     val historyRemoval = rememberHistoryRemoval()
     var confirmClearFavorites by remember { mutableStateOf(false) }
+    var confirmClearFavoriteVideos by remember { mutableStateOf(false) }
+    var favoriteVideoMenu by remember { mutableStateOf<com.tmplayer.data.FavoriteVideoRecord?>(null) }
     // The video whose detail panel is open, with its chat's name, from Home or the search, over
     // the pages "More like this" was taken from, so Back walks back through them.
     val details = rememberDetailBackStack<Pair<MediaItem, String>>(itemOf = { it.first }, labelOf = { it.second }, rebuild = { item, chat -> item to chat })
@@ -424,6 +429,10 @@ internal fun BrowseScreen(
     // the same press differently (user, 2026-10-23). Play again stays in the hold menu.
     val openWatched: (WatchedRecord) -> Unit =
         if (detailFirst) ({ record -> showDetail(record.toMediaItem(), record.chatTitle) }) else onOpenWatched
+    val openFavoriteVideo: (com.tmplayer.data.FavoriteVideoRecord) -> Unit = { record ->
+        val item = record.toMediaItem()
+        if (detailFirst) showDetail(item, record.chatTitle) else onPlayMedia(item, record.chatTitle)
+    }
 
     // The chips over Chats and History, remembered across launches like the card layout.
     val browseSettings = remember(panelContext) { SettingsStore(panelContext) }
@@ -453,7 +462,9 @@ internal fun BrowseScreen(
     val historySort by remember(browseSettings) { browseSettings.historySort.map(ChatSort::decode) }
         .collectAsState(initial = ChatSort.Recent)
     val pickHistorySort: (ChatSort) -> Unit = { panelScope.launch { browseSettings.setHistorySort(it.name) } }
-    val showsContinue = tab.listsVideos && historyTab == HistoryTab.Continue
+    val isHistory = tab == BrowseSection.of(BrowseTab.History)
+    val isFavorites = tab == BrowseSection.of(BrowseTab.Favorites)
+    val showsContinue = isHistory && historyTab == HistoryTab.Continue
     // History's Continue tab, with the copies of one film or episode as one card, as on Home.
     // Built again when the viewer says two of them are not the same video.
     val corrections by com.tmplayer.data.VideoCorrections.state.collectAsState()
@@ -468,16 +479,17 @@ internal fun BrowseScreen(
     val watchedShown = remember(watchedHistory, historySort) {
         if (historySort == ChatSort.Name) com.tmplayer.data.VideoSorting.byName(watchedHistory, { SeriesShelf.tileTitle(it.toMediaItem()) }) else watchedHistory
     }
-    val showsWatched = tab.listsVideos && historyTab == HistoryTab.Watched
-    val showsWatchLater = tab.listsVideos && historyTab == HistoryTab.WatchLater
+    val showsWatched = isHistory && historyTab == HistoryTab.Watched
+    val showsWatchLater = isHistory && historyTab == HistoryTab.WatchLater
     val touchHere = !FormFactor.isTv(LocalContext.current)
 
     // The cards of the History tab on screen, by the key each card is ticked by.
-    val shownKeys: Set<String> = remember(historyTab, continuing, watchedShown, laterShown) {
-        when (historyTab) {
-            HistoryTab.Continue -> continuing.mapTo(LinkedHashSet()) { SettingsStore.progressKey(it.chatId, it.messageId) }
-            HistoryTab.Watched -> watchedShown.mapTo(LinkedHashSet()) { it.key }
-            HistoryTab.WatchLater -> laterShown.mapTo(LinkedHashSet()) { it.id }
+    val shownKeys: Set<String> = remember(historyTab, continuing, watchedShown, laterShown, isFavorites, favoriteVideos) {
+        when {
+            isFavorites -> favoriteVideos.mapTo(LinkedHashSet()) { it.key }
+            historyTab == HistoryTab.Continue -> continuing.mapTo(LinkedHashSet()) { SettingsStore.progressKey(it.chatId, it.messageId) }
+            historyTab == HistoryTab.Watched -> watchedShown.mapTo(LinkedHashSet()) { it.key }
+            else -> laterShown.mapTo(LinkedHashSet()) { it.id }
         }
     }
     // A card that left the list while ticked (finished on another device, removed from its page)
@@ -738,6 +750,35 @@ internal fun BrowseScreen(
                         }
                     } else if (tab.isMovie) {
                         com.tmplayer.movie.MoviePane(Modifier.fillMaxSize())
+                    } else if (isFavorites) {
+                        if (!touch && favoriteVideos.isNotEmpty()) {
+                            Row(
+                                Modifier.fillMaxWidth().padding(top = 4.dp, end = insets.end),
+                                horizontalArrangement = Arrangement.End,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                HeaderAction(
+                                    label = "Xóa tất cả",
+                                    icon = TmIcons.Delete,
+                                    onClick = { confirmClearFavoriteVideos = true }
+                                )
+                            }
+                        }
+                        if (favoriteVideos.isEmpty()) {
+                            EmptyTab(tab, query = "", onGoToChats = goToChats)
+                        } else {
+                            ContinueSection(
+                                records = favoriteVideos,
+                                text = { it.cardText() },
+                                insets = insets,
+                                autoFocus = !touch,
+                                mayTakeFocus = listMayTakeFocus,
+                                pageOpen = details.top != null,
+                                onResume = openFavoriteVideo,
+                                onHold = { favoriteVideoMenu = it },
+                                refocusSignal = listRefocus,
+                            )
+                        }
                     } else if (tab.listsVideos) {
                         // One branch for both tabs, so the chip row stays the same composition when
                         // OK switches tab and the remote's focus stays on the chip it pressed.
@@ -979,6 +1020,7 @@ internal fun BrowseScreen(
                 val chats = (state as? UiState.Content)?.value?.chats
                 when {
                     section.isHome || section.isMovie -> 0
+                    section.isFavorites -> favoriteVideos.size
                     section.listsVideos -> when (historyTab) {
                         HistoryTab.Continue -> continuing.size
                         HistoryTab.Watched -> watchedHistory.size
@@ -989,22 +1031,20 @@ internal fun BrowseScreen(
             },
             // Home refreshes with a pull, and a page with nothing to offer has no pill at all.
             actions = unlessHidden(
-                tab.isHome || tab.isMovie || !(tab.listsVideos || (tab == BrowseSection.of(BrowseTab.Favorites) && favorites.isNotEmpty())),
+                tab.isHome || tab.isMovie || !(tab.listsVideos || (isFavorites && favoriteVideos.isNotEmpty())),
             ) actions@{
                 // History's Select and Clear sit in the bar, one press each: a clear here is said
                 // with Undo, so a mis-tap costs nothing. Favourites' clear has no Undo and stays
                 // behind the overflow, asked first.
-                if (tab.listsVideos && historyHas && !selecting) {
+                if (isFavorites && favoriteVideos.isNotEmpty()) {
+                    BarOverflow(items = listOf("Xóa tất cả video yêu thích" to { confirmClearFavoriteVideos = true }))
+                } else if (tab.listsVideos && historyHas && !selecting) {
                     BarIcon(label = s.browseSelect, icon = TmIcons.Checklist, onClick = { startSelecting(null) })
                     BarIcon(
                         label = if (showsWatchLater) s.browseClearWatchLater else s.browseClearHistory,
                         icon = TmIcons.Delete,
                         onClick = askClear,
                     )
-                }
-                val clearFavorites = tab == BrowseSection.of(BrowseTab.Favorites) && favorites.isNotEmpty()
-                if (clearFavorites) {
-                    BarOverflow(items = listOf(s.browseClearFavourites to { confirmClearFavorites = true }))
                 }
             },
             sections = sections,
@@ -1236,6 +1276,46 @@ internal fun BrowseScreen(
                 onClearFavorites()
             },
             onDismiss = { confirmClearFavorites = false },
+        )
+    }
+
+    favoriteVideoMenu?.let { record ->
+        TvMenu(
+            title = record.title,
+            subtitle = listOfNotNull(
+                record.chatTitle.takeIf { it.isNotBlank() },
+                record.durationSec.takeIf { it > 0 }?.let { L.messages.formatter.duration(it.toLong()) },
+                record.sizeBytes.takeIf { it > 0 }?.let { L.messages.formatter.size(it) },
+            ).joinToString("  ·  "),
+            onDismiss = { favoriteVideoMenu = null },
+            actions = listOf(
+                MenuAction(s.browsePlayAgain, TmIcons.Play) {
+                    favoriteVideoMenu = null
+                    onPlayMedia(record.toMediaItem(), record.chatTitle)
+                },
+                MenuAction("Chi tiết video", TmIcons.Trailer) {
+                    favoriteVideoMenu = null
+                    showDetail(record.toMediaItem(), record.chatTitle)
+                },
+                MenuAction("Bỏ khỏi Yêu thích", TmIcons.Star, destructive = true) {
+                    favoriteVideoMenu = null
+                    onRemoveFavoriteVideo(record)
+                },
+            )
+        )
+    }
+
+    if (confirmClearFavoriteVideos) {
+        TvConfirm(
+            title = "Xóa video yêu thích",
+            message = "Bạn có chắc muốn xóa tất cả ${favoriteVideos.size} video khỏi danh sách Yêu thích không?",
+            detail = "Các video trên kênh Telegram vẫn được giữ nguyên.",
+            confirmLabel = s.commonClear,
+            onConfirm = {
+                confirmClearFavoriteVideos = false
+                onClearFavoriteVideos()
+            },
+            onDismiss = { confirmClearFavoriteVideos = false },
         )
     }
 
@@ -1555,6 +1635,20 @@ private fun WatchLaterRecord.cardText() = VideoCardText(
             sizeBytes.takeIf { it > 0 }?.let { L.messages.formatter.size(it) },
         ).joinToString("  ·  ")
     },
+    chatTitle = chatTitle,
+    chatId = chatId,
+    fraction = 0f,
+    item = toMediaItem(),
+)
+
+private fun com.tmplayer.data.FavoriteVideoRecord.cardText() = VideoCardText(
+    key = key,
+    title = SeriesShelf.tileTitle(toMediaItem()),
+    detail = listOfNotNull(
+        chatTitle.takeIf { it.isNotBlank() },
+        durationSec.takeIf { it > 0 }?.let { L.messages.formatter.duration(it.toLong()) },
+        sizeBytes.takeIf { it > 0 }?.let { L.messages.formatter.size(it) },
+    ).joinToString("  ·  "),
     chatTitle = chatTitle,
     chatId = chatId,
     fraction = 0f,
@@ -3329,8 +3423,8 @@ private fun EmptyTab(
             s.browseEmptyWatched
         history == HistoryTab.WatchLater ->
             s.browseEmptyWatchLater
-        tab == BrowseSection.of(BrowseTab.Favorites) ->
-            if (isTouch()) s.browseEmptyFavouritesTouch else s.browseEmptyFavourites
+        tab == BrowseSection.of(BrowseTab.Favorites) || tab.isFavorites ->
+            "Chưa có video yêu thích nào. Bấm vào biểu tượng dấu sao ⭐ trên chi tiết video hoặc menu để lưu vào đây."
         tab.isChats && filter == ChatFilter.Unread -> s.browseEmptyUnread
         tab.isChats && filter == ChatFilter.Archived -> s.browseEmptyArchived
         tab == BrowseSection.of(BrowseTab.Saved) ->

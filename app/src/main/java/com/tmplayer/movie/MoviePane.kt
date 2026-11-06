@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -918,7 +919,7 @@ fun MoviePane(
             Box(
                 Modifier
                     .fillMaxWidth()
-                    .height(580.dp)
+                    .fillMaxHeight(0.88f)
             ) {
                 if (isDetailLoading) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -1390,20 +1391,30 @@ private fun MovieDetailContent(
                     text = detail.movie.name,
                     color = Tone.text,
                     fontSize = 17.sp,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
                 )
 
                 if (detail.movie.originName.isNotBlank()) {
                     Text(
                         text = detail.movie.originName,
                         color = Tone.text.copy(alpha = 0.6f),
-                        fontSize = 12.sp
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
 
                 Spacer(Modifier.height(6.dp))
 
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     if (detail.movie.rating.isNotBlank()) {
                         BadgePill("⭐ ${detail.movie.rating}", bg = Tone.accent, textColor = Color.Black)
                     }
@@ -1444,7 +1455,9 @@ private fun MovieDetailContent(
                     Text(
                         text = "Thời lượng: ${detail.time}",
                         color = Tone.text.copy(alpha = 0.7f),
-                        fontSize = 12.sp
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
@@ -1658,7 +1671,8 @@ private fun MovieDetailContent(
                                                         slug = detail.movie.slug,
                                                         movieTitle = detail.movie.name,
                                                         source = detail.movie.source,
-                                                        epRange = epNum
+                                                        epRange = epNum,
+                                                        totalEpisodes = epList.size
                                                     )
                                                 }
                                             } else {
@@ -1768,7 +1782,8 @@ private fun MovieDetailContent(
                                     slug = detail.movie.slug,
                                     movieTitle = detail.movie.name,
                                     source = detail.movie.source,
-                                    epRange = "all"
+                                    epRange = "all",
+                                    totalEpisodes = epList.size
                                 )
                             }
                         }
@@ -1822,7 +1837,8 @@ private fun MovieDetailContent(
                                     slug = detail.movie.slug,
                                     movieTitle = detail.movie.name,
                                     source = detail.movie.source,
-                                    epRange = "remaining"
+                                    epRange = "remaining",
+                                    totalEpisodes = epList.size
                                 )
                             }
                         }
@@ -1917,7 +1933,8 @@ private fun MovieDetailContent(
                                         slug = detail.movie.slug,
                                         movieTitle = detail.movie.name,
                                         source = detail.movie.source,
-                                        epRange = input
+                                        epRange = input,
+                                        totalEpisodes = epList.size
                                     )
                                 }
                             }
@@ -1940,14 +1957,21 @@ private fun MovieDetailContent(
 }
 
 @Composable
-private fun BadgePill(text: String, bg: Color, textColor: Color) {
+private fun BadgePill(text: String, bg: Color, textColor: Color, modifier: Modifier = Modifier) {
     Box(
-        modifier = Modifier
+        modifier = modifier
             .clip(RoundedCornerShape(4.dp))
             .background(bg)
             .padding(horizontal = 6.dp, vertical = 2.dp)
     ) {
-        Text(text = text, color = textColor, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+        Text(
+            text = text,
+            color = textColor,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 

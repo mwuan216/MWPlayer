@@ -21,6 +21,10 @@ enum class DetailAction {
     AddWatchLater,
     RemoveWatchLater,
 
+    /** Stars (*) this video as a favorite in the Telegram library. */
+    AddFavoriteVideo,
+    RemoveFavoriteVideo,
+
     /**
      * Takes the video out of History: its saved place and its watched tick, every copy of it
      * ([HistoryEdits]). Offered while it is part way through.
@@ -81,6 +85,8 @@ data class DetailContext(
     val finished: Boolean = false,
     /** On Watch later; null where the panel does not offer that list at all. */
     val watchLater: Boolean? = null,
+    /** In the favorite videos list (*). */
+    val isFavoriteVideo: Boolean? = null,
     /** In the Downloads folder. */
     val inDownloads: Boolean = false,
     /**
@@ -129,6 +135,8 @@ object DetailActions {
             add(DetailAction.Play)
         }
         add(if (context.finished) DetailAction.MarkUnwatched else DetailAction.MarkWatched)
+        // Stars (*) favorite video
+        context.isFavoriteVideo?.let { add(if (it) DetailAction.RemoveFavoriteVideo else DetailAction.AddFavoriteVideo) }
         // Nothing is copied, only remembered, so a chat that restricts saving keeps this too.
         context.watchLater?.let { add(if (it) DetailAction.RemoveWatchLater else DetailAction.AddWatchLater) }
         when {

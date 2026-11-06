@@ -126,6 +126,8 @@ internal fun MediaDetailOpened(
     val laterStore = remember(context) { WatchLaterStore(context) }
     val laterKeys by remember(laterStore) { laterStore.keys }.collectAsStateWithLifecycle(initialValue = emptySet())
     val later = SettingsStore.progressKey(item.chatId, item.messageId) in laterKeys
+    val favoriteKeys by remember(settings) { settings.favoriteVideoKeys }.collectAsStateWithLifecycle(initialValue = emptySet())
+    val isFavVideo = "${item.chatId}_${item.messageId}" in favoriteKeys
 
     // Asked once the panel is up: which kind of copy is here decides half the actions. The
     // download index first, since TDLib let go of a download's file when it moved. Read again
@@ -266,6 +268,7 @@ internal fun MediaDetailOpened(
             resumeMs = watched?.positionMs ?: 0L,
             finished = finished,
             watchLater = later,
+            isFavoriteVideo = isFavVideo,
             inDownloads = inDownloads,
             copyInDownloads = kept.copy != null,
             cached = cachedHere,
@@ -319,6 +322,16 @@ internal fun MediaDetailOpened(
                 } else {
                     confirmingHistory = true
                 }
+            } }
+            DetailAction.AddFavoriteVideo, DetailAction.RemoveFavoriteVideo -> { {
+                val add = action == DetailAction.AddFavoriteVideo
+                App.backgroundScope.launch {
+                    runCatching {
+                        settings.toggleFavoriteVideo(item, chatTitle)
+                    }
+                }
+                com.tmplayer.ui.components.showMessage(context, if (add) "Đã thêm '${item.title}' vào Yêu thích (*)" else "Đã xóa '${item.title}' khỏi Yêu thích")
+                if (asMenu) onDismiss()
             } }
             DetailAction.AddWatchLater, DetailAction.RemoveWatchLater -> { {
                 val add = action == DetailAction.AddWatchLater

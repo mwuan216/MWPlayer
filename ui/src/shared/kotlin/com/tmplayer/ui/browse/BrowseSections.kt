@@ -39,7 +39,7 @@ enum class BrowseTab(val icon: ImageVector) {
         Home -> L.browseTabHome
         Movie -> "Movie"
         History -> L.browseTabHistory
-        Favorites -> L.browseTabFavourites
+        Favorites -> "Yêu thích"
         Chats -> L.browseTabChats
         Saved -> L.browseTabSaved
     }
@@ -49,7 +49,7 @@ enum class BrowseTab(val icon: ImageVector) {
         Home -> L.browseTabHomeHeading
         Movie -> "Kho Phim Online"
         History -> L.browseTabHistoryHeading
-        Favorites -> L.browseTabFavouritesHeading
+        Favorites -> "Video Yêu Thích"
         Chats -> L.browseTabChatsHeading
         Saved -> L.browseTabSavedHeading
     }
@@ -59,7 +59,7 @@ enum class BrowseTab(val icon: ImageVector) {
         Home -> L.browseTabHomeBlurb
         Movie -> "Xem phim trực tuyến miễn phí KKPhim & VSMov"
         History -> L.browseTabHistoryBlurb
-        Favorites -> L.browseTabFavouritesBlurb
+        Favorites -> "Các video và tập phim bạn đã gắn dấu sao ⭐"
         Chats -> L.browseTabChatsBlurb
         Saved -> L.browseTabSavedBlurb
     }
@@ -211,11 +211,14 @@ sealed interface BrowseSection {
     /** Online movies tab */
     val isMovie: Boolean get() = this is Tab && tab == BrowseTab.Movie
 
+    /** Favorite videos tab */
+    val isFavorites: Boolean get() = this is Tab && tab == BrowseTab.Favorites
+
     /**
-     * History: lists videos held on this device rather than chats, so no chat search, no refresh,
+     * History or Favorites: lists videos held on this device rather than chats, so no chat search, no refresh,
      * and a count in videos.
      */
-    val listsVideos: Boolean get() = this is Tab && tab == BrowseTab.History
+    val listsVideos: Boolean get() = this is Tab && (tab == BrowseTab.History || tab == BrowseTab.Favorites)
 
     /** The one list the [ChatFilter] chips and the [ChatSort] toggle apply to. */
     val isChats: Boolean get() = this is Tab && tab == BrowseTab.Chats

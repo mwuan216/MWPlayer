@@ -342,6 +342,12 @@ private fun videoFilterKey(chatId: Long) = stringPreferencesKey("vfilter_$chatId
 /** Which of a chat's videos are listed by duration, per chat. See [VideoDurationFilter]. */
 private fun videoDurationFilterKey(chatId: Long) = stringPreferencesKey("vdur_$chatId")
 
+/** Which of a chat's videos are listed by minimum size, per chat. See [VideoSizeFilter]. */
+private fun videoSizeFilterKey(chatId: Long) = stringPreferencesKey("vsz_$chatId")
+
+/** Favorite videos marked with a star (*), replacing chat-level favorites. */
+private val FAVORITE_VIDEOS = stringPreferencesKey("favorite_videos_data")
+
 /** The subtitle and audio offsets the viewer set for one file. See [SyncDelays]. */
 private fun delayKey(chatId: Long, messageId: Long) =
     stringPreferencesKey("delay_${chatId}_$messageId")
@@ -651,6 +657,129 @@ class SettingsStore(private val prefs: DataStore<Preferences>) : AllowedChatsSou
 
     suspend fun setVideoDurationFilter(chatId: Long, filter: VideoDurationFilter) {
         prefs.edit { if (filter == VideoDurationFilter.DEFAULT) it.remove(videoDurationFilterKey(chatId)) else it[videoDurationFilterKey(chatId)] = filter.name }
+    }
+
+    /** Which of [chatId]'s videos are listed by minimum size: [VideoSizeFilter.All] by default. */
+    fun videoSizeFilter(chatId: Long): Flow<VideoSizeFilter> = read { VideoSizeFilter.decode(it[videoSizeFilterKey(chatId)]) }
+
+    suspend fun setVideoSizeFilter(chatId: Long, filter: VideoSizeFilter) {
+        prefs.edit { if (filter == VideoSizeFilter.DEFAULT) it.remove(videoSizeFilterKey(chatId)) else it[videoSizeFilterKey(chatId)] = filter.name }
+    }
+
+    /** Danh sách video yêu thích (gắn dấu sao *) */
+    val favoriteVideos: Flow<List<FavoriteVideoRecord>> = read { p ->
+        val raw = p[FAVORITE_VIDEOS] ?: return@read emptyList()
+        try {
+            val arr = org.json.JSONArray(raw)
+            val list = mutableListOf<FavoriteVideoRecord>()
+            for (i in 0 until arr.length()) {
+                val obj = arr.optJSONObject(i) ?: continue
+                val rec = FavoriteVideoRecord(
+                    chatId = obj.optLong("chatId", 0L),
+                    messageId = obj.optLong("messageId", 0L),
+                    fileId = obj.optInt("fileId", 0),
+                    title = obj.optString("title", ""),
+                    fileName = obj.optString("fileName", ""),
+                    chatTitle = obj.optString("chatTitle", ""),
+                    sizeBytes = obj.optLong("sizeBytes", 0L),
+                    durationSec = obj.optInt("durationSec", 0),
+                    mimeType = obj.optString("mimeType", "video/mp4"),
+                    addedAt = obj.optLong("addedAt", 0L)
+                )
+                if (rec.chatId != 0L && rec.messageId != 0L) {
+                    list.add(rec)
+                }
+            }
+            list
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    val favoriteVideoKeys: Flow<Set<String>> = favoriteVideos.map { list -> list.map { it.key }.toSet() }
+
+    suspend fun toggleFavoriteVideo(item: MediaItem, chatTitle: String = ""): Boolean {
+        var isNowFavorite = false
+        prefs.edit { p ->
+            val raw = p[FAVORITE_VIDEOS] ?: ""
+            val list = try {
+                val arr = org.json.JSONArray(raw)
+                val out = mutableListOf<FavoriteVideoRecord>()
+                for (i in 0 until arr.length()) {
+                    val obj = arr.optJSONObject(i) ?: continue
+                    out.add(
+                        FavoriteVideoRecord(
+                            chatId = obj.optLong("chatId", 0L),
+                            messageId = obj.optLong("messageId", 0L),
+                            fileId = obj.optInt("fileId", 0),
+                            title = obj.optString("title", ""),
+                            fileName = obj.optString("fileName", ""),
+                            chatTitle = obj.optString("chatTitle", ""),
+                            sizeBytes = obj.optLong("sizeBytes", 0L),
+                            durationSec = obj.optInt("durationSec", 0),
+                            mimeType = obj.optString("mimeType", "video/mp4"),
+                            addedAt = obj.optLong("addedAt", 0L)
+                        )
+                    )
+                }
+                out
+            } catch (_: Exception) {
+                mutableListOf()
+            }
+
+            val targetKey = "${item.chatId}_${item.messageId}"
+            val existing = list.indexOfFirst { it.key == targetKey }
+            if (existing >= 0) {
+                list.removeAt(existing)
+                isNowFavorite = false
+            } else {
+                list.add(0, FavoriteVideoRecord.of(item, chatTitle))
+                isNowFavorite = true
+            }
+
+            val newArr = org.json.JSONArray()
+            for (rec in list) {
+                val obj = org.json.JSONObject().apply {
+                    put("chatId", rec.chatId)
+                    put("messageId", rec.messageId)
+                    put("fileId", rec.fileId)
+                    put("title", rec.title)
+                    put("fileName", rec.fileName)
+                    put("chatTitle", rec.chatTitle)
+                    put("sizeBytes", rec.sizeBytes)
+                    put("durationSec", rec.durationSec)
+                    put("mimeType", rec.mimeType)
+                    put("addedAt", rec.addedAt)
+                }
+                newArr.put(obj)
+            }
+            p[FAVORITE_VIDEOS] = newArr.toString()
+        }
+        return isNowFavorite
+    }
+
+    suspend fun removeFavoriteVideo(chatId: Long, messageId: Long) {
+        prefs.edit { p ->
+            val raw = p[FAVORITE_VIDEOS] ?: return@edit
+            try {
+                val arr = org.json.JSONArray(raw)
+                val newArr = org.json.JSONArray()
+                for (i in 0 until arr.length()) {
+                    val obj = arr.optJSONObject(i) ?: continue
+                    if (obj.optLong("chatId", 0L) == chatId && obj.optLong("messageId", 0L) == messageId) {
+                        continue
+                    }
+                    newArr.put(obj)
+                }
+                p[FAVORITE_VIDEOS] = newArr.toString()
+            } catch (_: Exception) {}
+        }
+    }
+
+    suspend fun clearFavoriteVideos() {
+        prefs.edit { p ->
+            p.remove(FAVORITE_VIDEOS)
+        }
     }
 
     /**

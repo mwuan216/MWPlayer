@@ -556,6 +556,8 @@ internal fun roundLabel(row: DetailRow, s: Messages): String = when (row.action)
     DetailAction.MarkUnwatched -> s.detailRoundUnwatched
     DetailAction.AddWatchLater -> s.detailRoundWatchLater
     DetailAction.RemoveWatchLater -> s.detailRoundRemove
+    DetailAction.AddFavoriteVideo -> "Yêu thích"
+    DetailAction.RemoveFavoriteVideo -> "Bỏ thích"
     DetailAction.Download -> s.detailRoundDownload
     DetailAction.SaveToDownloads -> s.detailRoundSave
     DetailAction.InDownloads -> s.detailRoundDownloaded

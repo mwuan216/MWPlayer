@@ -651,6 +651,7 @@ private fun Root() {
     // The favourites the kids lock lets through, as the Favourites tab lists them, so every count
     // of them (the badge, Clear all) says the same number.
     val storedFavorites by settings.favorites.collectAsStateWithLifecycle(initialValue = emptySet())
+    val favoriteVideos by settings.favoriteVideos.collectAsStateWithLifecycle(initialValue = emptyList())
     // The Favourites tab lists the starred chats the gate shows: the kids lock and the chats
     // the viewer added (HX27). A star on a chat they removed stays stored, for when it is back.
     val allowedChats by com.tmplayer.data.ChatGate.browsing.collectAsStateWithLifecycle()
@@ -1871,7 +1872,7 @@ private fun Root() {
         }
         val touchNav = TouchNav(
             account = accountHeader,
-            favoriteCount = favorites.size,
+            favoriteCount = favoriteVideos.size,
             watchingCount = continueWatching.size,
             watchedCount = watchedVideos.size,
             downloadCount = activeDownloadCount,
@@ -1982,6 +1983,17 @@ private fun Root() {
                     onRemoveWatchLater = { record ->
                         App.backgroundScope.launch {
                             runCatching { watchedStore.watchLater.remove(record) }
+                        }
+                    },
+                    favoriteVideos = favoriteVideos,
+                    onRemoveFavoriteVideo = { record ->
+                        App.backgroundScope.launch {
+                            runCatching { settings.removeFavoriteVideo(record.chatId, record.messageId) }
+                        }
+                    },
+                    onClearFavoriteVideos = {
+                        App.backgroundScope.launch {
+                            runCatching { settings.clearFavoriteVideos() }
                         }
                     },
                     // Marked "Opens on launch" only while Carry on from the last chat is on.

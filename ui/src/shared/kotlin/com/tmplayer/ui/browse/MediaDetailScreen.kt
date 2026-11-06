@@ -630,6 +630,7 @@ private fun Actions(
  */
 private fun slotOf(row: DetailRow): Any = when (row.action) {
     DetailAction.MarkWatched, DetailAction.MarkUnwatched -> DetailAction.MarkWatched
+    DetailAction.AddFavoriteVideo, DetailAction.RemoveFavoriteVideo -> DetailAction.AddFavoriteVideo
     DetailAction.AddWatchLater, DetailAction.RemoveWatchLater -> DetailAction.AddWatchLater
     DetailAction.Download, DetailAction.SaveToDownloads, DetailAction.InDownloads, DetailAction.CancelDownload -> DetailAction.Download
     // Episodes, the trailer and the posters switch all borrow Play; their names tell them apart.
@@ -639,8 +640,8 @@ private fun slotOf(row: DetailRow): Any = when (row.action) {
 
 /** Whether [action] turns something on (true), off (false), or is not a switch (null). */
 private fun togglesOn(action: DetailAction): Boolean? = when (action) {
-    DetailAction.MarkWatched, DetailAction.AddWatchLater -> true
-    DetailAction.MarkUnwatched, DetailAction.RemoveWatchLater -> false
+    DetailAction.MarkWatched, DetailAction.AddWatchLater, DetailAction.AddFavoriteVideo -> true
+    DetailAction.MarkUnwatched, DetailAction.RemoveWatchLater, DetailAction.RemoveFavoriteVideo -> false
     else -> null
 }
 
@@ -648,6 +649,8 @@ private fun togglesOn(action: DetailAction): Boolean? = when (action) {
 internal val HEADLINE_ACTIONS = setOf(
     DetailAction.MarkWatched,
     DetailAction.MarkUnwatched,
+    DetailAction.AddFavoriteVideo,
+    DetailAction.RemoveFavoriteVideo,
     DetailAction.AddWatchLater,
     DetailAction.RemoveWatchLater,
     DetailAction.Download,

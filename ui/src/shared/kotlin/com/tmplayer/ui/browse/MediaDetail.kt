@@ -137,6 +137,8 @@ fun detailRow(
         DetailAction.MarkUnwatched -> DetailRow(action, s.gridMarkUnwatched, TmIcons.Close, s.gridMarkUnwatchedDetail, onSelect = onSelect)
         DetailAction.AddWatchLater -> DetailRow(action, s.detailWatchLaterAdd, TmIcons.Clock, s.detailWatchLaterAddDetail, onSelect = onSelect)
         DetailAction.RemoveWatchLater -> DetailRow(action, s.detailWatchLaterRemove, TmIcons.Close, onSelect = onSelect)
+        DetailAction.AddFavoriteVideo -> DetailRow(action, "Yêu thích (*)", TmIcons.StarOutline, "Gắn dấu sao (*) lưu vào danh sách Video Yêu thích", onSelect = onSelect)
+        DetailAction.RemoveFavoriteVideo -> DetailRow(action, "Bỏ Yêu thích (*)", TmIcons.Star, "Bỏ dấu sao khỏi danh sách Video Yêu thích", onSelect = onSelect)
         DetailAction.RemoveFromHistory ->
             DetailRow(action, s.browseRemoveFromHistory, TmIcons.History, s.browseRemoveFromHistoryDetail, destructive = true, onSelect = onSelect)
         DetailAction.Download -> DetailRow(action, s.gridDownload, TmIcons.Download, withFree(s.gridDownloadDetail), onSelect = onSelect)

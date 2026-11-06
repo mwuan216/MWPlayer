@@ -33,20 +33,48 @@ enum class VideoFilter {
 }
 
 /**
- * Which of a chat's videos are shown by running time, remembered per chat alongside [VideoFilter].
+ * Which of a chat's videos are shown by running time, filtered by minimum duration.
  */
-enum class VideoDurationFilter {
-    All,
-    Under5Min,
-    Min5To20,
-    Min20To60,
-    Over60Min,
+enum class VideoDurationFilter(val minSec: Int) {
+    All(0),
+    Min5Min(300),
+    Min15Min(900),
+    Min30Min(1800),
+    Min60Min(3600),
+    Min90Min(5400),
+    Min120Min(7200),
     ;
 
     companion object {
         val DEFAULT = All
 
-        fun decode(name: String?): VideoDurationFilter = entries.firstOrNull { it.name == name } ?: DEFAULT
+        fun decode(name: String?): VideoDurationFilter = when (name) {
+            "Under5Min" -> Min5Min
+            "Min5To20" -> Min15Min
+            "Min20To60" -> Min30Min
+            "Over60Min" -> Min60Min
+            else -> entries.firstOrNull { it.name == name } ?: DEFAULT
+        }
+    }
+}
+
+/**
+ * Which of a chat's videos are shown by minimum file size.
+ */
+enum class VideoSizeFilter(val minBytes: Long) {
+    All(0L),
+    Min100MB(100L * 1024 * 1024),
+    Min300MB(300L * 1024 * 1024),
+    Min500MB(500L * 1024 * 1024),
+    Min1GB(1024L * 1024 * 1024),
+    Min2GB(2048L * 1024 * 1024),
+    Min4GB(4096L * 1024 * 1024),
+    ;
+
+    companion object {
+        val DEFAULT = All
+
+        fun decode(name: String?): VideoSizeFilter = entries.firstOrNull { it.name == name } ?: DEFAULT
     }
 }
 
@@ -82,12 +110,25 @@ object VideoFiltering {
     fun passesDuration(
         entry: ShelfEntry,
         durationFilter: VideoDurationFilter,
-    ): Boolean = when (durationFilter) {
-        VideoDurationFilter.All -> true
-        VideoDurationFilter.Under5Min -> VideoSorting.items(entry).any { it.durationSec in 1 until 300 }
-        VideoDurationFilter.Min5To20 -> VideoSorting.items(entry).any { it.durationSec in 300..1200 }
-        VideoDurationFilter.Min20To60 -> VideoSorting.items(entry).any { it.durationSec in 1201..3600 }
-        VideoDurationFilter.Over60Min -> VideoSorting.items(entry).any { it.durationSec > 3600 }
+    ): Boolean {
+        if (durationFilter == VideoDurationFilter.All) return true
+        return VideoSorting.items(entry).any { it.durationSec >= durationFilter.minSec }
+    }
+
+    fun filterBySize(
+        entries: List<ShelfEntry>,
+        sizeFilter: VideoSizeFilter,
+    ): List<ShelfEntry> {
+        if (sizeFilter == VideoSizeFilter.All) return entries
+        return entries.filter { passesSize(it, sizeFilter) }
+    }
+
+    fun passesSize(
+        entry: ShelfEntry,
+        sizeFilter: VideoSizeFilter,
+    ): Boolean {
+        if (sizeFilter == VideoSizeFilter.All) return true
+        return VideoSorting.items(entry).any { it.sizeBytes >= sizeFilter.minBytes }
     }
 
     fun passes(entry: ShelfEntry, filter: VideoFilter, progress: (MediaItem) -> Progress): Boolean = when (filter) {
