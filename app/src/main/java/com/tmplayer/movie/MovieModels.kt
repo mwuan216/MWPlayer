@@ -64,6 +64,15 @@ data class MovieEpisode(
     val linkEmbed: String = ""
 )
 
+/** Thông tin phụ đề */
+@Immutable
+data class MovieSubtitleTrack(
+    val label: String,
+    val url: String,
+    val language: String = "vi",
+    val isDefault: Boolean = false
+)
+
 /** Thông tin luồng stream để phát trong Video Player */
 @Immutable
 data class MovieStream(
@@ -72,7 +81,9 @@ data class MovieStream(
     val movieTitle: String,
     val episodeName: String,
     val serverName: String = "",
-    val source: MovieSource = MovieSource.KKPhim
+    val source: MovieSource = MovieSource.KKPhim,
+    val subtitleUrl: String = "",
+    val subtitles: List<MovieSubtitleTrack> = emptyList()
 )
 
 /** Danh mục phim */

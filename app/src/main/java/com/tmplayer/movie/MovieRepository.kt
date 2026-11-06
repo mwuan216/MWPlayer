@@ -288,6 +288,8 @@ object MovieRepository {
     // 6. STREAM RESOLVER
     // =========================================================================
 
+    private val subtitleCache = java.util.concurrent.ConcurrentHashMap<String, List<MovieSubtitleTrack>>()
+
     fun resolveStream(source: MovieSource, movieTitle: String, server: MovieServer, episode: MovieEpisode): MovieStream {
         val referer = if (source == MovieSource.VSMov) "https://vsmov.com/" else "https://phimapi.com/"
         var streamUrl = episode.linkM3u8.trim()
@@ -317,6 +319,84 @@ object MovieRepository {
             serverName = server.serverName,
             source = source
         )
+    }
+
+    suspend fun resolveStreamWithSubtitles(
+        source: MovieSource,
+        movieTitle: String,
+        server: MovieServer,
+        episode: MovieEpisode
+    ): MovieStream = withContext(Dispatchers.IO) {
+        val baseStream = resolveStream(source, movieTitle, server, episode)
+        if (source != MovieSource.VSMov || episode.linkEmbed.isBlank()) {
+            return@withContext baseStream
+        }
+
+        val embedUrl = episode.linkEmbed.trim()
+        val cached = subtitleCache[embedUrl]
+        if (cached != null) {
+            val defaultSub = cached.firstOrNull { it.isDefault } ?: cached.firstOrNull()
+            return@withContext baseStream.copy(
+                subtitleUrl = defaultSub?.url ?: "",
+                subtitles = cached
+            )
+        }
+
+        val subs = parseSubtitlesFromEmbed(embedUrl)
+        if (subs.isNotEmpty()) {
+            subtitleCache[embedUrl] = subs
+        }
+        val defaultSub = subs.firstOrNull { it.isDefault } ?: subs.firstOrNull()
+        baseStream.copy(
+            subtitleUrl = defaultSub?.url ?: "",
+            subtitles = subs
+        )
+    }
+
+    private suspend fun parseSubtitlesFromEmbed(embedUrl: String): List<MovieSubtitleTrack> {
+        return try {
+            val html = fetchJson(embedUrl, "https://vsmov.com/") ?: return emptyList()
+            val match = Regex("""subtitles\s*:\s*(\[[^\]]*\])""").find(html) ?: return emptyList()
+            val jsonArray = JSONArray(match.groupValues[1])
+            val host = try {
+                val uri = URI(embedUrl)
+                "${uri.scheme}://${uri.host}"
+            } catch (e: Exception) {
+                "https://v4.streamvsmov.com"
+            }
+
+            val list = mutableListOf<MovieSubtitleTrack>()
+            for (i in 0 until jsonArray.length()) {
+                val obj = jsonArray.optJSONObject(i) ?: continue
+                val rawUrl = obj.optString("url", "")
+                if (rawUrl.isBlank()) continue
+                val fullUrl = if (rawUrl.startsWith("http://") || rawUrl.startsWith("https://")) {
+                    rawUrl
+                } else {
+                    host.trimEnd('/') + "/" + rawUrl.trimStart('/')
+                }
+                val code = obj.optString("code", "").lowercase()
+                val name = obj.optString("name", "")
+                val isVie = code.startsWith("vi") || "việt" in name.lowercase() || "vie" in name.lowercase()
+                val label = when {
+                    isVie -> "Tiếng Việt"
+                    code.startsWith("en") || "eng" in name.lowercase() -> "Tiếng Anh"
+                    name.isNotBlank() -> name
+                    else -> "Phụ đề ${i + 1}"
+                }
+                list.add(
+                    MovieSubtitleTrack(
+                        label = label,
+                        url = fullUrl,
+                        language = if (isVie) "vi" else if (code.startsWith("en")) "en" else code.ifBlank { "und" },
+                        isDefault = isVie
+                    )
+                )
+            }
+            list.sortedByDescending { it.isDefault }
+        } catch (e: Exception) {
+            emptyList()
+        }
     }
 
     // =========================================================================

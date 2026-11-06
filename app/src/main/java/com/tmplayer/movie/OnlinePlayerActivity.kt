@@ -39,6 +39,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
@@ -46,6 +47,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
@@ -76,6 +78,9 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import android.net.Uri
+import android.util.TypedValue
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
@@ -86,6 +91,7 @@ import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
 import com.tmplayer.ui.icons.TmIcons
 import com.tmplayer.ui.theme.TMPlayerTheme
@@ -205,12 +211,30 @@ fun OnlinePlayerScreen(
     val episodes = currentServer?.episodes ?: emptyList()
     val currentEp = episodes.getOrNull(epIdx) ?: episodes.firstOrNull()
 
-    var streamInfo by remember(serverIdx, epIdx) {
+    var streamInfo by remember {
         mutableStateOf(
             if (currentServer != null && currentEp != null) {
                 MovieRepository.resolveStream(detail.movie.source, detail.movie.name, currentServer, currentEp)
             } else null
         )
+    }
+
+    var showSubtitleSheet by remember { mutableStateOf(false) }
+    var selectedSubTrack by remember { mutableStateOf<MovieSubtitleTrack?>(null) }
+    var isSubtitleEnabled by remember { mutableStateOf(true) }
+
+    LaunchedEffect(serverIdx, epIdx) {
+        if (currentServer != null && currentEp != null) {
+            val resolved = MovieRepository.resolveStreamWithSubtitles(
+                detail.movie.source,
+                detail.movie.name,
+                currentServer,
+                currentEp
+            )
+            streamInfo = resolved
+            selectedSubTrack = resolved.subtitles.firstOrNull { it.isDefault } ?: resolved.subtitles.firstOrNull()
+            isSubtitleEnabled = selectedSubTrack != null
+        }
     }
 
     var isPlaying by remember { mutableStateOf(true) }
@@ -303,22 +327,60 @@ fun OnlinePlayerScreen(
             }
     }
 
+    fun applySubtitleSelection(sub: MovieSubtitleTrack?, enabled: Boolean) {
+        selectedSubTrack = sub
+        isSubtitleEnabled = enabled && sub != null
+        if (!isSubtitleEnabled || sub == null) {
+            exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+                .buildUpon()
+                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                .build()
+        } else {
+            exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+                .buildUpon()
+                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                .setPreferredTextLanguage(sub.language)
+                .build()
+        }
+    }
+
     // Update media source when stream changes
-    LaunchedEffect(streamInfo?.streamUrl) {
+    LaunchedEffect(streamInfo?.streamUrl, streamInfo?.subtitles) {
         val stream = streamInfo
         if (stream != null && stream.streamUrl.isNotBlank()) {
             isLoading = true
             isEnded = false
             errorMessage = null
             try {
+                val subConfigs = stream.subtitles.map { sub ->
+                    MediaItem.SubtitleConfiguration.Builder(Uri.parse(sub.url))
+                        .setMimeType(MimeTypes.TEXT_VTT)
+                        .setLanguage(sub.language)
+                        .setLabel(sub.label)
+                        .setSelectionFlags(if (sub.isDefault) C.SELECTION_FLAG_DEFAULT else 0)
+                        .build()
+                }
+
                 val mediaItem = MediaItem.Builder()
                     .setUri(stream.streamUrl)
                     .apply {
                         if (stream.streamUrl.contains(".m3u8") || stream.streamUrl.contains("/stream/")) {
                             setMimeType(MimeTypes.APPLICATION_M3U8)
                         }
+                        if (subConfigs.isNotEmpty()) {
+                            setSubtitleConfigurations(subConfigs)
+                        }
                     }
                     .build()
+
+                val defaultLang = selectedSubTrack?.language ?: "vi"
+                exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+                    .buildUpon()
+                    .setPreferredTextLanguage(defaultLang)
+                    .setIgnoredTextSelectionFlags(0)
+                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !isSubtitleEnabled)
+                    .build()
+
                 exoPlayer.setMediaItem(mediaItem)
                 exoPlayer.prepare()
                 exoPlayer.playWhenReady = true
@@ -532,6 +594,22 @@ fun OnlinePlayerScreen(
                         useController = false
                         this.resizeMode = resizeMode
                         setBackgroundColor(android.graphics.Color.BLACK)
+                        subtitleView?.apply {
+                            setApplyEmbeddedStyles(true)
+                            setApplyEmbeddedFontSizes(true)
+                            setFixedTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
+                            setBottomPaddingFraction(0.08f)
+                            setStyle(
+                                CaptionStyleCompat(
+                                    android.graphics.Color.WHITE,
+                                    android.graphics.Color.TRANSPARENT,
+                                    android.graphics.Color.TRANSPARENT,
+                                    CaptionStyleCompat.EDGE_TYPE_OUTLINE,
+                                    android.graphics.Color.BLACK,
+                                    null
+                                )
+                            )
+                        }
                     }
                 },
                 update = { view ->
@@ -982,6 +1060,18 @@ fun OnlinePlayerScreen(
                                 }
                             )
 
+                            // Subtitle selector pill
+                            if (streamInfo?.subtitles?.isNotEmpty() == true) {
+                                ControlPill(
+                                    text = if (isSubtitleEnabled && selectedSubTrack != null) selectedSubTrack!!.label else "Phụ đề: Tắt",
+                                    icon = TmIcons.Subtitles,
+                                    onClick = {
+                                        showSubtitleSheet = true
+                                        lastInteraction = System.currentTimeMillis()
+                                    }
+                                )
+                            }
+
                             // Episode list picker
                             ControlPill(
                                 text = "Danh sách tập",
@@ -991,6 +1081,119 @@ fun OnlinePlayerScreen(
                                     lastInteraction = System.currentTimeMillis()
                                 }
                             )
+                        }
+                    }
+                }
+            }
+        }
+
+        // SUBTITLE SELECTOR DIALOG / SHEET
+        if (showSubtitleSheet && streamInfo?.subtitles?.isNotEmpty() == true) {
+            val subs = streamInfo!!.subtitles
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.7f))
+                    .clickable { showSubtitleSheet = false },
+                contentAlignment = Alignment.Center
+            ) {
+                Surface(
+                    modifier = Modifier
+                        .widthIn(max = 340.dp)
+                        .padding(24.dp)
+                        .clickable(enabled = false) {},
+                    shape = RoundedCornerShape(20.dp),
+                    color = Color(0xFF1E1E22),
+                    shadowElevation = 16.dp
+                ) {
+                    Column(
+                        modifier = Modifier.padding(20.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Icon(imageVector = TmIcons.Subtitles, contentDescription = null, tint = Tone.accent, modifier = Modifier.size(20.dp))
+                                Text(
+                                    text = "Phụ đề (Subtitles)",
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+                            }
+                            IconButton(onClick = { showSubtitleSheet = false }, modifier = Modifier.size(28.dp)) {
+                                Icon(imageVector = TmIcons.Close, contentDescription = "Close", tint = Color.White.copy(alpha = 0.7f))
+                            }
+                        }
+
+                        Spacer(Modifier.height(16.dp))
+
+                        // Option "Tắt"
+                        val isOff = !isSubtitleEnabled || selectedSubTrack == null
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(if (isOff) Tone.accent.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.05f))
+                                .clickable {
+                                    applySubtitleSelection(null, false)
+                                    showSubtitleSheet = false
+                                }
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "Tắt phụ đề",
+                                color = if (isOff) Tone.accent else Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = if (isOff) FontWeight.Bold else FontWeight.Normal
+                            )
+                            if (isOff) {
+                                Icon(imageVector = TmIcons.Check, contentDescription = null, tint = Tone.accent, modifier = Modifier.size(18.dp))
+                            }
+                        }
+
+                        Spacer(Modifier.height(8.dp))
+
+                        // Available subtitles
+                        subs.forEach { sub ->
+                            val isSelected = isSubtitleEnabled && selectedSubTrack?.url == sub.url
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(if (isSelected) Tone.accent.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.05f))
+                                    .clickable {
+                                        applySubtitleSelection(sub, true)
+                                        showSubtitleSheet = false
+                                    }
+                                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column {
+                                    Text(
+                                        text = sub.label,
+                                        color = if (isSelected) Tone.accent else Color.White,
+                                        fontSize = 14.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                    if (sub.language.isNotBlank()) {
+                                        Text(
+                                            text = sub.language.uppercase(),
+                                            color = Color.White.copy(alpha = 0.5f),
+                                            fontSize = 11.sp
+                                        )
+                                    }
+                                }
+                                if (isSelected) {
+                                    Icon(imageVector = TmIcons.Check, contentDescription = null, tint = Tone.accent, modifier = Modifier.size(18.dp))
+                                }
+                            }
+                            Spacer(Modifier.height(8.dp))
                         }
                     }
                 }
