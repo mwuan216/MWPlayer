@@ -135,35 +135,54 @@ object MovieRepository {
         page: Int = 1
     ): Pair<List<MovieItem>, Int> {
         val referer = if (source == MovieSource.VSMov) "https://vsmov.com/" else "https://phimapi.com/"
-        val baseUrl = if (source == MovieSource.VSMov) "https://vsmov.com/api" else "https://phimapi.com/v1/api"
 
-        val url = buildString {
-            if (keyword.isNotBlank()) {
-                val encKw = URLEncoder.encode(keyword, "UTF-8")
-                append("$baseUrl/tim-kiem?keyword=$encKw&page=$page")
-                if (source == MovieSource.KKPhim) append("&limit=18")
-            } else if (category.isNotBlank()) {
-                if (source == MovieSource.VSMov && category in listOf("hoat-hinh", "co-trang")) {
-                    append("$baseUrl/the-loai/$category?page=$page")
-                } else {
-                    append("$baseUrl/danh-sach/$category?page=$page")
-                    if (source == MovieSource.KKPhim) append("&limit=18")
+        val url = when (source) {
+            MovieSource.KKPhim -> {
+                val baseUrl = "https://phimapi.com/v1/api"
+                buildString {
+                    if (keyword.isNotBlank()) {
+                        val encKw = URLEncoder.encode(keyword.trim(), "UTF-8")
+                        append("$baseUrl/tim-kiem?keyword=$encKw&page=$page&limit=24")
+                        if (category.isNotBlank()) append("&category=$category")
+                        if (genre.isNotBlank()) append("&category=$genre")
+                        if (country.isNotBlank()) append("&country=$country")
+                        if (year.isNotBlank()) append("&year=$year")
+                    } else {
+                        val catSlug = category.ifBlank { "phim-moi-cap-nhat" }
+                        append("$baseUrl/danh-sach/$catSlug?page=$page&limit=24")
+                        if (genre.isNotBlank()) append("&category=$genre")
+                        if (country.isNotBlank()) append("&country=$country")
+                        if (year.isNotBlank()) append("&year=$year")
+                    }
                 }
-            } else if (genre.isNotBlank()) {
-                append("$baseUrl/the-loai/$genre?page=$page")
-                if (source == MovieSource.KKPhim) append("&limit=18")
-            } else if (country.isNotBlank()) {
-                append("$baseUrl/quoc-gia/$country?page=$page")
-                if (source == MovieSource.KKPhim) append("&limit=18")
-            } else if (year.isNotBlank()) {
-                if (source == MovieSource.KKPhim) {
-                    append("$baseUrl/nam-phat-hanh/$year?page=$page&limit=18")
-                } else {
-                    append("$baseUrl/nam/$year?page=$page")
+            }
+            MovieSource.VSMov -> {
+                val baseUrl = "https://vsmov.com/api"
+                buildString {
+                    if (keyword.isNotBlank()) {
+                        val encKw = URLEncoder.encode(keyword.trim(), "UTF-8")
+                        append("$baseUrl/tim-kiem?keyword=$encKw&page=$page")
+                        if (country.isNotBlank()) append("&country=$country")
+                        if (year.isNotBlank()) append("&year=$year")
+                    } else if (genre.isNotBlank()) {
+                        append("$baseUrl/the-loai/$genre?page=$page")
+                        if (country.isNotBlank()) append("&country=$country")
+                        if (year.isNotBlank()) append("&year=$year")
+                    } else if (country.isNotBlank()) {
+                        append("$baseUrl/quoc-gia/$country?page=$page")
+                        if (year.isNotBlank()) append("&year=$year")
+                    } else if (year.isNotBlank()) {
+                        append("$baseUrl/nam/$year?page=$page")
+                    } else if (category.isNotBlank()) {
+                        if (category in listOf("hoat-hinh", "co-trang")) {
+                            append("$baseUrl/the-loai/$category?page=$page")
+                        } else {
+                            append("$baseUrl/danh-sach/$category?page=$page")
+                        }
+                    } else {
+                        append("$baseUrl/danh-sach/phim-moi-cap-nhat?page=$page")
+                    }
                 }
-            } else {
-                val latestBase = if (source == MovieSource.VSMov) "https://vsmov.com/api" else "https://phimapi.com"
-                append("$latestBase/danh-sach/phim-moi-cap-nhat?page=$page")
             }
         }
 

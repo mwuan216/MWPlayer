@@ -89,6 +89,7 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -320,8 +321,8 @@ fun OnlinePlayerScreen(
                 )
             )
 
-        val mediaSourceFactory = DefaultMediaSourceFactory(context)
-            .setDataSourceFactory(httpSourceFactory)
+        val defaultDataSourceFactory = DefaultDataSource.Factory(context, httpSourceFactory)
+        val mediaSourceFactory = DefaultMediaSourceFactory(defaultDataSourceFactory)
 
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(mediaSourceFactory)
@@ -866,11 +867,15 @@ fun OnlinePlayerScreen(
                         val subType = remember(currentServer, detail.movie.lang) {
                             val s = (currentServer?.serverName ?: "").lowercase()
                             val l = detail.movie.lang.lowercase()
-                            val combined = "$s $l"
                             when {
-                                "lồng tiếng" in combined || "long tieng" in combined -> "Lồng tiếng"
-                                "thuyết minh" in combined || "thuyet minh" in combined -> "Thuyết minh"
-                                "vietsub" in combined || "sub" in combined -> "Vietsub"
+                                // 1. Priority: check selected server name explicitly
+                                "lồng tiếng" in s || "long tieng" in s -> "Lồng tiếng"
+                                "thuyết minh" in s || "thuyet minh" in s -> "Thuyết minh"
+                                "vietsub" in s || "sub" in s -> "Vietsub"
+                                // 2. Fallback: check movie metadata
+                                "vietsub" in l || "sub" in l -> "Vietsub"
+                                "thuyết minh" in l || "thuyet minh" in l -> "Thuyết minh"
+                                "lồng tiếng" in l || "long tieng" in l -> "Lồng tiếng"
                                 else -> currentServer?.serverName?.replace(Regex("\\s+"), " ")?.trim()?.ifBlank { "Vietsub" } ?: "Vietsub"
                             }
                         }

@@ -79,6 +79,53 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
+ * State holder singleton for Movie catalog to preserve data across navigation,
+ * player activity launches, and screen configuration changes.
+ */
+object MovieCatalogState {
+    var activeSource by mutableStateOf(MovieSource.KKPhim)
+    var lastLoadedSource: MovieSource? = null
+
+    var searchQuery by mutableStateOf("")
+
+    // Quick category pill selection
+    var selectedCategory by mutableStateOf("")
+
+    // Advanced filter sheet states
+    var showFilterSheet by mutableStateOf(false)
+    var selectedGenre by mutableStateOf("")
+    var selectedCountry by mutableStateOf("")
+    var selectedYear by mutableStateOf("")
+
+    // Section view all target (null means home catalog view)
+    var viewAllCategory by mutableStateOf<Pair<String, String>?>(null)
+
+    // Home rich shelves data
+    var latestMovies by mutableStateOf<List<MovieItem>>(emptyList())
+    var cinemaMovies by mutableStateOf<List<MovieItem>>(emptyList())
+    var seriesMovies by mutableStateOf<List<MovieItem>>(emptyList())
+    var singleMovies by mutableStateOf<List<MovieItem>>(emptyList())
+    var costumeMovies by mutableStateOf<List<MovieItem>>(emptyList())
+    var chinaMovies by mutableStateOf<List<MovieItem>>(emptyList())
+    var koreaMovies by mutableStateOf<List<MovieItem>>(emptyList())
+    var animeMovies by mutableStateOf<List<MovieItem>>(emptyList())
+    var subteamMovies by mutableStateOf<List<MovieItem>>(emptyList())
+    var isHomeLoading by mutableStateOf(false)
+
+    // Grid filter / search data (Infinite scroll)
+    var gridMovies by mutableStateOf<List<MovieItem>>(emptyList())
+    var gridPage by mutableIntStateOf(1)
+    var gridTotalPages by mutableIntStateOf(1)
+    var isGridLoading by mutableStateOf(false)
+    var isGridLoadingMore by mutableStateOf(false)
+
+    // Detail Sheet
+    var selectedMovieSlug by mutableStateOf<String?>(null)
+    var movieDetail by mutableStateOf<MovieDetail?>(null)
+    var isDetailLoading by mutableStateOf(false)
+}
+
+/**
  * Màn hình Movie Online: KKPhim & VSMov
  * Tính năng nâng cấp:
  * - Multi-movie Featured Carousel (Slide nhiều phim nổi bật tự động chuyển)
@@ -97,45 +144,46 @@ fun MoviePane(
     val focusManager = LocalFocusManager.current
     val bottomChrome = LocalBottomChrome.current
 
-    var activeSource by remember { mutableStateOf(MovieSource.KKPhim) }
-    var searchQuery by remember { mutableStateOf("") }
+    val catalogState = MovieCatalogState
+    var activeSource by catalogState::activeSource
+    var searchQuery by catalogState::searchQuery
 
     // Quick category pill selection
-    var selectedCategory by remember { mutableStateOf("") }
+    var selectedCategory by catalogState::selectedCategory
 
     // Advanced filter sheet states
-    var showFilterSheet by remember { mutableStateOf(false) }
-    var selectedGenre by remember { mutableStateOf("") }
-    var selectedCountry by remember { mutableStateOf("") }
-    var selectedYear by remember { mutableStateOf("") }
+    var showFilterSheet by catalogState::showFilterSheet
+    var selectedGenre by catalogState::selectedGenre
+    var selectedCountry by catalogState::selectedCountry
+    var selectedYear by catalogState::selectedYear
 
     // Section view all target (null means home catalog view)
-    var viewAllCategory by remember { mutableStateOf<Pair<String, String>?>(null) } // slug to title
+    var viewAllCategory by catalogState::viewAllCategory
 
     // Home rich shelves data
-    var latestMovies by remember { mutableStateOf<List<MovieItem>>(emptyList()) }
-    var cinemaMovies by remember { mutableStateOf<List<MovieItem>>(emptyList()) }
-    var seriesMovies by remember { mutableStateOf<List<MovieItem>>(emptyList()) }
-    var singleMovies by remember { mutableStateOf<List<MovieItem>>(emptyList()) }
-    var costumeMovies by remember { mutableStateOf<List<MovieItem>>(emptyList()) }
-    var chinaMovies by remember { mutableStateOf<List<MovieItem>>(emptyList()) }
-    var koreaMovies by remember { mutableStateOf<List<MovieItem>>(emptyList()) }
-    var animeMovies by remember { mutableStateOf<List<MovieItem>>(emptyList()) }
-    var subteamMovies by remember { mutableStateOf<List<MovieItem>>(emptyList()) }
-    var isHomeLoading by remember { mutableStateOf(true) }
+    var latestMovies by catalogState::latestMovies
+    var cinemaMovies by catalogState::cinemaMovies
+    var seriesMovies by catalogState::seriesMovies
+    var singleMovies by catalogState::singleMovies
+    var costumeMovies by catalogState::costumeMovies
+    var chinaMovies by catalogState::chinaMovies
+    var koreaMovies by catalogState::koreaMovies
+    var animeMovies by catalogState::animeMovies
+    var subteamMovies by catalogState::subteamMovies
+    var isHomeLoading by catalogState::isHomeLoading
 
     // Grid filter / search data (Infinite scroll)
-    var gridMovies by remember { mutableStateOf<List<MovieItem>>(emptyList()) }
-    var gridPage by remember { mutableIntStateOf(1) }
-    var gridTotalPages by remember { mutableIntStateOf(1) }
-    var isGridLoading by remember { mutableStateOf(false) }
-    var isGridLoadingMore by remember { mutableStateOf(false) }
+    var gridMovies by catalogState::gridMovies
+    var gridPage by catalogState::gridPage
+    var gridTotalPages by catalogState::gridTotalPages
+    var isGridLoading by catalogState::isGridLoading
+    var isGridLoadingMore by catalogState::isGridLoadingMore
     val gridState = rememberLazyGridState()
 
     // Detail Sheet
-    var selectedMovieSlug by remember { mutableStateOf<String?>(null) }
-    var movieDetail by remember { mutableStateOf<MovieDetail?>(null) }
-    var isDetailLoading by remember { mutableStateOf(false) }
+    var selectedMovieSlug by catalogState::selectedMovieSlug
+    var movieDetail by catalogState::movieDetail
+    var isDetailLoading by catalogState::isDetailLoading
 
     val activeFilterCount = (if (selectedCategory.isNotBlank()) 1 else 0) +
         (if (selectedGenre.isNotBlank()) 1 else 0) +
@@ -280,7 +328,10 @@ fun MoviePane(
     // Trigger home load on source change
     LaunchedEffect(activeSource) {
         if (!isCatalogGridActive) {
-            loadHome()
+            if (catalogState.lastLoadedSource != activeSource || latestMovies.isEmpty()) {
+                catalogState.lastLoadedSource = activeSource
+                loadHome()
+            }
         } else {
             loadGridInitial()
         }
@@ -297,14 +348,16 @@ fun MoviePane(
     LaunchedEffect(selectedMovieSlug) {
         val slug = selectedMovieSlug
         if (slug != null) {
-            isDetailLoading = true
-            movieDetail = null
-            try {
-                movieDetail = MovieRepository.getMovieDetail(activeSource, slug)
-            } catch (_: Exception) {
+            if (movieDetail?.movie?.slug != slug) {
+                isDetailLoading = true
                 movieDetail = null
-            } finally {
-                isDetailLoading = false
+                try {
+                    movieDetail = MovieRepository.getMovieDetail(activeSource, slug)
+                } catch (_: Exception) {
+                    movieDetail = null
+                } finally {
+                    isDetailLoading = false
+                }
             }
         }
     }
@@ -474,9 +527,10 @@ fun MoviePane(
 
                 quickPills.forEach { (slug, label) ->
                     val isSelected = when (slug) {
+                        "" -> selectedCategory.isBlank() && selectedGenre.isBlank() && selectedCountry.isBlank() && selectedYear.isBlank()
                         "han-quoc", "trung-quoc" -> selectedCountry == slug
                         "co-trang" -> selectedGenre == slug
-                        else -> selectedCategory == slug && selectedCountry.isBlank() && selectedGenre.isBlank()
+                        else -> selectedCategory == slug
                     }
 
                     Box(
@@ -486,20 +540,20 @@ fun MoviePane(
                             .clickable {
                                 viewAllCategory = null
                                 when (slug) {
-                                    "han-quoc", "trung-quoc" -> {
-                                        selectedCountry = if (selectedCountry == slug) "" else slug
+                                    "" -> {
                                         selectedCategory = ""
                                         selectedGenre = ""
+                                        selectedCountry = ""
+                                        selectedYear = ""
+                                    }
+                                    "han-quoc", "trung-quoc" -> {
+                                        selectedCountry = if (selectedCountry == slug) "" else slug
                                     }
                                     "co-trang" -> {
                                         selectedGenre = if (selectedGenre == slug) "" else slug
-                                        selectedCategory = ""
-                                        selectedCountry = ""
                                     }
                                     else -> {
                                         selectedCategory = if (selectedCategory == slug) "" else slug
-                                        selectedCountry = ""
-                                        selectedGenre = ""
                                     }
                                 }
                             }
