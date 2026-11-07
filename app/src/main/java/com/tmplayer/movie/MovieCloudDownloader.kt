@@ -26,7 +26,7 @@ import java.net.URLEncoder
  *
  * Cấu hình đích đến:
  * - Group Chat ID: -1004495574377
- * - Forum Topic ID (MovieBox): 43264
+ * - Forum Topic ID (MovieBox #bot): 1
  *
  * Tối ưu song song 2 bot để x2 tốc độ và chống trùng lặp:
  * - Bot 1: @Mw_movie_downloader_bot
@@ -35,7 +35,7 @@ import java.net.URLEncoder
 object MovieCloudDownloader {
 
     const val CLOUD_CHAT_ID = -1004495574377L
-    const val CLOUD_TOPIC_ID = 43264
+    const val CLOUD_TOPIC_ID = 1
     const val BOT_TOKEN = "9166002043:AAEgSw9QEIzlMYniod09qV7PyuIMajRUjuQ"
     const val BOT_1 = "Mw_movie_downloader_bot"
     const val BOT_2 = "Movie_bot_laptop_bot"

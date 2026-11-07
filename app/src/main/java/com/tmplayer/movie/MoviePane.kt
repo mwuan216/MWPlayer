@@ -3337,7 +3337,7 @@ fun CloudDestinationPickerModal(
                     }
                 }
             } else {
-                // 1. Default MovieBox #43264
+                // 1. Default MovieBox #bot (Topic 1)
                 val isDefaultSelected = currentDest.isDefault
                 Row(
                     modifier = Modifier
@@ -3359,13 +3359,13 @@ fun CloudDestinationPickerModal(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "☁️ MovieBox Cloud › MovieBox (#43264)",
+                            text = "☁️ MovieBox › #bot",
                             color = if (isDefaultSelected) Tone.accent else Tone.text,
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "Kho lưu trữ đám mây mặc định (Hỗ trợ Dual Bot tốc độ cao)",
+                            text = "Kho lưu trữ mặc định trong MovieBox topic 1 (#bot) - Hỗ trợ Dual Bot",
                             color = Tone.text.copy(alpha = 0.6f),
                             fontSize = 11.sp
                         )
