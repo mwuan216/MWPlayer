@@ -5,5 +5,5 @@
       the light value in res/values would otherwise put a white window behind an app that has no
       light theme at all.
     -->
-    <color name="window_background">#0C0E10</color>
+    <color name="window_background">#080B1F</color>
 </resources>

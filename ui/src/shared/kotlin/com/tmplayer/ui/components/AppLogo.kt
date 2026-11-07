@@ -41,11 +41,11 @@ object AppLogo {
             viewportWidth = 1024f,
             viewportHeight = 1024f,
         ).apply {
-            layer(0xFF1E1E28, TILE)
-            layer(0xFF0E0E12, SCREEN)
-            layer(0xFF3A3A46, TRACK)
-            layer(0xFF2AABEE, PROGRESS)
-            layer(0xFFEDEDF2, PLAYHEAD_AND_TRIANGLE)
+            layer(0xFF080B1F, TILE)
+            layer(0xFF12172B, SCREEN)
+            layer(0xFF252B45, TRACK)
+            layer(0xFF6A5CFF, PROGRESS)
+            layer(0xFFE6EAF2, PLAYHEAD_AND_TRIANGLE)
         }.build()
     }
 

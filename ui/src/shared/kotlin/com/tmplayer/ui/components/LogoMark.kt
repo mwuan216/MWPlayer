@@ -72,7 +72,7 @@ private const val BAR_START = 128f
 private const val BAR_END = 896f
 private const val BAR_Y = 874.67f
 
-private val TILE = Color(0xFF1E1E28)
-private val SCREEN = Color(0xFF0E0E12)
-private val TRACK = Color(0xFF3A3A46)
-private val INK = Color(0xFFEDEDF2)
+private val TILE = Color(0xFF080B1F)
+private val SCREEN = Color(0xFF12172B)
+private val TRACK = Color(0xFF252B45)
+private val INK = Color(0xFFE6EAF2)

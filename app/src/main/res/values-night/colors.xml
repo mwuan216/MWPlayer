@@ -1,9 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!--
-      The window behind the app before Compose has drawn a frame, in the phone's dark mode. It has
-      to match the dark scheme's background, because this is the colour the launch animation flies
-      into and a mismatch reads as a flash.
-    -->
-    <color name="window_background">#0C0E10</color>
+    <!-- MWPlayer Brand Dark Palette -->
+    <color name="colorPrimary">#6A5CFF</color>
+    <color name="colorOnPrimary">#FFFFFF</color>
+    <color name="colorPrimaryContainer">#302B83</color>
+    <color name="colorOnPrimaryContainer">#E6E1FF</color>
+    <color name="colorSecondary">#00C2FF</color>
+    <color name="colorOnSecondary">#001F2A</color>
+    <color name="colorSecondaryContainer">#004C63</color>
+    <color name="colorOnSecondaryContainer">#B8EAFF</color>
+    <color name="colorBackground">#080B1F</color>
+    <color name="colorOnBackground">#E6EAF2</color>
+    <color name="colorSurface">#12172B</color>
+    <color name="colorOnSurface">#E6EAF2</color>
+    <color name="colorSurfaceVariant">#252B45</color>
+    <color name="colorOnSurfaceVariant">#BEC5D8</color>
+    <color name="colorOutline">#8991AA</color>
+    <color name="colorError">#FFB4AB</color>
+
+    <color name="window_background">#080B1F</color>
+    <color name="accent">#6A5CFF</color>
 </resources>

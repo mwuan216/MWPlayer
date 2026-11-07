@@ -1,23 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- MWPlayer Brand Light Palette -->
+    <color name="colorPrimary">#5B4BFF</color>
+    <color name="colorOnPrimary">#FFFFFF</color>
+    <color name="colorPrimaryContainer">#E9E6FF</color>
+    <color name="colorOnPrimaryContainer">#16006B</color>
+    <color name="colorSecondary">#00A8FF</color>
+    <color name="colorOnSecondary">#FFFFFF</color>
+    <color name="colorSecondaryContainer">#CDEEFF</color>
+    <color name="colorOnSecondaryContainer">#001E2B</color>
+    <color name="colorBackground">#FFFFFF</color>
+    <color name="colorOnBackground">#10172A</color>
+    <color name="colorSurface">#F6F7FB</color>
+    <color name="colorOnSurface">#10172A</color>
+    <color name="colorSurfaceVariant">#E5E8F2</color>
+    <color name="colorOnSurfaceVariant">#454B5C</color>
+    <color name="colorOutline">#747B8D</color>
+    <color name="colorError">#BA1A1A</color>
 
-    <!--
-      What the window is painted before the first frame. Light here and dark in values-night,
-      because the phone now follows the system theme: a fixed dark window meant anybody on a light
-      phone watched a black rectangle for the length of the launch animation, every launch. The
-      television has no light mode and never sees the light value: Android TV runs in night mode.
-    -->
-    <color name="window_background">#F6FAFD</color>
-    <color name="accent">#2AABEE</color>
-    <color name="text_primary">#EDEDF2</color>
+    <color name="window_background">#FFFFFF</color>
+    <color name="accent">#5B4BFF</color>
+    <color name="text_primary">#10172A</color>
 
-    <!--
-      The player's tonal surfaces. The picture is always dark chrome whatever the system theme, so
-      these are fixed: a near-black surface container let partly through, with on surface text on
-      it. The caption tone (70 per cent) carries small text, the episode codes and the jump figure,
-      and holds white text above 7:1 even over a white frame. The button tone (55 per cent) sits
-      under the round centre buttons, where a glyph needs 3:1 and a little more of the frame shows.
-    -->
-    <color name="player_tonal">#B3101014</color>
-    <color name="player_tonal_button">#8C101014</color>
+    <color name="player_tonal">#B3080B1F</color>
+    <color name="player_tonal_button">#8C080B1F</color>
 </resources>
