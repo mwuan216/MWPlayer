@@ -73,12 +73,23 @@ object AvFilterData {
 
 object AvRepository {
 
-    const val CHROME_UA =
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    const val IOS_SAFARI_UA =
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1"
+
+    const val CHROME_UA = IOS_SAFARI_UA
 
     private val detailCache = ConcurrentHashMap<String, MovieDetail>()
     private val allDetailsBySlug = ConcurrentHashMap<String, MovieDetail>()
     private val resolvedStreamCache = ConcurrentHashMap<String, Pair<Long, MovieStream>>()
+
+    fun invalidateStreamCache(episode: MovieEpisode?) {
+        if (episode == null) {
+            resolvedStreamCache.clear()
+            return
+        }
+        val suffix = ":${episode.linkM3u8}:${episode.linkEmbed}"
+        resolvedStreamCache.keys.removeIf { it.endsWith(suffix) }
+    }
 
     private fun cacheDetail(source: MovieSource, detail: MovieDetail) {
         detailCache["${source.name}:${detail.movie.slug}"] = detail
@@ -92,7 +103,8 @@ object AvRepository {
     private suspend fun fetchUrl(
         url: String,
         referer: String? = null,
-        timeoutMs: Int = 10_000
+        timeoutMs: Int = 10_000,
+        userAgent: String = IOS_SAFARI_UA
     ): String? = withContext(Dispatchers.IO) {
         var conn: HttpURLConnection? = null
         try {
@@ -102,7 +114,7 @@ object AvRepository {
                 connectTimeout = timeoutMs
                 readTimeout = timeoutMs
                 instanceFollowRedirects = true
-                setRequestProperty("User-Agent", CHROME_UA)
+                setRequestProperty("User-Agent", userAgent)
                 setRequestProperty("Accept", "application/json, text/html, text/plain, */*")
                 setRequestProperty("Accept-Language", "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7")
                 if (referer != null) {
@@ -802,20 +814,21 @@ object AvRepository {
 
     private fun convertDfPlayerToM3u8(link: String): String {
         if (link.isBlank()) return ""
-        if (link.contains(".m3u8")) return link
+        if (link.contains(".m3u8")) return link.replace("/v1/s/", "/v2/s/")
         val host = try {
             val u = URI(link)
             "${u.scheme}://${u.host}"
         } catch (_: Exception) {
             "https://a.dfplayer.cc"
         }
-        val idMatch = Regex("""[?&]id=([^&#]+)""").find(link)
-        if (idMatch != null) {
-            return "$host/v1/s/${idMatch.groupValues[1]}.m3u8"
-        }
         val didMatch = Regex("""[?&]did=([^&#]+)""").find(link)
         if (didMatch != null) {
             return "$host/v2/s/${didMatch.groupValues[1]}.m3u8"
+        }
+        val idMatch = Regex("""[?&]id=([^&#]+)""").find(link)
+        if (idMatch != null) {
+            // /v1/s/ points to dead TikTok CDN segments (403 Forbidden); /v2/s/ uses the same numeric ID on self-hosted CDN (200 OK)
+            return "$host/v2/s/${idMatch.groupValues[1]}.m3u8"
         }
         return ""
     }
@@ -1063,6 +1076,28 @@ object AvRepository {
     // 6. STREAM RESOLUTION FOR AV SOURCES
     // =========================================================================
 
+    private fun extractM3u8FromUpload18Html(html: String): String {
+        val cfgMatch = Regex("""window\.PLAYER_CONFIG\s*=\s*(\{.*?\});""", RegexOption.DOT_MATCHES_ALL).find(html)
+        if (cfgMatch != null) {
+            try {
+                val cfg = JSONObject(cfgMatch.groupValues[1])
+                val m3u8 = cfg.optString("m3u8", "")
+                    .replace("\\/", "/")
+                    .replace("\\u0026", "&")
+                    .trim()
+                if (m3u8.isNotBlank()) return m3u8
+            } catch (_: Exception) {}
+        }
+        val regexFallback = Regex(""""m3u8"\s*:\s*"([^"]+)"""").find(html)
+        if (regexFallback != null) {
+            return regexFallback.groupValues[1]
+                .replace("\\/", "/")
+                .replace("\\u0026", "&")
+                .trim()
+        }
+        return ""
+    }
+
     suspend fun resolveAvStream(
         source: MovieSource,
         movieTitle: String,
@@ -1072,14 +1107,16 @@ object AvRepository {
         val cacheKey = "${source.name}:${episode.linkM3u8}:${episode.linkEmbed}"
         val now = System.currentTimeMillis()
         resolvedStreamCache[cacheKey]?.let { (ts, cached) ->
-            if (now - ts < 15 * 60 * 1000L && cached.streamUrl.isNotBlank()) {
+            if (now - ts < 5 * 60 * 1000L && cached.streamUrl.isNotBlank()) {
                 return@withContext cached
             }
         }
 
         // 1. XXVN dfplayer links
         if (source == MovieSource.XXVN && (episode.linkM3u8.contains("dfplayer") || episode.linkEmbed.contains("dfplayer"))) {
-            val m3u8 = episode.linkM3u8.ifBlank { convertDfPlayerToM3u8(episode.linkEmbed) }
+            val m3u8 = episode.linkM3u8
+                .ifBlank { convertDfPlayerToM3u8(episode.linkEmbed) }
+                .replace("/v1/s/", "/v2/s/")
             val stream = MovieStream(
                 streamUrl = m3u8,
                 referer = "https://a.dfplayer.cc/",
@@ -1094,14 +1131,19 @@ object AvRepository {
 
         // 2. If episode already has direct surrit.com or .m3u8
         if (episode.linkM3u8.isNotBlank() && (".m3u8" in episode.linkM3u8 || "helvid.com" in episode.linkM3u8)) {
+            val normalizedM3u8 = if ("dfplayer.cc" in episode.linkM3u8) {
+                episode.linkM3u8.replace("/v1/s/", "/v2/s/")
+            } else {
+                episode.linkM3u8
+            }
             val ref = when {
-                "surrit.com" in episode.linkM3u8 -> "https://missav.ws/"
-                "helvid.com" in episode.linkM3u8 -> "https://upload18.org/"
-                "dfplayer.cc" in episode.linkM3u8 -> "https://a.dfplayer.cc/"
+                "surrit.com" in normalizedM3u8 -> "https://missav.ws/"
+                "helvid.com" in normalizedM3u8 -> "https://upload18.org/"
+                "dfplayer.cc" in normalizedM3u8 -> "https://a.dfplayer.cc/"
                 else -> "https://avdbapi.com/"
             }
             val stream = MovieStream(
-                streamUrl = episode.linkM3u8,
+                streamUrl = normalizedM3u8,
                 referer = ref,
                 movieTitle = movieTitle,
                 episodeName = episode.name,
@@ -1112,7 +1154,7 @@ object AvRepository {
             return@withContext stream
         }
 
-        // 3. Extract from upload18.org embed player (window.PLAYER_CONFIG = {...})
+        // 3. Extract from upload18.org embed player (window.PLAYER_CONFIG = {...}) using iOS Safari UA (d=apple native HLS)
         val embed = episode.linkEmbed.trim()
         if (embed.isNotBlank()) {
             if ("dfplayer.cc" in embed) {
@@ -1132,38 +1174,32 @@ object AvRepository {
             }
 
             if ("upload18." in embed) {
-                val html = fetchUrl(embed, referer = "https://avdbapi.com/")
+                val html = fetchUrl(embed, referer = "https://avdbapi.com/", userAgent = IOS_SAFARI_UA)
                 if (!html.isNullOrBlank()) {
-                    val cfgMatch = Regex("""window\.PLAYER_CONFIG\s*=\s*(\{.*?\});""").find(html)
-                    if (cfgMatch != null) {
-                        try {
-                            val cfg = JSONObject(cfgMatch.groupValues[1])
-                            val m3u8 = cfg.optString("m3u8", "").trim()
-                            if (m3u8.isNotBlank()) {
-                                val embedHost = try {
-                                    val u = URI(embed)
-                                    "${u.scheme}://${u.host}/"
-                                } catch (_: Exception) {
-                                    "https://upload18.org/"
-                                }
-                                val stream = MovieStream(
-                                    streamUrl = m3u8,
-                                    referer = embedHost,
-                                    movieTitle = movieTitle,
-                                    episodeName = episode.name,
-                                    serverName = server.serverName,
-                                    source = source
-                                )
-                                resolvedStreamCache[cacheKey] = now to stream
-                                return@withContext stream
-                            }
-                        } catch (_: Exception) {}
+                    val m3u8 = extractM3u8FromUpload18Html(html)
+                    if (m3u8.isNotBlank()) {
+                        val embedHost = try {
+                            val u = URI(embed)
+                            "${u.scheme}://${u.host}/"
+                        } catch (_: Exception) {
+                            "https://upload18.org/"
+                        }
+                        val stream = MovieStream(
+                            streamUrl = m3u8,
+                            referer = embedHost,
+                            movieTitle = movieTitle,
+                            episodeName = episode.name,
+                            serverName = server.serverName,
+                            source = source
+                        )
+                        resolvedStreamCache[cacheKey] = now to stream
+                        return@withContext stream
                     }
                 }
             }
 
             // 4. Try unpacking Dean Edwards if embed is a MissAV page
-            val html = fetchUrl(embed, referer = embed)
+            val html = fetchUrl(embed, referer = embed, userAgent = IOS_SAFARI_UA)
             if (!html.isNullOrBlank()) {
                 val unpackedM3u8 = unpackDeanEdwards(html)
                 if (!unpackedM3u8.isNullOrBlank()) {

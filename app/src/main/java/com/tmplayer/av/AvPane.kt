@@ -1200,6 +1200,7 @@ private fun AvDetailWithInlinePlayer(
     var initialSeekApplied by remember(movie.slug, serverIdx, epIdx) { mutableStateOf(false) }
     var seekToastLabel by remember { mutableStateOf<String?>(null) }
     var streamError by remember(movie.slug, serverIdx, epIdx) { mutableStateOf<String?>(null) }
+    var retryTrigger by remember(movie.slug) { mutableIntStateOf(0) }
 
     // Scroll to top when switching to a related movie
     LaunchedEffect(movie.slug) {
@@ -1208,7 +1209,7 @@ private fun AvDetailWithInlinePlayer(
 
     val httpSourceFactory = remember {
         DefaultHttpDataSource.Factory()
-            .setUserAgent(AvRepository.CHROME_UA)
+            .setUserAgent(AvRepository.IOS_SAFARI_UA)
             .setConnectTimeoutMs(15_000)
             .setReadTimeoutMs(20_000)
             .setAllowCrossProtocolRedirects(true)
@@ -1234,7 +1235,7 @@ private fun AvDetailWithInlinePlayer(
     }
 
     // Resolve stream when detail / server / episode is ready
-    LaunchedEffect(detail, serverIdx, epIdx) {
+    LaunchedEffect(detail, serverIdx, epIdx, retryTrigger) {
         if (detail != null && currentServer != null && currentEp != null) {
             isStreamLoading = true
             streamError = null
@@ -1250,7 +1251,7 @@ private fun AvDetailWithInlinePlayer(
     }
 
     // Load resolved stream into ExoPlayer
-    LaunchedEffect(resolvedStream?.streamUrl) {
+    LaunchedEffect(resolvedStream?.streamUrl, retryTrigger) {
         val stream = resolvedStream ?: return@LaunchedEffect
         if (stream.streamUrl.isBlank()) {
             streamError = "Chưa lấy được link phát trực tiếp"
@@ -1261,7 +1262,8 @@ private fun AvDetailWithInlinePlayer(
             isBuffering = true
             streamError = null
             initialSeekApplied = false
-            val ref = stream.referer.ifBlank { "https://avdbapi.com/" }
+            val ref = stream.referer.ifBlank { "https://upload18.org/" }
+            httpSourceFactory.setUserAgent(AvRepository.IOS_SAFARI_UA)
             httpSourceFactory.setDefaultRequestProperties(
                 mapOf(
                     "Referer" to ref,
@@ -1273,7 +1275,11 @@ private fun AvDetailWithInlinePlayer(
             val mediaItem = MediaItem.Builder()
                 .setUri(stream.streamUrl)
                 .apply {
-                    if (stream.streamUrl.contains(".m3u8")) {
+                    if (stream.streamUrl.contains(".m3u8") ||
+                        stream.streamUrl.contains("/m/") ||
+                        stream.streamUrl.contains("/s/") ||
+                        stream.streamUrl.contains("surrit.com")
+                    ) {
                         setMimeType(MimeTypes.APPLICATION_M3U8)
                     }
                 }
@@ -1312,8 +1318,13 @@ private fun AvDetailWithInlinePlayer(
             }
 
             override fun onPlayerError(error: PlaybackException) {
-                isBuffering = false
-                streamError = "Lỗi luồng phát (${error.errorCodeName})"
+                if (detail != null && serverIdx + 1 < detail.servers.size) {
+                    serverIdx += 1
+                    epIdx = 0
+                } else {
+                    isBuffering = false
+                    streamError = "Lỗi luồng phát (${error.errorCodeName})"
+                }
             }
         }
         exoPlayer.addListener(listener)
@@ -1558,8 +1569,8 @@ private fun AvDetailWithInlinePlayer(
                                     .clip(RoundedCornerShape(8.dp))
                                     .background(Tone.accent)
                                     .clickable {
-                                        exoPlayer.prepare()
-                                        exoPlayer.playWhenReady = true
+                                        AvRepository.invalidateStreamCache(currentEp)
+                                        retryTrigger += 1
                                     }
                                     .padding(horizontal = 12.dp, vertical = 5.dp)
                             ) {

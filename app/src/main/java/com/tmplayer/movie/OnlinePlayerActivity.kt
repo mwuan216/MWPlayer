@@ -241,7 +241,7 @@ fun OnlinePlayerScreen(
 
     var streamInfo by remember {
         mutableStateOf(
-            if (currentServer != null && currentEp != null) {
+            if (!isAv && currentServer != null && currentEp != null) {
                 MovieRepository.resolveStream(detail.movie.source, detail.movie.name, currentServer, currentEp)
             } else null
         )
@@ -333,21 +333,36 @@ fun OnlinePlayerScreen(
     }
 
     val httpSourceFactory = remember {
+        val defaultUa = if (isAv) {
+            com.tmplayer.av.AvRepository.IOS_SAFARI_UA
+        } else {
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        }
+        val initRef = streamInfo?.referer ?: if (isAv) "https://upload18.org/" else "https://phimapi.com/"
         DefaultHttpDataSource.Factory()
-            .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+            .setUserAgent(defaultUa)
             .setConnectTimeoutMs(15_000)
             .setReadTimeoutMs(20_000)
             .setAllowCrossProtocolRedirects(true)
             .setDefaultRequestProperties(
-                mapOf(
-                    "Referer" to (streamInfo?.referer ?: "https://phimapi.com/"),
-                    "Origin" to (streamInfo?.referer ?: "https://phimapi.com/").trimEnd('/'),
-                    "Accept" to "*/*",
-                    "Accept-Language" to "en-US,en;q=0.9",
-                    "Sec-Fetch-Dest" to "empty",
-                    "Sec-Fetch-Mode" to "cors",
-                    "Sec-Fetch-Site" to "cross-site"
-                )
+                if (isAv) {
+                    mapOf(
+                        "Referer" to initRef,
+                        "Origin" to initRef.trimEnd('/'),
+                        "Accept" to "*/*",
+                        "Accept-Language" to "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7"
+                    )
+                } else {
+                    mapOf(
+                        "Referer" to initRef,
+                        "Origin" to initRef.trimEnd('/'),
+                        "Accept" to "*/*",
+                        "Accept-Language" to "en-US,en;q=0.9",
+                        "Sec-Fetch-Dest" to "empty",
+                        "Sec-Fetch-Mode" to "cors",
+                        "Sec-Fetch-Site" to "cross-site"
+                    )
+                }
             )
     }
 
@@ -388,18 +403,30 @@ fun OnlinePlayerScreen(
             initialSeekDone = false
             errorMessage = null
             try {
-                val ref = stream.referer.ifBlank { "https://phimapi.com/" }
-                httpSourceFactory.setDefaultRequestProperties(
-                    mapOf(
-                        "Referer" to ref,
-                        "Origin" to ref.trimEnd('/'),
-                        "Accept" to "*/*",
-                        "Accept-Language" to "en-US,en;q=0.9",
-                        "Sec-Fetch-Dest" to "empty",
-                        "Sec-Fetch-Mode" to "cors",
-                        "Sec-Fetch-Site" to "cross-site"
+                val ref = stream.referer.ifBlank { if (isAv) "https://upload18.org/" else "https://phimapi.com/" }
+                if (isAv) {
+                    httpSourceFactory.setUserAgent(com.tmplayer.av.AvRepository.IOS_SAFARI_UA)
+                    httpSourceFactory.setDefaultRequestProperties(
+                        mapOf(
+                            "Referer" to ref,
+                            "Origin" to ref.trimEnd('/'),
+                            "Accept" to "*/*",
+                            "Accept-Language" to "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7"
+                        )
                     )
-                )
+                } else {
+                    httpSourceFactory.setDefaultRequestProperties(
+                        mapOf(
+                            "Referer" to ref,
+                            "Origin" to ref.trimEnd('/'),
+                            "Accept" to "*/*",
+                            "Accept-Language" to "en-US,en;q=0.9",
+                            "Sec-Fetch-Dest" to "empty",
+                            "Sec-Fetch-Mode" to "cors",
+                            "Sec-Fetch-Site" to "cross-site"
+                        )
+                    )
+                }
 
                 val subConfigs = stream.subtitles.map { sub ->
                     val finalUri = MovieRepository.getNormalizedSubtitleUri(context, sub.url)
@@ -414,7 +441,12 @@ fun OnlinePlayerScreen(
                 val mediaItem = MediaItem.Builder()
                     .setUri(stream.streamUrl)
                     .apply {
-                        if (stream.streamUrl.contains(".m3u8") || stream.streamUrl.contains("/stream/") || stream.streamUrl.contains("/m/")) {
+                        if (stream.streamUrl.contains(".m3u8") ||
+                            stream.streamUrl.contains("/stream/") ||
+                            stream.streamUrl.contains("/m/") ||
+                            stream.streamUrl.contains("/s/") ||
+                            stream.streamUrl.contains("surrit.com")
+                        ) {
                             setMimeType(MimeTypes.APPLICATION_M3U8)
                         }
                         if (subConfigs.isNotEmpty()) {
@@ -462,8 +494,15 @@ fun OnlinePlayerScreen(
             }
 
             override fun onPlayerError(error: PlaybackException) {
-                isLoading = false
-                errorMessage = "Lỗi phát video (${error.errorCodeName}): ${error.message}"
+                if (isAv && serverIdx + 1 < detail.servers.size) {
+                    serverIdx += 1
+                    epIdx = 0
+                    OnlinePlayerSession.serverIndex = serverIdx
+                    OnlinePlayerSession.episodeIndex = 0
+                } else {
+                    isLoading = false
+                    errorMessage = "Lỗi phát video (${error.errorCodeName}): ${error.message}"
+                }
             }
 
             override fun onIsPlayingChanged(playing: Boolean) {
