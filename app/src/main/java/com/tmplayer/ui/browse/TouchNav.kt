@@ -1,5 +1,16 @@
 package com.tmplayer.ui.browse
 
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.foundation.interaction.PressInteraction
+import androidx.compose.foundation.indication
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import android.view.accessibility.AccessibilityManager
 import com.tmplayer.ui.nav.BackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -779,7 +790,15 @@ private fun FloatingBar(
             )
             val buttons: @Composable () -> Unit = {
                 BarButton(TmIcons.Home, s.browseTabHome, current == TouchDestination.Home, onHome, buttonWidth = btnWidth)
-                BarButton(TmIcons.Trailer, "Movie", current == TouchDestination.Movie, onMovie, onLongClick = onAv, buttonWidth = btnWidth)
+                BarButton(
+                    icon = TmIcons.Trailer,
+                    label = "Movie",
+                    chosen = current == TouchDestination.Movie,
+                    onClick = onMovie,
+                    onLongClick = if (!avVisible) onAv else null,
+                    customLongPressMs = if (!avVisible) 2000L else null,
+                    buttonWidth = btnWidth
+                )
                 if (avVisible) {
                     BarButton(TmIcons.Favorite, "AV 18+", current == TouchDestination.Av, onAv, buttonWidth = btnWidth)
                 }
@@ -872,23 +891,63 @@ private fun BarButton(
     chosen: Boolean,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
+    customLongPressMs: Long? = null,
     role: Role = Role.Tab,
     modifier: Modifier = Modifier,
     buttonWidth: Dp = BUTTON_WIDTH,
 ) {
     val press = remember { MutableInteractionSource() }
+    val haptic = LocalHapticFeedback.current
+
+    val clickModifier = if (customLongPressMs != null && onLongClick != null) {
+        Modifier
+            .pointerInput(onClick, onLongClick, customLongPressMs) {
+                coroutineScope {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        val pressInteraction = PressInteraction.Press(down.position)
+                        this@coroutineScope.launch { press.emit(pressInteraction) }
+                        var longPressed = false
+                        val job = this@coroutineScope.launch {
+                            delay(customLongPressMs)
+                            longPressed = true
+                            try {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            } catch (_: Exception) {}
+                            press.emit(PressInteraction.Release(pressInteraction))
+                            onLongClick()
+                        }
+                        val up = waitForUpOrCancellation()
+                        job.cancel()
+                        if (up != null) {
+                            up.consume()
+                            if (!longPressed) {
+                                this@coroutineScope.launch { press.emit(PressInteraction.Release(pressInteraction)) }
+                                onClick()
+                            }
+                        } else {
+                            this@coroutineScope.launch { press.emit(PressInteraction.Cancel(pressInteraction)) }
+                        }
+                    }
+                }
+            }
+            .indication(press, ripple())
+    } else {
+        Modifier.combinedClickable(
+            interactionSource = press,
+            indication = ripple(),
+            role = role,
+            onClick = onClick,
+            onLongClick = onLongClick,
+        )
+    }
+
     Column(
         modifier
             .size(buttonWidth, BUTTON_HEIGHT)
             .pressScale(press)
             .clip(HIGHLIGHT_SHAPE)
-            .combinedClickable(
-                interactionSource = press,
-                indication = ripple(),
-                role = role,
-                onClick = onClick,
-                onLongClick = onLongClick,
-            )
+            .then(clickModifier)
             .semantics {
                 contentDescription = label
                 if (role == Role.Tab) selected = chosen

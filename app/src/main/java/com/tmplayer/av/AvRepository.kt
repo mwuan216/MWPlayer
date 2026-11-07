@@ -24,6 +24,20 @@ import java.util.concurrent.ConcurrentHashMap
 
 object AvFilterData {
     fun categoriesFor(source: MovieSource): List<FilterOption> = when (source) {
+        MovieSource.MissAV -> listOf(
+            FilterOption("", "Tất cả"),
+            FilterOption("for-you", "✨ Đề xuất cho bạn"),
+            FilterOption("history", "Xem gần đây"),
+            FilterOption("watchlist", "Theo dõi"),
+            FilterOption("new", "Mới phát hành"),
+            FilterOption("uncensored-leak", "Uncensored Leak"),
+            FilterOption("uncensored", "Không che (Uncensored)"),
+            FilterOption("censored", "Có che (Censored)"),
+            FilterOption("siro", "Amateur / SIRO / FC2"),
+            FilterOption("chinese-subtitle", "Subtitled"),
+            FilterOption("chinese-av", "Chinese AV"),
+            FilterOption("hentai", "Hentai 18+")
+        )
         MovieSource.XXVN -> listOf(
             FilterOption("", "Tất cả"),
             FilterOption("for-you", "✨ Đề xuất cho bạn"),
@@ -40,20 +54,6 @@ object AvFilterData {
             FilterOption("hoc-sinh", "Học sinh"),
             FilterOption("vung-trom", "Vụng trộm"),
             FilterOption("hentai", "Hentai")
-        )
-        MovieSource.MissAV -> listOf(
-            FilterOption("", "Tất cả"),
-            FilterOption("for-you", "✨ Đề xuất cho bạn"),
-            FilterOption("history", "Xem gần đây"),
-            FilterOption("watchlist", "Theo dõi"),
-            FilterOption("new", "Mới phát hành"),
-            FilterOption("uncensored-leak", "Uncensored Leak"),
-            FilterOption("uncensored", "Không che (Uncensored)"),
-            FilterOption("censored", "Có che (Censored)"),
-            FilterOption("siro", "Amateur / SIRO / FC2"),
-            FilterOption("chinese-subtitle", "Subtitled"),
-            FilterOption("chinese-av", "Chinese AV"),
-            FilterOption("hentai", "Hentai 18+")
         )
         else -> listOf(
             FilterOption("", "Tất cả"),
@@ -401,39 +401,87 @@ object AvRepository {
         }
     }
 
+    fun extractRecentKeywords(
+        history: List<MovieWatchProgress>,
+        watchlist: List<MovieItem>,
+        maxKeywords: Int = 10
+    ): List<String> {
+        val keywords = LinkedHashSet<String>()
+        // 1. Duyệt theo thứ tự xem gần đây nhất trong lịch sử
+        for (rec in history) {
+            val prefix = AvStore.extractCodePrefix(rec.slug, rec.name)
+            if (prefix.isNotBlank() && prefix.length >= 2) {
+                keywords.add(prefix)
+                if (keywords.size >= maxKeywords) return keywords.toList()
+            }
+            val detail = allDetailsBySlug[rec.slug.lowercase()]
+            if (detail != null) {
+                for (actress in detail.actor) {
+                    val clean = actress.trim()
+                    if (clean.isNotBlank() && !clean.equals("Updating", ignoreCase = true) && clean.length >= 2) {
+                        keywords.add(clean)
+                        if (keywords.size >= maxKeywords) return keywords.toList()
+                    }
+                }
+                for (cat in detail.categories) {
+                    val clean = cat.trim()
+                    if (clean.isNotBlank() && clean.length >= 3 && clean != "JAV" && clean != "Single") {
+                        keywords.add(clean)
+                        if (keywords.size >= maxKeywords) return keywords.toList()
+                    }
+                }
+            } else if (rec.originName.isNotBlank() && !rec.originName.equals(prefix, ignoreCase = true) && rec.originName.length >= 3) {
+                keywords.add(rec.originName.trim())
+                if (keywords.size >= maxKeywords) return keywords.toList()
+            }
+        }
+
+        // 2. Nếu chưa đủ 10 từ khóa, bổ sung thêm từ danh sách theo dõi
+        for (item in watchlist) {
+            val prefix = AvStore.extractCodePrefix(item.slug, item.name)
+            if (prefix.isNotBlank()) {
+                keywords.add(prefix)
+                if (keywords.size >= maxKeywords) return keywords.toList()
+            }
+            val detail = allDetailsBySlug[item.slug.lowercase()]
+            if (detail != null) {
+                for (actress in detail.actor) {
+                    val clean = actress.trim()
+                    if (clean.isNotBlank() && !clean.equals("Updating", ignoreCase = true)) {
+                        keywords.add(clean)
+                        if (keywords.size >= maxKeywords) return keywords.toList()
+                    }
+                }
+            }
+        }
+        return keywords.take(maxKeywords).toList()
+    }
+
     /**
-     * "✨ Đề xuất cho bạn" (Personalized Recommendations dựa trên các phim đã từng xem & theo dõi):
-     * Phân tích diễn viên, nhãn hãng phim (FC2, SONE, IPZZ, MIDV...) và thể loại từ lịch sử xem để gợi ý phim tương đồng.
+     * "✨ Đề xuất cho bạn" (Personalized Recommendations dựa trên các phim xem gần đây nhất, tối đa 10 keyword):
+     * Phân tích mã JAV, diễn viên và thể loại từ các phim xem gần nhất để gợi ý các phim tương đồng nhất.
      */
     suspend fun getRecommendationsForYou(
         source: MovieSource,
         history: List<MovieWatchProgress>,
         watchlist: List<MovieItem>,
-        preferredActresses: List<String>,
-        preferredPrefixes: List<String>
+        preferredActresses: List<String> = emptyList(),
+        preferredPrefixes: List<String> = emptyList()
     ): List<MovieItem> = coroutineScope {
         val watchedSlugs = history.map { it.slug.lowercase() }.toSet()
-
-        // Trích xuất thêm diễn viên & prefix từ lịch sử xem và danh sách theo dõi
-        val historyPrefixes = (history.map { AvStore.extractCodePrefix(it.slug, it.name) } +
-            watchlist.map { AvStore.extractCodePrefix(it.slug, it.name) })
-            .filter { it.isNotBlank() }
-
-        val historyActresses = (history.mapNotNull { allDetailsBySlug[it.slug.lowercase()]?.actor } +
-            watchlist.mapNotNull { allDetailsBySlug[it.slug.lowercase()]?.actor })
-            .flatten()
-            .filter { it.isNotBlank() && !it.equals("Updating", ignoreCase = true) }
-
-        val topActresses = (preferredActresses + historyActresses).distinct().take(2)
-        val topPrefixes = (preferredPrefixes + historyPrefixes).distinct().take(3)
+        val recentKeywords = extractRecentKeywords(history, watchlist, maxKeywords = 10)
 
         val jobs = mutableListOf<kotlinx.coroutines.Deferred<List<MovieItem>>>()
 
-        for (actress in topActresses) {
-            jobs.add(async { fetchAvdbByActor(source, actress, 1) })
-        }
-        for (prefix in topPrefixes) {
-            jobs.add(async { fetchAvdbList(source, typeId = "", keyword = prefix, page = 1).first })
+        for (kw in recentKeywords) {
+            jobs.add(async {
+                val isActress = kw.none { it.isDigit() } && kw.contains(" ")
+                if (isActress) {
+                    fetchAvdbByActor(source, kw, 1)
+                } else {
+                    fetchAvdbList(source, typeId = "", keyword = kw, page = 1).first
+                }
+            })
         }
 
         // Nếu người dùng mới mở chưa có lịch sử, gợi ý các dòng phim hot nhất trên MissAV / AVDB
@@ -443,7 +491,7 @@ object AvRepository {
         }
 
         val fetchedLists = jobs.awaitAll()
-        // Đan xen (interleave) kết quả từ các sở thích khác nhau để kệ đề xuất đa dạng
+        // Đan xen (interleave) kết quả từ các từ khóa khác nhau để kệ đề xuất đa dạng
         val interleaved = mutableListOf<MovieItem>()
         val maxLen = fetchedLists.maxOfOrNull { it.size } ?: 0
         for (i in 0 until maxLen) {
@@ -454,7 +502,19 @@ object AvRepository {
             }
         }
 
-        val unwatched = interleaved
+        // Khớp thêm các phim trong bộ nhớ đệm khớp với 10 keyword gần nhất
+        val cachedMatches = allDetailsBySlug.values
+            .filter { cand ->
+                cand.movie.slug.lowercase() !in watchedSlugs &&
+                recentKeywords.any { kw ->
+                    cand.movie.name.contains(kw, ignoreCase = true) ||
+                    cand.movie.slug.contains(kw, ignoreCase = true) ||
+                    cand.actor.any { it.contains(kw, ignoreCase = true) }
+                }
+            }
+            .map { it.movie }
+
+        val unwatched = (interleaved + cachedMatches)
             .filter { it.slug.lowercase() !in watchedSlugs }
             .distinctBy { it.slug.lowercase() }
 

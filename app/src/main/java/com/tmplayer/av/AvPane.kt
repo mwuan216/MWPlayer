@@ -104,7 +104,7 @@ private class AvCatalogState {
     val gridScrollState = LazyGridState()
 }
 
-private val avSources = listOf(MovieSource.AVDB, MovieSource.MissAV, MovieSource.XXVN)
+private val avSources = listOf(MovieSource.MissAV, MovieSource.XXVN, MovieSource.AVDB)
 
 @kotlin.OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -134,7 +134,7 @@ fun AvPane(modifier: Modifier = Modifier) {
         return
     }
 
-    var currentSource by remember { mutableStateOf(MovieSource.AVDB) }
+    var currentSource by remember { mutableStateOf(MovieSource.MissAV) }
     var mode by remember { mutableStateOf(AvMode.Home) }
     var selectedCategorySlug by remember { mutableStateOf("") }
     var selectedCategoryTitle by remember { mutableStateOf("Mới cập nhật") }
@@ -670,104 +670,6 @@ fun AvPane(modifier: Modifier = Modifier) {
                                         }
                                     }
 
-                                    // Watchlist Shelf
-                                    if (watchlist.isNotEmpty()) {
-                                        item {
-                                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                                Row(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .padding(horizontal = 16.dp),
-                                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                                    verticalAlignment = Alignment.CenterVertically
-                                                ) {
-                                                    Text(
-                                                        text = "⭐ AV Đang Theo Dõi (${watchlist.size})",
-                                                        color = Tone.text,
-                                                        fontWeight = FontWeight.Bold,
-                                                        fontSize = 15.sp
-                                                    )
-                                                    Text(
-                                                        text = "Xem tất cả ›",
-                                                        color = Tone.accent,
-                                                        fontSize = 13.sp,
-                                                        fontWeight = FontWeight.SemiBold,
-                                                        modifier = Modifier.clickable { mode = AvMode.Watchlist }
-                                                    )
-                                                }
-                                                LazyRow(
-                                                    contentPadding = PaddingValues(horizontal = 16.dp),
-                                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                                ) {
-                                                    items(watchlist, key = { "${it.source.name}:${it.slug}" }) { item ->
-                                                        AvLandscapeCard(
-                                                            item = item,
-                                                            onClick = { openMovie(item) },
-                                                            modifier = Modifier.width(210.dp)
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    // History Shelf
-                                    if (history.isNotEmpty()) {
-                                        item {
-                                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                                Row(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .padding(horizontal = 16.dp),
-                                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                                    verticalAlignment = Alignment.CenterVertically
-                                                ) {
-                                                    Text(
-                                                        text = "🎬 AV Xem Gần Đây (${history.size})",
-                                                        color = Tone.text,
-                                                        fontWeight = FontWeight.Bold,
-                                                        fontSize = 15.sp
-                                                    )
-                                                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                                        Text(
-                                                            text = "Chọn xóa",
-                                                            color = Tone.danger,
-                                                            fontSize = 12.sp,
-                                                            fontWeight = FontWeight.SemiBold,
-                                                            modifier = Modifier.clickable {
-                                                                isHistoryEditMode = true
-                                                                selectedHistorySlugs = emptySet()
-                                                                mode = AvMode.History
-                                                            }
-                                                        )
-                                                        Text(
-                                                            text = "Xem tất cả ›",
-                                                            color = Tone.accent,
-                                                            fontSize = 13.sp,
-                                                            fontWeight = FontWeight.SemiBold,
-                                                            modifier = Modifier.clickable { mode = AvMode.History }
-                                                        )
-                                                    }
-                                                }
-                                                LazyRow(
-                                                    contentPadding = PaddingValues(horizontal = 16.dp),
-                                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                                ) {
-                                                    items(history.take(15), key = { it.slug }) { rec ->
-                                                        AvHistoryCard(
-                                                            record = rec,
-                                                            onClick = { openMovie(rec.toMovieItem()) },
-                                                            onRemove = {
-                                                                AvStore.removeFromHistory(context, rec.slug)
-                                                            },
-                                                            modifier = Modifier.width(210.dp)
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-
                                     // Personalized Recommendations ("✨ Đề xuất cho bạn")
                                     if (forYouMovies.isNotEmpty()) {
                                         item {
@@ -786,10 +688,12 @@ fun AvPane(modifier: Modifier = Modifier) {
                                                             fontWeight = FontWeight.Bold,
                                                             fontSize = 15.sp
                                                         )
-                                                        val reasonParts = (preferredActresses.take(2) + preferredPrefixes.take(2)).distinct()
-                                                        if (reasonParts.isNotEmpty()) {
+                                                        val recentKws = remember(history, watchlist) {
+                                                            AvRepository.extractRecentKeywords(history, watchlist, maxKeywords = 10)
+                                                        }
+                                                        if (recentKws.isNotEmpty()) {
                                                             Text(
-                                                                text = "Gợi ý tương đồng theo: ${reasonParts.joinToString(", ")}",
+                                                                text = "Gợi ý theo phim xem gần đây: ${recentKws.joinToString(", ")}",
                                                                 color = Tone.text.copy(alpha = 0.55f),
                                                                 fontSize = 11.sp,
                                                                 maxLines = 1,
@@ -898,9 +802,11 @@ fun AvPane(modifier: Modifier = Modifier) {
                                                 fontWeight = FontWeight.Bold,
                                                 fontSize = 15.sp
                                             )
-                                            val tags = (preferredActresses.take(3) + preferredPrefixes.take(3)).distinct()
+                                            val tags = remember(history, watchlist) {
+                                                AvRepository.extractRecentKeywords(history, watchlist, maxKeywords = 10)
+                                            }
                                             Text(
-                                                text = if (tags.isNotEmpty()) "Dựa trên các phim đã xem: ${tags.joinToString(", ")}"
+                                                text = if (tags.isNotEmpty()) "Dựa trên các phim xem gần đây: ${tags.joinToString(", ")}"
                                                 else "Phim xu hướng được đề xuất dành riêng cho bạn",
                                                 color = Tone.text.copy(alpha = 0.6f),
                                                 fontSize = 12.sp
@@ -1579,27 +1485,83 @@ private fun AvDetailWithInlinePlayer(
                         }
                     }
                     showPlayerControls || !isPlaying -> {
-                        Box(
-                            modifier = Modifier
-                                .size(54.dp)
-                                .clip(CircleShape)
-                                .background(Tone.accent.copy(alpha = 0.9f))
-                                .clickable {
-                                    lastControlTapMs = System.currentTimeMillis()
-                                    if (exoPlayer.isPlaying) {
-                                        exoPlayer.pause()
-                                    } else {
-                                        exoPlayer.play()
-                                    }
-                                },
-                            contentAlignment = Alignment.Center
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(28.dp)
                         ) {
-                            Icon(
-                                imageVector = if (isPlaying) TmIcons.PauseSolid else TmIcons.PlaySolid,
-                                contentDescription = if (isPlaying) "Tạm dừng" else "Phát",
-                                tint = Color.Black,
-                                modifier = Modifier.size(26.dp)
-                            )
+                            // Previous Episode / Seek -10s
+                            Box(
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .clip(CircleShape)
+                                    .background(Color.Black.copy(alpha = 0.55f))
+                                    .clickable {
+                                        lastControlTapMs = System.currentTimeMillis()
+                                        val eps = currentServer?.episodes ?: emptyList()
+                                        if (eps.size > 1 && epIdx > 0) {
+                                            epIdx -= 1
+                                        } else {
+                                            seekByDelta(-10_000L, "⏪ -10s")
+                                        }
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = TmIcons.SkipPrevious,
+                                    contentDescription = "Tập trước",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
+
+                            // Center Play/Pause button
+                            Box(
+                                modifier = Modifier
+                                    .size(54.dp)
+                                    .clip(CircleShape)
+                                    .background(Tone.accent.copy(alpha = 0.95f))
+                                    .clickable {
+                                        lastControlTapMs = System.currentTimeMillis()
+                                        if (exoPlayer.isPlaying) {
+                                            exoPlayer.pause()
+                                        } else {
+                                            exoPlayer.play()
+                                        }
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = if (isPlaying) TmIcons.PauseSolid else TmIcons.PlaySolid,
+                                    contentDescription = if (isPlaying) "Tạm dừng" else "Phát",
+                                    tint = Color.Black,
+                                    modifier = Modifier.size(26.dp)
+                                )
+                            }
+
+                            // Next Episode / Seek +10s
+                            Box(
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .clip(CircleShape)
+                                    .background(Color.Black.copy(alpha = 0.55f))
+                                    .clickable {
+                                        lastControlTapMs = System.currentTimeMillis()
+                                        val eps = currentServer?.episodes ?: emptyList()
+                                        if (eps.size > 1 && epIdx + 1 < eps.size) {
+                                            epIdx += 1
+                                        } else {
+                                            seekByDelta(10_000L, "⏩ +10s")
+                                        }
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = TmIcons.SkipNext,
+                                    contentDescription = "Tập tiếp",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -1702,38 +1664,75 @@ private fun AvDetailWithInlinePlayer(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    // Rewind 10s
-                    Text(
-                        text = "⏪",
-                        color = Color.White,
-                        fontSize = 13.sp,
+                    // Rewind / Prev Episode button
+                    Box(
                         modifier = Modifier
+                            .size(30.dp)
                             .clip(CircleShape)
-                            .clickable { seekByDelta(-10_000L, "⏪ -10s") }
-                            .padding(4.dp)
-                    )
+                            .background(Color.Black.copy(alpha = 0.4f))
+                            .clickable {
+                                lastControlTapMs = System.currentTimeMillis()
+                                val eps = currentServer?.episodes ?: emptyList()
+                                if (eps.size > 1 && epIdx > 0) {
+                                    epIdx -= 1
+                                } else {
+                                    seekByDelta(-10_000L, "⏪ -10s")
+                                }
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = TmIcons.SkipPrevious,
+                            contentDescription = "Tập trước",
+                            tint = Color.White,
+                            modifier = Modifier.size(17.dp)
+                        )
+                    }
+
                     // Play / Pause
-                    Icon(
-                        imageVector = if (isPlaying) TmIcons.PauseSolid else TmIcons.PlaySolid,
-                        contentDescription = null,
-                        tint = Color.White,
+                    Box(
                         modifier = Modifier
-                            .size(22.dp)
+                            .size(30.dp)
+                            .clip(CircleShape)
+                            .background(Color.Black.copy(alpha = 0.4f))
                             .clickable {
                                 lastControlTapMs = System.currentTimeMillis()
                                 if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
-                            }
-                    )
-                    // Fast-forward 10s
-                    Text(
-                        text = "⏩",
-                        color = Color.White,
-                        fontSize = 13.sp,
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (isPlaying) TmIcons.PauseSolid else TmIcons.PlaySolid,
+                            contentDescription = if (isPlaying) "Tạm dừng" else "Phát",
+                            tint = Tone.accent,
+                            modifier = Modifier.size(19.dp)
+                        )
+                    }
+
+                    // Fast-forward / Next Episode button
+                    Box(
                         modifier = Modifier
+                            .size(30.dp)
                             .clip(CircleShape)
-                            .clickable { seekByDelta(10_000L, "⏩ +10s") }
-                            .padding(4.dp)
-                    )
+                            .background(Color.Black.copy(alpha = 0.4f))
+                            .clickable {
+                                lastControlTapMs = System.currentTimeMillis()
+                                val eps = currentServer?.episodes ?: emptyList()
+                                if (eps.size > 1 && epIdx + 1 < eps.size) {
+                                    epIdx += 1
+                                } else {
+                                    seekByDelta(10_000L, "⏩ +10s")
+                                }
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = TmIcons.SkipNext,
+                            contentDescription = "Tập tiếp",
+                            tint = Color.White,
+                            modifier = Modifier.size(17.dp)
+                        )
+                    }
 
                     // Progress Slider
                     val fraction = if (durationMs > 0L) (currentPosMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
@@ -1766,31 +1765,39 @@ private fun AvDetailWithInlinePlayer(
                     )
 
                     // Mute / Unmute
-                    Text(
-                        text = if (isMuted) "🔇" else "🔊",
-                        fontSize = 13.sp,
+                    Box(
                         modifier = Modifier
+                            .size(30.dp)
                             .clip(CircleShape)
+                            .background(Color.Black.copy(alpha = 0.4f))
                             .clickable {
                                 isMuted = !isMuted
                                 exoPlayer.volume = if (isMuted) 0f else 1f
-                            }
-                            .padding(4.dp)
-                    )
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (isMuted) TmIcons.VolumeOff else TmIcons.VolumeUp,
+                            contentDescription = if (isMuted) "Bật âm thanh" else "Tắt âm thanh",
+                            tint = Color.White,
+                            modifier = Modifier.size(17.dp)
+                        )
+                    }
 
                     // Fullscreen Landscape Button
                     Box(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(Color.White.copy(alpha = 0.16f))
-                            .clickable { launchLandscapeFullscreen() }
-                            .padding(horizontal = 7.dp, vertical = 3.dp)
+                            .size(30.dp)
+                            .clip(CircleShape)
+                            .background(Color.Black.copy(alpha = 0.4f))
+                            .clickable { launchLandscapeFullscreen() },
+                        contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            text = "⛶",
-                            color = Color.White,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold
+                        Icon(
+                            imageVector = TmIcons.Fullscreen,
+                            contentDescription = "Toàn màn hình",
+                            tint = Color.White,
+                            modifier = Modifier.size(17.dp)
                         )
                     }
                 }
@@ -2185,7 +2192,9 @@ private fun AvDetailWithInlinePlayer(
                                     epRange = "full",
                                     totalEpisodes = 1,
                                     movie = movie,
-                                    detail = detail
+                                    detail = detail,
+                                    directStreamUrl = resolvedStream?.streamUrl.orEmpty(),
+                                    directReferer = resolvedStream?.referer.orEmpty()
                                 )
                             }
                         }

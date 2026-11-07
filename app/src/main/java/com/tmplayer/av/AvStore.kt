@@ -107,7 +107,7 @@ object AvStore {
                 for (i in 0 until array.length()) {
                     MovieWatchProgress.fromJson(array.getJSONObject(i))?.let { list.add(it) }
                 }
-                _historyFlow.value = list.sortedByDescending { it.updatedAt }
+                _historyFlow.value = list.sortedByDescending { it.updatedAt }.take(50)
             }
         } catch (_: Exception) {}
 
@@ -316,7 +316,7 @@ object AvStore {
         val histList = _historyFlow.value.toMutableList()
         histList.removeAll { it.slug == movie.slug }
         histList.add(0, record)
-        val trimmed = histList.take(100)
+        val trimmed = histList.take(50)
         _historyFlow.value = trimmed
         saveHistory(context, trimmed)
         recordAffinity(context, detail)

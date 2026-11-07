@@ -121,6 +121,8 @@ object MovieCloudDownloader {
         movie: MovieItem? = null,
         detail: MovieDetail? = null,
         destination: CloudDestination? = null,
+        directStreamUrl: String = "",
+        directReferer: String = "",
         silentToast: Boolean = false,
         onStatus: ((Boolean, String) -> Unit)? = null
     ) = withContext(Dispatchers.IO) {
@@ -136,15 +138,83 @@ object MovieCloudDownloader {
         }
 
         val resolvedAvStream = if (source.isAv) {
-            try {
-                val d = detail ?: com.tmplayer.av.AvRepository.getDetail(source, slug)
-                val srv = d?.servers?.firstOrNull()
-                val ep = srv?.episodes?.firstOrNull()
-                if (d != null && srv != null && ep != null) {
-                    com.tmplayer.av.AvRepository.resolveAvStream(source, movieTitle, srv, ep).streamUrl
-                } else ""
-            } catch (_: Exception) {
-                ""
+            if (directStreamUrl.isNotBlank()) {
+                directStreamUrl
+            } else {
+                try {
+                    val d = detail ?: com.tmplayer.av.AvRepository.getDetail(source, slug)
+                    val srv = d?.servers?.firstOrNull()
+                    val ep = srv?.episodes?.firstOrNull()
+                    if (d != null && srv != null && ep != null) {
+                        com.tmplayer.av.AvRepository.resolveAvStream(source, movieTitle, srv, ep).streamUrl
+                    } else ""
+                } catch (_: Exception) {
+                    ""
+                }
+            }
+        } else ""
+
+        val finalReferer = if (directReferer.isNotBlank()) {
+            directReferer
+        } else {
+            when (source) {
+                MovieSource.MissAV -> "https://missav.ai/"
+                MovieSource.XXVN -> "https://a.dfplayer.cc/"
+                MovieSource.AVDB -> "https://upload18.org/"
+                else -> "https://missav.ai/"
+            }
+        }
+
+        val posterUrl = movie?.posterUrl?.ifBlank { movie.thumbUrl }
+            ?: detail?.movie?.posterUrl?.ifBlank { detail.movie.thumbUrl }
+            ?: ""
+
+        val tagList = mutableListOf<String>()
+        if (source.isAv) {
+            tagList.add("#${source.badge}")
+            val prefix = com.tmplayer.av.AvStore.extractCodePrefix(slug, movieTitle)
+            if (prefix.isNotBlank()) {
+                tagList.add("#${prefix.replace("-", "_")}")
+            }
+            if (!detail?.actor.isNullOrEmpty()) {
+                detail!!.actor.take(2).forEach {
+                    val clean = it.replace(" ", "_").replace(Regex("[^a-zA-Z0-9_]"), "")
+                    if (clean.isNotBlank()) tagList.add("#$clean")
+                }
+            }
+            tagList.add("#Vietsub")
+        }
+
+        val avStreamOrPage = resolvedAvStream.ifBlank {
+            when (source) {
+                MovieSource.MissAV -> "https://missav.ai/vi/$slug"
+                MovieSource.XXVN -> "https://xxvnapi.com/phim/$slug"
+                else -> "https://avdbapi.com/detail/$slug"
+            }
+        }
+
+        val avJsonBody = if (source.isAv) {
+            JSONObject().apply {
+                put("stream_url", avStreamOrPage)
+                put("referer", finalReferer)
+                put("title", movieTitle)
+                if (posterUrl.isNotBlank()) put("poster", posterUrl)
+                put("dest", targetChatId)
+                if (targetTopicId > 0) put("topic", targetTopicId)
+                put("tags", org.json.JSONArray(tagList))
+            }
+        } else null
+
+        val pullJsonCommand = if (avJsonBody != null) "/pull_json\n${avJsonBody.toString(2)}" else ""
+        val pullTokenCommand = if (source.isAv) {
+            buildString {
+                append("/pull $avStreamOrPage")
+                append(" title=\"${movieTitle.replace("\"", "")}\"")
+                append(" ref=\"$finalReferer\"")
+                if (posterUrl.isNotBlank()) append(" thumb=\"$posterUrl\"")
+                append(" dest=\"$targetChatId\"")
+                if (targetTopicId > 0) append(" topic=\"$targetTopicId\"")
+                append(" tag=\"${tagList.joinToString(" ")}\"")
             }
         } else ""
 
@@ -155,8 +225,8 @@ object MovieCloudDownloader {
         }
 
         val commands = mutableListOf<String>()
-        if (source.isAv && resolvedAvStream.isNotBlank()) {
-            commands.add("/dl@$BOT_1 $slug full seq $srcName $resolvedAvStream")
+        if (source.isAv) {
+            commands.add(pullJsonCommand)
         } else {
             commands.add("/dl@$BOT_1 $slug $part1 seq $srcName")
             if (part2 != null) {
@@ -187,31 +257,15 @@ object MovieCloudDownloader {
                     sentViaTdlib = true
                 }
             }
-            if (source.isAv && resolvedAvStream.isNotBlank()) {
-                val infoMsg = buildString {
-                    append("🔞 [MWPlayer AV Cloud]\n")
-                    append("📌 Phim: $movieTitle\n")
-                    append("🏷 Mã: ${slug.uppercase()}\n")
-                    if (!detail?.actor.isNullOrEmpty()) {
-                        append("👩 Diễn viên: ${detail!!.actor.joinToString(", ")}\n")
-                    }
-                    if (!detail?.time.isNullOrBlank()) {
-                        append("⏱ Thời lượng: ${detail!!.time}\n")
-                    }
-                    append("🌐 Nguồn: ${source.displayName}\n")
-                    append("🔗 Direct Stream (HLS m3u8):\n$resolvedAvStream")
-                }
-                val content = InputMessageText(
-                    FormattedText(infoMsg, emptyArray()),
-                    LinkPreviewOptions(false, resolvedAvStream, false, false, false),
+            if (source.isAv && avJsonBody != null) {
+                val tokenContent = InputMessageText(
+                    FormattedText(pullTokenCommand, emptyArray()),
+                    LinkPreviewOptions(false, avStreamOrPage, false, false, false),
                     false
                 )
                 val options = MessageSendOptions(null, false, false, false, false, 0L, false, null, 0L, 0, false)
                 val topicForum = if (targetTopicId > 0) MessageTopicForum(targetTopicId) else null
-                val res = td.sendMessage(targetChatId, topicForum, null, options, null, content)
-                if (res.valueOrNull != null) {
-                    sentViaTdlib = true
-                }
+                td.sendMessage(targetChatId, topicForum, null, options, null, tokenContent)
             }
         } catch (_: Exception) {
             // TDLib client chưa sẵn sàng hoặc không trong phiên đăng nhập
@@ -225,13 +279,20 @@ object MovieCloudDownloader {
                 epRange == "remaining" -> "Các tập còn lại"
                 else -> "Tập $epRange"
             }
-            val botExecLines = buildString {
-                append("🤖 <b>Bot 1:</b> <code>${commands[0]}</code>\n")
-                if (commands.size > 1) {
-                    append("🤖 <b>Bot 2:</b> <code>${commands[1]}</code>\n")
+            val botExecLines = if (source.isAv) {
+                buildString {
+                    append("🤖 <b>Cú pháp JSON Block:</b>\n<pre><code class=\"language-json\">$pullJsonCommand</code></pre>\n")
+                    append("🤖 <b>Cú pháp Token:</b>\n<code>$pullTokenCommand</code>\n")
+                    if (finalReferer.isNotBlank()) {
+                        append("🌐 <b>Referer:</b> <code>$finalReferer</code>\n")
+                    }
                 }
-                if (resolvedAvStream.isNotBlank()) {
-                    append("🔗 <b>Stream M3U8:</b> <code>$resolvedAvStream</code>\n")
+            } else {
+                buildString {
+                    append("🤖 <b>Bot 1:</b> <code>${commands[0]}</code>\n")
+                    if (commands.size > 1) {
+                        append("🤖 <b>Bot 2:</b> <code>${commands[1]}</code>\n")
+                    }
                 }
             }
             val text = "🎬 <b>[MWPlayer] Yêu cầu kéo phim về Tele Cloud</b>\n" +
@@ -288,14 +349,18 @@ object MovieCloudDownloader {
             conn.connectTimeout = 1_500
             conn.readTimeout = 2_000
 
-            val jsonBody = JSONObject().apply {
-                put("slug", slug)
-                put("range", epRange)
-                put("source", srcName)
-                put("chat_id", targetChatId)
-                put("topic_id", targetTopicId)
-                if (resolvedAvStream.isNotBlank()) {
-                    put("stream_url", resolvedAvStream)
+            val jsonBody = if (source.isAv && avJsonBody != null) {
+                avJsonBody
+            } else {
+                JSONObject().apply {
+                    put("slug", slug)
+                    put("range", epRange)
+                    put("source", srcName)
+                    put("chat_id", targetChatId)
+                    put("topic_id", targetTopicId)
+                    if (resolvedAvStream.isNotBlank()) {
+                        put("stream_url", resolvedAvStream)
+                    }
                 }
             }
             conn.outputStream.use { it.write(jsonBody.toString().toByteArray(Charsets.UTF_8)) }

@@ -290,7 +290,7 @@ object MovieStore {
                 for (i in 0 until array.length()) {
                     MovieWatchProgress.fromJson(array.getJSONObject(i))?.let { list.add(it) }
                 }
-                _historyFlow.value = list.sortedByDescending { it.updatedAt }
+                _historyFlow.value = list.sortedByDescending { it.updatedAt }.take(50)
             }
         } catch (_: Exception) {}
 
@@ -441,11 +441,11 @@ object MovieStore {
             updatedAt = System.currentTimeMillis()
         )
 
-        // 1. Update History (Always record recent watches, capped at 100)
+        // 1. Update History (Always record recent watches, capped at 50)
         val histList = _historyFlow.value.toMutableList()
         histList.removeAll { it.slug == record.slug }
         histList.add(0, record)
-        val cappedHist = histList.take(100)
+        val cappedHist = histList.take(50)
         _historyFlow.value = cappedHist
         saveHistory(context, cappedHist)
 
