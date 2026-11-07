@@ -24,20 +24,6 @@ import java.util.concurrent.ConcurrentHashMap
 
 object AvFilterData {
     fun categoriesFor(source: MovieSource): List<FilterOption> = when (source) {
-        MovieSource.MissAV -> listOf(
-            FilterOption("", "Tất cả"),
-            FilterOption("for-you", "✨ Đề xuất cho bạn"),
-            FilterOption("history", "Xem gần đây"),
-            FilterOption("watchlist", "Theo dõi"),
-            FilterOption("new", "Mới phát hành"),
-            FilterOption("uncensored-leak", "Uncensored Leak"),
-            FilterOption("uncensored", "Không che (Uncensored)"),
-            FilterOption("censored", "Có che (Censored)"),
-            FilterOption("siro", "Amateur / SIRO / FC2"),
-            FilterOption("chinese-subtitle", "Subtitled"),
-            FilterOption("chinese-av", "Chinese AV"),
-            FilterOption("hentai", "Hentai 18+")
-        )
         MovieSource.XXVN -> listOf(
             FilterOption("", "Tất cả"),
             FilterOption("for-you", "✨ Đề xuất cho bạn"),
@@ -169,7 +155,7 @@ object AvRepository {
 
     /**
      * Tìm kiếm tức thì trong toàn bộ danh sách phim đã tải về bộ nhớ đệm (kể cả các kệ trên màn hình chính,
-     * danh mục, MissAV, AVDB, XXVN) theo tên phim, mã JAV, tên diễn viên, thể loại hoặc nội dung mô tả.
+     * danh mục, AVDB, XXVN) theo tên phim, mã JAV, tên diễn viên, thể loại hoặc nội dung mô tả.
      */
     private fun searchLocalCache(targetSource: MovieSource, rawQuery: String): List<MovieItem> {
         val qNorm = normalizeSearchText(rawQuery)
@@ -261,13 +247,12 @@ object AvRepository {
         }
         when (source) {
             MovieSource.XXVN -> fetchXxvnList(category = category, keyword = "", page = page)
-            MovieSource.MissAV -> fetchMissAvList(category = category, keyword = "", page = page)
             else -> fetchAvdbList(source = MovieSource.AVDB, typeId = category, keyword = "", page = page)
         }
     }
 
     /**
-     * Tìm kiếm đa tầng ổn định cho cả 3 nguồn (AVDB, MissAV, XXVN):
+     * Tìm kiếm đa tầng ổn định cho cả 2 nguồn (AVDB, XXVN):
      * 1. Tìm ngay trong bộ nhớ đệm cục bộ (đảm bảo mọi phim đang hiển thị trong danh sách phát đều khớp 100%).
      * 2. Tìm song song theo Mã phim / Tên phim (`wd`), Diễn viên (`actor`), và fallback sang `ac=list` nếu `ac=detail` bị quá tải.
      * 3. Hỗ trợ tìm chéo tiếng Việt / tiếng Anh / Romaji để luôn trả về kết quả chính xác nhất.
@@ -292,7 +277,6 @@ object AvRepository {
         jobs.add(async {
             when (source) {
                 MovieSource.XXVN -> fetchXxvnList(category = "", keyword = cleanedKeyword, page = page).first
-                MovieSource.MissAV -> fetchMissAvList(category = "", keyword = cleanedKeyword, page = page).first
                 else -> fetchAvdbList(source = MovieSource.AVDB, typeId = "", keyword = cleanedKeyword, page = page).first
             }
         })
@@ -340,7 +324,7 @@ object AvRepository {
     }
 
     /**
-     * Đề xuất các phim tương tự (Related Movies) giống giao diện MissAV:
+     * Đề xuất các phim tương tự (Related Movies) chuẩn phong cách hiện đại:
      * Kết hợp phim cùng diễn viên, cùng hãng/nhãn (FC2, SONE, IPZZ...), và cùng thể loại.
      */
     suspend fun getRelatedMovies(detail: MovieDetail): List<MovieItem> = coroutineScope {
@@ -484,7 +468,7 @@ object AvRepository {
             })
         }
 
-        // Nếu người dùng mới mở chưa có lịch sử, gợi ý các dòng phim hot nhất trên MissAV / AVDB
+        // Nếu người dùng mới mở chưa có lịch sử, gợi ý các dòng phim hot nhất trên AVDB
         if (jobs.isEmpty()) {
             jobs.add(async { fetchAvdbList(source, typeId = "2", keyword = "", page = 1).first })
             jobs.add(async { fetchAvdbList(source, typeId = "1", keyword = "", page = 1).first })
@@ -894,101 +878,12 @@ object AvRepository {
     }
 
     // =========================================================================
-    // 4. MISSAV SCRAPER + DEAN EDWARDS UNPACKER + SMART FALLBACK
+    // 4. DEAN EDWARDS UNPACKER HELPER
     // =========================================================================
-
-    private val MISSAV_DOMAINS = listOf(
-        "https://missav.ws",
-        "https://missav.ai",
-        "https://missav.live"
-    )
-
-    private suspend fun fetchMissAvList(
-        category: String = "",
-        keyword: String = "",
-        page: Int = 1
-    ): Pair<List<MovieItem>, Int> {
-        val path = when {
-            keyword.isNotBlank() -> {
-                val enc = URLEncoder.encode(keyword.trim(), "UTF-8")
-                "/vi/search/$enc?page=$page"
-            }
-            category.isBlank() || category == "new" -> "/vi/new?page=$page"
-            else -> "/vi/$category?page=$page"
-        }
-
-        for (domain in MISSAV_DOMAINS) {
-            val html = fetchUrl("$domain$path", referer = "$domain/vi", timeoutMs = 3_000)
-            if (!html.isNullOrBlank() && ("thumbnail" in html || "missav" in html.lowercase())) {
-                val parsed = parseMissAvHtmlList(html)
-                if (parsed.isNotEmpty()) {
-                    return parsed to 50
-                }
-            }
-        }
-
-        val mappedTypeId = when (category) {
-            "uncensored-leak" -> "3"
-            "uncensored" -> "2"
-            "censored" -> "1"
-            "siro", "fc2" -> "4"
-            "chinese-subtitle" -> "7"
-            "chinese-av", "madou" -> "5"
-            "hentai" -> "6"
-            else -> ""
-        }
-        return fetchAvdbList(
-            source = MovieSource.MissAV,
-            typeId = mappedTypeId,
-            keyword = keyword,
-            page = page
-        )
-    }
-
-    private fun parseMissAvHtmlList(html: String): List<MovieItem> {
-        val list = mutableListOf<MovieItem>()
-        val cardRegex = Regex(
-            """<div class="thumbnail group"[^>]*>(.*?)</div>\s*</div>""",
-            setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)
-        )
-        val linkImgRegex = Regex(
-            """<a href="([^"]+)"[^>]*>.*?<img[^>]+data-src="([^"]+)"[^>]+alt="([^"]*)"[^>]*>""",
-            setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)
-        )
-        val durationRegex = Regex("""\b(\d{1,2}:\d{2}:\d{2}|\d{1,3}:\d{2})\b""")
-
-        for (cardMatch in cardRegex.findAll(html)) {
-            val block = cardMatch.groupValues[1]
-            val match = linkImgRegex.find(block) ?: continue
-            val href = match.groupValues[1].trim()
-            val img = match.groupValues[2].trim()
-            val title = decodeHtmlEntities(match.groupValues[3].trim())
-            val slug = href.trimEnd('/').substringAfterLast('/')
-            val dur = durationRegex.find(block)?.groupValues?.get(1).orEmpty()
-            if (slug.isNotBlank() && title.isNotBlank()) {
-                val item = MovieItem(
-                    name = title,
-                    originName = slug.uppercase(),
-                    slug = slug,
-                    thumbUrl = img,
-                    posterUrl = img,
-                    year = "2026",
-                    quality = "FHD",
-                    lang = if ("uncensored" in slug.lowercase() || "fc2" in slug.lowercase()) "Không kiểm duyệt" else "MissAV",
-                    type = "single",
-                    episodeCurrent = dur.ifBlank { slug.uppercase() },
-                    rating = slug.uppercase(),
-                    source = MovieSource.MissAV
-                )
-                list.add(item)
-            }
-        }
-        return list
-    }
 
     /**
      * Giải nén thuật toán Dean Edwards Packer: eval(function(p,a,c,k,e,d){...}('payload', radix, count, 'keywords'.split('|')))
-     * để trích xuất trực tiếp link HLS https://surrit.com/{uuid}/playlist.m3u8 từ trang MissAV.
+     * để trích xuất trực tiếp link HLS https://surrit.com/{uuid}/playlist.m3u8 từ trang web nhúng.
      */
     fun unpackDeanEdwards(html: String): String? {
         val directSurrit = Regex("""https?://surrit\.com/[0-9a-fA-F-]{36}/playlist\.m3u8""").find(html)
@@ -1050,58 +945,6 @@ object AvRepository {
                 } catch (_: Exception) {
                     fetchAvdbDetailBySlug(source, slug)
                 }
-            }
-            MovieSource.MissAV -> {
-                for (domain in MISSAV_DOMAINS) {
-                    val html = fetchUrl("$domain/vi/$slug", referer = "$domain/vi", timeoutMs = 3_000)
-                    if (!html.isNullOrBlank()) {
-                        val m3u8 = unpackDeanEdwards(html)
-                        if (!m3u8.isNullOrBlank()) {
-                            val titleMatch = Regex("""<meta property="og:title" content="([^"]+)"""").find(html)
-                            val imgMatch = Regex("""<meta property="og:image" content="([^"]+)"""").find(html)
-                            val descMatch = Regex("""<meta property="og:description" content="([^"]+)"""").find(html)
-                            val title = decodeHtmlEntities(titleMatch?.groupValues?.get(1) ?: slug.uppercase())
-                            val img = imgMatch?.groupValues?.get(1) ?: ""
-                            val desc = decodeHtmlEntities(descMatch?.groupValues?.get(1) ?: title)
-                            val item = MovieItem(
-                                name = title,
-                                originName = slug.uppercase(),
-                                slug = slug,
-                                thumbUrl = img,
-                                posterUrl = img,
-                                year = "2026",
-                                quality = "FHD",
-                                lang = "MissAV",
-                                episodeCurrent = slug.uppercase(),
-                                rating = slug.uppercase(),
-                                source = MovieSource.MissAV
-                            )
-                            val detail = MovieDetail(
-                                movie = item,
-                                content = desc,
-                                time = "FHD",
-                                episodeTotal = "Full",
-                                countries = listOf("Nhật Bản"),
-                                servers = listOf(
-                                    MovieServer(
-                                        serverName = "MissAV Surrit CDN",
-                                        episodes = listOf(
-                                            MovieEpisode(
-                                                name = "Full HD",
-                                                slug = "full",
-                                                linkM3u8 = m3u8,
-                                                linkEmbed = "$domain/vi/$slug"
-                                            )
-                                        )
-                                    )
-                                )
-                            )
-                            cacheDetail(source, detail)
-                            return detail
-                        }
-                    }
-                }
-                fetchAvdbDetailBySlug(source, slug)
             }
             else -> fetchAvdbDetailBySlug(source, slug)
         }
@@ -1197,7 +1040,7 @@ object AvRepository {
                 episode.linkM3u8
             }
             val ref = when {
-                "surrit.com" in normalizedM3u8 -> "https://missav.ws/"
+                "surrit.com" in normalizedM3u8 -> "https://surrit.com/"
                 "helvid.com" in normalizedM3u8 -> "https://upload18.org/"
                 "dfplayer.cc" in normalizedM3u8 -> "https://a.dfplayer.cc/"
                 else -> "https://avdbapi.com/"
@@ -1258,14 +1101,14 @@ object AvRepository {
                 }
             }
 
-            // 4. Try unpacking Dean Edwards if embed is a MissAV page
+            // 4. Try unpacking Dean Edwards if embed is an obfuscated player page
             val html = fetchUrl(embed, referer = embed, userAgent = IOS_SAFARI_UA)
             if (!html.isNullOrBlank()) {
                 val unpackedM3u8 = unpackDeanEdwards(html)
                 if (!unpackedM3u8.isNullOrBlank()) {
                     val stream = MovieStream(
                         streamUrl = unpackedM3u8,
-                        referer = "https://missav.ws/",
+                        referer = embed,
                         movieTitle = movieTitle,
                         episodeName = episode.name,
                         serverName = server.serverName,

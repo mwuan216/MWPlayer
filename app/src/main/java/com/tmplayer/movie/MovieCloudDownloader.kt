@@ -169,10 +169,9 @@ object MovieCloudDownloader {
             directReferer
         } else {
             when (source) {
-                MovieSource.MissAV -> "https://missav.ai/"
                 MovieSource.XXVN -> "https://a.dfplayer.cc/"
                 MovieSource.AVDB -> "https://upload18.org/"
-                else -> "https://missav.ai/"
+                else -> "https://avdbapi.com/"
             }
         }
 
@@ -198,7 +197,6 @@ object MovieCloudDownloader {
 
         val avStreamOrPage = resolvedAvStream.ifBlank {
             when (source) {
-                MovieSource.MissAV -> "https://missav.ai/vi/$slug"
                 MovieSource.XXVN -> "https://xxvnapi.com/phim/$slug"
                 else -> "https://avdbapi.com/detail/$slug"
             }

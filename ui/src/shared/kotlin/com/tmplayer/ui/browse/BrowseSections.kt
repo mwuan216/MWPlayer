@@ -25,7 +25,7 @@ enum class BrowseTab(val icon: ImageVector) {
     Home(TmIcons.Home),
     /** Online movies and series from KKPhim & VSMov */
     Movie(TmIcons.Trailer),
-    /** 18+ AV / JAV movies from AVDB, XXVN & MissAV */
+    /** 18+ AV / JAV movies from AVDB & XXVN */
     Av(TmIcons.Favorite),
     /** Continue watching and Previously watched, as two tabs: both are videos already played. */
     History(TmIcons.History),
@@ -62,7 +62,7 @@ enum class BrowseTab(val icon: ImageVector) {
     val blurb: String get() = when (this) {
         Home -> L.browseTabHomeBlurb
         Movie -> "Xem phim trực tuyến miễn phí KKPhim & VSMov"
-        Av -> "Xem phim JAV 18+ từ AVDB, XXVN Vietsub & MissAV"
+        Av -> "Xem phim JAV 18+ từ AVDB & XXVN Vietsub"
         History -> L.browseTabHistoryBlurb
         Favorites -> "Các video và tập phim bạn đã gắn dấu sao ⭐"
         Chats -> L.browseTabChatsBlurb

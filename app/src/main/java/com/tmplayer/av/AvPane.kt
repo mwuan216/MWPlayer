@@ -104,7 +104,7 @@ private class AvCatalogState {
     val gridScrollState = LazyGridState()
 }
 
-private val avSources = listOf(MovieSource.MissAV, MovieSource.XXVN, MovieSource.AVDB)
+private val avSources = listOf(MovieSource.AVDB, MovieSource.XXVN)
 
 @kotlin.OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -134,7 +134,7 @@ fun AvPane(modifier: Modifier = Modifier) {
         return
     }
 
-    var currentSource by remember { mutableStateOf(MovieSource.MissAV) }
+    var currentSource by remember { mutableStateOf(MovieSource.AVDB) }
     var mode by remember { mutableStateOf(AvMode.Home) }
     var selectedCategorySlug by remember { mutableStateOf("") }
     var selectedCategoryTitle by remember { mutableStateOf("Mới cập nhật") }
@@ -226,11 +226,12 @@ fun AvPane(modifier: Modifier = Modifier) {
                                 "🌍 Châu Âu" to "chau-au"
                             )
                             else -> listOf(
-                                "🔥 Không Che (Uncensored)" to "uncensored",
-                                "💎 Uncensored Leak" to "uncensored-leak",
-                                "🎬 Có Che (Censored)" to "censored",
-                                "📹 Amateur / FC2" to "siro",
-                                "💃 Chinese AV" to "chinese-av"
+                                "🔥 Không Che (Uncensored)" to "2",
+                                "💎 Uncensored Leak" to "3",
+                                "🎬 Có Che (Censored)" to "1",
+                                "📹 Amateur / FC2" to "4",
+                                "💃 Chinese AV" to "5",
+                                "🌸 Hentai Anime" to "6"
                             )
                         }
                         val latestDef = async { AvRepository.getLatest(targetSource, 1) }

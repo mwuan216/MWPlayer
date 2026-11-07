@@ -44,7 +44,6 @@ Tải trực tiếp bản APK mới nhất đã được build sẵn từ reposi
 - **Tích hợp 3 nguồn JAV / 18+ lớn nhất:**
   - **AVDB OpenAPI (`avdbapi.com`):** Kho hơn **530.000+ phim JAV** đầy đủ thông tin mã phim (`SONE`, `IPZZ`, `FC2-PPV`...), diễn viên, phân loại Không che (Uncensored), Uncensored Leak, Có che, Amateur/FC2, Chinese AV, Hentai.
   - **XXVN OpenAPI (`xxvnapi.com`):** Kho phim **JAV Vietsub**, JAV HD, Không che, Clip Việt Nam, Hàn Quốc 18+, Châu Âu tốc độ cao trên CDN TikTok.
-  - **MissAV (`missav.ws` / `missav.ai`):** Tích hợp bộ giải mã luồng `eval(p,a,c,k,e,d)` trực tiếp kèm cơ chế **Smart Fallback** tự động chuyển đổi sang OpenAPI khi nhà mạng chặn SNI/DNS.
 - **Giao diện Thumbnail Ngang 16:9 & Tìm kiếm theo Diễn viên:** Hiển thị trọn vẹn ảnh bìa JAV chuẩn 16:9, hỗ trợ tìm nhanh theo mã phim hoặc bấm trực tiếp vào thẻ tên diễn viên (`👩 Actress`) để lọc toàn bộ phim của diễn viên đó.
 - **🔒 Bảo mật Khóa PIN 4 số & Ẩn Tab AV:**
   - **Khóa mã PIN 4 số:** Đặt/Đổi/Xóa mã PIN 4 số và nút **Khóa ngay lập tức (`🔒`)** bảo vệ quyền riêng tư tuyệt đối.

@@ -7,8 +7,7 @@ enum class MovieSource(val displayName: String, val badge: String, val isAv: Boo
     VSMov("VSMov (Đa chất lượng)", "VSMov", false),
     KKPhim("KKPhim (Khuyên dùng)", "KKPhim", false),
     AVDB("AVDB (530K+ JAV)", "AVDB", true),
-    XXVN("XXVN (JAV Vietsub)", "XXVN", true),
-    MissAV("MissAV (HD Stream)", "MissAV", true);
+    XXVN("XXVN (JAV Vietsub)", "XXVN", true);
 
     companion object {
         fun fromString(value: String?): MovieSource {
@@ -16,7 +15,7 @@ enum class MovieSource(val displayName: String, val badge: String, val isAv: Boo
                 "kkphim" -> KKPhim
                 "avdb" -> AVDB
                 "xxvn" -> XXVN
-                "missav" -> MissAV
+                "missav" -> AVDB
                 else -> VSMov
             }
         }
