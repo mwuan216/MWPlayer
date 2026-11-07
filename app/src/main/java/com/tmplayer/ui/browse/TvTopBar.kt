@@ -211,7 +211,9 @@ internal fun TvTopBar(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 BarTab(s.commonSearch, TmIcons.Search, searchOpen, onSearch, Modifier.focusRequester(searchRequester).tvReturnPoint(searchRequester))
-                BarTab(s.browseTabHome, TmIcons.Home, current == TvBarTab.Home && !searchOpen, onHome, Modifier.focusRequester(focusOf(TvBarTab.Home, homeFocus)).tvReturnPoint(focusOf(TvBarTab.Home, homeFocus)))
+                if (nav.homeVisible) {
+                    BarTab(s.browseTabHome, TmIcons.Home, current == TvBarTab.Home && !searchOpen, onHome, Modifier.focusRequester(focusOf(TvBarTab.Home, homeFocus)).tvReturnPoint(focusOf(TvBarTab.Home, homeFocus)))
+                }
                 BarTab("Movie", TmIcons.Trailer, current == TvBarTab.Movie && !searchOpen, onMovie, Modifier.focusRequester(focusOf(TvBarTab.Movie, movieFocus)).tvReturnPoint(focusOf(TvBarTab.Movie, movieFocus)))
                 BarTab("AV 18+", TmIcons.Favorite, current == TvBarTab.Av && !searchOpen, onAv, Modifier.focusRequester(focusOf(TvBarTab.Av, avFocus)).tvReturnPoint(focusOf(TvBarTab.Av, avFocus)))
                 BarTab(s.browseTabChats, TmIcons.Chats, current == TvBarTab.Chats && !searchOpen, onChats, Modifier.focusRequester(focusOf(TvBarTab.Chats, chatsFocus)).tvReturnPoint(focusOf(TvBarTab.Chats, chatsFocus)))

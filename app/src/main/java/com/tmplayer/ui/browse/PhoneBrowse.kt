@@ -116,6 +116,7 @@ internal fun PhoneBrowse(
     onPlayMedia: (MediaItem, String) -> Unit,
     onResume: (ResumeRecord) -> Unit,
     onMessage: (String) -> Unit,
+    homeVisible: Boolean = true,
 ) {
     val s = LocalStrings.current
     val context = LocalContext.current
@@ -196,12 +197,16 @@ internal fun PhoneBrowse(
     LaunchedEffect(context) { com.tmplayer.av.AvStore.init(context) }
     val avVisible by com.tmplayer.av.AvStore.isTabVisibleFlow.collectAsState()
     val pagerRef = remember { mutableStateOf<PagerState?>(null) }
-    val barPosition: (() -> Float)? = if (swipePage(tab) != null) {
-        remember(pagerRef, swipePage(tab), avVisible) {
+    val barPosition: (() -> Float)? = if (swipePage(tab, homeVisible) != null) {
+        remember(pagerRef, swipePage(tab, homeVisible), avVisible, homeVisible) {
             {
                 val pager = pagerRef.value
-                val raw = if (pager == null) (swipePage(tab) ?: 0).toFloat() else pager.currentPage + pager.currentPageOffsetFraction
-                if (avVisible && raw > 1f) 1f + (raw - 1f) * 2f else raw
+                val raw = if (pager == null) (swipePage(tab, homeVisible) ?: 0).toFloat() else pager.currentPage + pager.currentPageOffsetFraction
+                if (homeVisible) {
+                    if (avVisible && raw > 1f) 1f + (raw - 1f) * 2f else raw
+                } else {
+                    if (avVisible) raw * 2f else raw
+                }
             }
         }
     } else {
@@ -231,6 +236,7 @@ internal fun PhoneBrowse(
             onDownloads = onOpenDownloads,
             onHistory = onHistory,
             onUpdate = onUpdate,
+            homeVisible = homeVisible,
         ),
         selected = tab,
         searchOpen = searchOpen,
@@ -275,7 +281,7 @@ internal fun PhoneBrowse(
         AnimatedContent(
             targetState = tab,
             // Home and Chats are one pager, swiped between; only leaving it for another page fades.
-            contentKey = { if (swipePage(it) != null) SWIPE_PAGES else it.navSection },
+            contentKey = { if (swipePage(it, homeVisible) != null) SWIPE_PAGES else it.navSection },
             transitionSpec = {
                 val from = order.indexOf(initialState.navSection)
                 val to = order.indexOf(targetState.navSection)
@@ -299,10 +305,11 @@ internal fun PhoneBrowse(
                     pane = pane,
                 )
             }
-            if (swipePage(page) != null) {
+            if (swipePage(page, homeVisible) != null) {
                 HomeChatsPager(
                     tab = tab,
                     chats = chatsSection,
+                    homeVisible = homeVisible,
                     onSettle = { section -> if (section != tab) onPickTab(section) },
                     onState = { pagerRef.value = it },
                     page = frame,
@@ -343,18 +350,33 @@ private fun decodeFilters(raw: String): Pair<SearchFilters, SearchSort>? {
 }
 
 /** Which page of the Home and Chats pager [section] is: 0 for Home, 1 for Movie, 2 for Chats or a folder, null for neither. */
-internal fun swipePage(section: BrowseSection): Int? = when {
-    section.isHome -> HOME_PAGE
-    section.isMovie -> MOVIE_PAGE
-    section.onChatsPage -> CHATS_PAGE
-    else -> null
+internal fun swipePage(section: BrowseSection, homeVisible: Boolean = true): Int? = if (homeVisible) {
+    when {
+        section.isHome -> HOME_PAGE
+        section.isMovie -> MOVIE_PAGE
+        section.onChatsPage -> CHATS_PAGE
+        else -> null
+    }
+} else {
+    when {
+        section.isMovie -> 0
+        section.onChatsPage -> 1
+        else -> null
+    }
 }
 
 /** What page [page] of the pager shows: Home, Movie, or [chats], the chip the Chats page was left on. */
-internal fun swipeSection(page: Int, chats: BrowseSection): BrowseSection = when (page) {
-    HOME_PAGE -> BrowseSection.of(BrowseTab.Home)
-    MOVIE_PAGE -> BrowseSection.of(BrowseTab.Movie)
-    else -> chats
+internal fun swipeSection(page: Int, chats: BrowseSection, homeVisible: Boolean = true): BrowseSection = if (homeVisible) {
+    when (page) {
+        HOME_PAGE -> BrowseSection.of(BrowseTab.Home)
+        MOVIE_PAGE -> BrowseSection.of(BrowseTab.Movie)
+        else -> chats
+    }
+} else {
+    when (page) {
+        0 -> BrowseSection.of(BrowseTab.Movie)
+        else -> chats
+    }
 }
 
 /**
@@ -379,17 +401,19 @@ internal fun chatsPageOf(lastChats: String, sections: List<BrowseSection>): Brow
 private fun HomeChatsPager(
     tab: BrowseSection,
     chats: BrowseSection,
+    homeVisible: Boolean = true,
     onSettle: (BrowseSection) -> Unit,
     onState: (PagerState?) -> Unit,
     page: @Composable (BrowseSection) -> Unit,
 ) {
     val reduced = rememberReducedMotion() || Motion.reduced
-    val pager = rememberPagerState(initialPage = swipePage(tab) ?: HOME_PAGE) { SWIPE_PAGE_COUNT }
+    val pageCount = if (homeVisible) SWIPE_PAGE_COUNT else 2
+    val pager = rememberPagerState(initialPage = swipePage(tab, homeVisible) ?: 0) { pageCount }
     DisposableEffect(pager) {
         onState(pager)
         onDispose { onState(null) }
     }
-    val target = swipePage(tab)
+    val target = swipePage(tab, homeVisible)
     LaunchedEffect(target) {
         if (target == null || target == pager.currentPage && pager.currentPageOffsetFraction == 0f) return@LaunchedEffect
         // On the bar's own curve and time rather than the pager's default spring, which is soft
@@ -406,10 +430,11 @@ private fun HomeChatsPager(
         beside = 1
     }
     val currentChats by rememberUpdatedState(chats)
+    val currentHomeVisible by rememberUpdatedState(homeVisible)
     val settle by rememberUpdatedState(onSettle)
     LaunchedEffect(pager) {
         // Not the page it starts on, which is the tab already.
-        snapshotFlow { pager.settledPage }.drop(1).collect { settled -> settle(swipeSection(settled, currentChats)) }
+        snapshotFlow { pager.settledPage }.drop(1).collect { settled -> settle(swipeSection(settled, currentChats, currentHomeVisible)) }
     }
     HorizontalPager(
         state = pager,
@@ -421,7 +446,7 @@ private fun HomeChatsPager(
         // bringing its chosen chip into view would turn the pager to it on launch.
         val onScreen by remember(index) { derivedStateOf { pager.settledPage == index } }
         CompositionLocalProvider(LocalPageOnScreen provides onScreen) {
-            page(swipeSection(index, chats))
+            page(swipeSection(index, chats, homeVisible))
         }
     }
 }

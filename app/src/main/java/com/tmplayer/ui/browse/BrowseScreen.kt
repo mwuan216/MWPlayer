@@ -351,16 +351,16 @@ internal fun BrowseScreen(
     }
     // The saved section is matched back against the live folder list, so the rail never highlights
     // a folder deleted elsewhere and the heading never keeps a stale name.
+    val defaultTab = if (homeLayout.enabled) BrowseTab.Home else BrowseTab.Movie
     val tab = picked?.let { chosen ->
         when (chosen) {
-            is BrowseSection.Tab -> chosen
+            is BrowseSection.Tab -> if (!homeLayout.enabled && chosen.tab == BrowseTab.Home) BrowseSection.of(BrowseTab.Movie) else chosen
             is BrowseSection.Folder -> sections.filterIsInstance<BrowseSection.Folder>()
                 .firstOrNull { it.id == chosen.id }
                 ?: chosen.takeIf { folders.isEmpty() }
         }
-    // Home is the first destination on every device: it leads with what is half watched, so it
-    // is never a worse landing than Continue watching was, and it is never empty for long.
-    } ?: BrowseSection.of(BrowseTab.Home)
+    // Home is the first destination on every device when enabled; otherwise Movie.
+    } ?: BrowseSection.of(defaultTab)
     var query by remember { mutableStateOf("") }
     // What the viewer held OK on. Only ever one at a time, so two nullable slots cover both lists.
     var chatMenu by remember { mutableStateOf<ChatSummary?>(null) }
@@ -1201,6 +1201,7 @@ internal fun BrowseScreen(
             onPlayMedia = onPlayMedia,
             onResume = openResume,
             onMessage = onMessage,
+            homeVisible = homeLayout.enabled,
         )
     } else if (tvNav != null) {
         // The search across every chat: the bar's Search, and the remote's search key.
@@ -1216,16 +1217,17 @@ internal fun BrowseScreen(
             runCatching { barFocus.requestFocus() }
         }
         val homeShown = !tvSearchOpen && tab.isHome
+        val defaultSectionShown = !tvSearchOpen && (if (homeLayout.enabled) tab.isHome else tab.isMovie)
         // Back anywhere in a page goes up to the bar first, on the page's own item, and Home
         // goes back to its top as it does; only Back on Home's bar asks to leave the app.
         BackHandler(enabled = !tvBarHasFocus) {
             if (homeShown) TvBarSignals.homeToTop.tryEmit(Unit)
             runCatching { barFocus.requestFocus() }
         }
-        // Back on the bar of any other page: Home, the remote still on the bar.
-        BackHandler(enabled = tvBarHasFocus && !homeShown) {
+        // Back on the bar of any other page: Home (or Movie when Home is disabled), the remote still on the bar.
+        BackHandler(enabled = tvBarHasFocus && !defaultSectionShown) {
             tvSearchOpen = false
-            onPickTab(BrowseSection.of(BrowseTab.Home))
+            onPickTab(BrowseSection.of(defaultTab))
             query = ""
             barRefocus++
         }

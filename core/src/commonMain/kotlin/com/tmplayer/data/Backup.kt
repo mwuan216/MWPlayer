@@ -157,6 +157,7 @@ object Backups {
         "history_sort" to Kind.TEXT,
         "downloads_sort" to Kind.TEXT,
         "hold_speed" to Kind.FLOAT,
+        "home_enabled" to Kind.BOOL,
         "home_carousel" to Kind.BOOL,
         "home_continue" to Kind.BOOL,
         "home_recent" to Kind.BOOL,

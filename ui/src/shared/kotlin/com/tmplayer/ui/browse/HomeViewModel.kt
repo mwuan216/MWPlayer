@@ -1048,6 +1048,10 @@ fun rememberHomeRows(
     val rows by produceState(model.lastRows, continueWatching, watchLater, chats, favourites, loaded, recent, partial, fresh, corrections, recentMinStarred, autoFill, stalled, layout, added) {
         // The setting not read yet: nothing is picked, built or fetched (see [layout]).
         val layout = layout ?: return@produceState
+        if (!layout.enabled) {
+            value = emptyList()
+            return@produceState
+        }
         // Home's chats picked for itself only feed Recently added and the carousel.
         val autoPick = autoFill && layout.needsRecent && added == null
         val chosen = layout.needsRecent && added != null

@@ -1316,11 +1316,24 @@ fun SettingsScreen(
             // added and the carousel read is the added chats, so a note says so and points at Add
             // chats rather than offering a second picker here (2026-11-01).
             SettingsPage.Home -> {
+                item(key = "home_enabled") {
+                    ToggleRow(
+                        title = "Bật Trang chủ",
+                        modifier = Modifier.focusRequester(landing),
+                        subtitle = if (homeLayout.enabled) {
+                            "Hiển thị tab Trang chủ làm màn hình đầu tiên khi mở ứng dụng"
+                        } else {
+                            "Đang tắt: màn hình đầu tiên mặc định sẽ là tab Movie"
+                        },
+                        icon = TmIcons.Home,
+                        checked = homeLayout.enabled,
+                        onToggle = { scope.launch { settings.setHomeEnabled(!homeLayout.enabled) } },
+                    )
+                }
                 sectionTitle { s.settingsHomeRows }
                 item(key = "home_carousel") {
                     ToggleRow(
                         title = s.settingsHomeCarousel,
-                        modifier = Modifier.focusRequester(landing),
                         subtitle = when {
                             !homeLayout.carousel -> s.settingsHomeCarouselOff
                             // Each page needs its online picture and overview: none while lookups are off.
@@ -1979,7 +1992,7 @@ fun SettingsScreen(
                 item {
                     ActionRow(
                         title = titleOf(SettingsPage.Home),
-                        subtitle = s.settingsPageHomeRowsSummary,
+                        subtitle = if (homeLayout.enabled) s.settingsPageHomeRowsSummary else "Đang tắt: màn hình đầu tiên là tab Movie",
                         icon = TmIcons.Home,
                         modifier = Modifier.focusRequester(categoryFocus.getValue(SettingsPage.Home)),
                         onClick = { showPage(SettingsPage.Home) },

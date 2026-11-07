@@ -1167,9 +1167,11 @@ private fun Root() {
     // The Chats page's chip (a folder or one of Telegram's filters) last open, for the bar's Chats.
     var lastChatsKey by rememberSaveable { mutableStateOf("") }
     LaunchedEffect(pickedTab) { if (pickedTab?.onChatsPage == true) lastChatsKey = pickedTabKey }
+    val homeLayout by remember { settings.homeLayout }.collectAsStateWithLifecycle(initialValue = null)
+    val homeEnabled = homeLayout?.enabled ?: true
     // Home's own background work (a post in one of its chats, a retry, the posters looked up
     // ahead) waits while Home is not on screen (HX8).
-    val homeOnScreen = shellInFront && screen is Screen.Chats && (pickedTab == null || pickedTab.isHome)
+    val homeOnScreen = shellInFront && homeEnabled && screen is Screen.Chats && (pickedTab == null || pickedTab.isHome)
     androidx.compose.runtime.SideEffect { homeViewModel.shown = homeOnScreen }
     // The phone's one floating bar, shared by every page it is on.
     val touchChrome = remember { TouchChrome() }
@@ -1497,7 +1499,7 @@ private fun Root() {
             kotlinx.coroutines.delay(com.tmplayer.ui.browse.HomeFirstPaint.HOLD_MAX_MS)
             homeHoldOver = true
         }
-        val holdForHome = reached && !setupPending && !gateUp && !(appLock?.onOpen == true && !appUnlocked) && !homeHoldOver && !com.tmplayer.ui.browse.HomeFirstPaint.ready
+        val holdForHome = reached && homeEnabled && !setupPending && !gateUp && !(appLock?.onOpen == true && !appUnlocked) && !homeHoldOver && !com.tmplayer.ui.browse.HomeFirstPaint.ready
         com.tmplayer.ui.components.BrandLoaderHandOff(
             label = if (bypassLoginForOnline && !reached) null else (
                 com.tmplayer.ui.auth.loaderLabel(shownAuth, LocalStrings.current)
@@ -1889,7 +1891,6 @@ private fun Root() {
         // Home, on a phone and a television, so it is worth having with one starred chat: it does
         // not repeat that chat's own row as a row of its own would.
         // Null until the setting is read, so no row that is off is fetched for the first frame.
-        val homeLayout by remember { settings.homeLayout }.collectAsStateWithLifecycle(initialValue = null)
         val homeRows = rememberHomeRows(
             homeViewModel, chats, favorites, continueWatching, watchLater, watchedVideos.values,
             recentMinStarred = 1,
@@ -1972,8 +1973,10 @@ private fun Root() {
             }
             if (section == savedSection) openSavedMessages(show) else show()
         }
-        LaunchedEffect(bypassLoginForOnline, reached) {
+        LaunchedEffect(bypassLoginForOnline, reached, homeLayout?.enabled) {
             if (!reached && bypassLoginForOnline && pickedTabKey.isBlank()) {
+                pickedTabKey = BrowseSection.encode(BrowseSection.of(BrowseTab.Movie))
+            } else if (homeLayout?.enabled == false && (pickedTabKey.isBlank() || pickedTab?.isHome == true)) {
                 pickedTabKey = BrowseSection.encode(BrowseSection.of(BrowseTab.Movie))
             }
         }
@@ -2010,6 +2013,7 @@ private fun Root() {
                     onlinePrefs.edit().putBoolean("bypass_login_online", false).apply()
                 }
             } else null,
+            homeVisible = homeEnabled,
         )
 
         // The television's top bar over Downloads, as it is over the browser's pages. Settings has

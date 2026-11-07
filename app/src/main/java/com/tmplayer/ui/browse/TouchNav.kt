@@ -159,17 +159,19 @@ internal fun barHighlightIndex(
     current: TouchDestination?,
     inProfile: Boolean = false,
     avVisible: Boolean = true,
+    homeVisible: Boolean = true,
 ): Int? {
+    val offset = if (homeVisible) 0 else -1
     if (current != null) {
         return when (current) {
             TouchDestination.Home -> 0
-            TouchDestination.Movie -> 1
-            TouchDestination.Av -> if (avVisible) 2 else null
-            TouchDestination.Chats -> if (avVisible) 3 else 2
+            TouchDestination.Movie -> 1 + offset
+            TouchDestination.Av -> if (avVisible) 2 + offset else null
+            TouchDestination.Chats -> (if (avVisible) 3 else 2) + offset
         }
     }
     if (inProfile) {
-        return if (avVisible) 4 else 3
+        return (if (avVisible) 4 else 3) + offset
     }
     return null
 }
@@ -200,6 +202,7 @@ internal class TouchNav(
     val onHistory: (HistoryTab) -> Unit,
     val onUpdate: () -> Unit,
     val onSignInTelegram: (() -> Unit)? = null,
+    val homeVisible: Boolean = true,
 )
 
 /**
@@ -407,6 +410,7 @@ internal fun TouchNavHost(
                             onProfile = { profileOpen = true },
                             searchShared = searchShared,
                             vertical = rail,
+                            homeVisible = nav.homeVisible,
                         )
                     }
                     if (rail) {
@@ -701,6 +705,7 @@ private fun FloatingBar(
     onProfile: () -> Unit,
     searchShared: Modifier,
     vertical: Boolean = false,
+    homeVisible: Boolean = true,
 ) {
     val s = LocalStrings.current
     val context = LocalContext.current
@@ -739,7 +744,7 @@ private fun FloatingBar(
           Box(contentAlignment = if (vertical) Alignment.TopCenter else Alignment.CenterStart) {
             // One highlight under the chosen page, sliding to the next one rather than blinking
             // off under one button and on under another, so the bar shows where the page went.
-            val index = barHighlightIndex(current, inProfile, avVisible)
+            val index = barHighlightIndex(current, inProfile, avVisible, homeVisible)
             val step = with(LocalDensity.current) { ((if (vertical) BUTTON_HEIGHT else btnWidth) + BAR_SPACING).toPx() }
             // Where the highlight stands, in buttons from the start: sprung to the chosen one, or,
             // while Home and Chats are on screen, following the pager (sprung only the first time,
@@ -791,7 +796,9 @@ private fun FloatingBar(
                     .background(Tone.accent.copy(alpha = 0.16f)),
             )
             val buttons: @Composable () -> Unit = {
-                BarButton(TmIcons.Home, s.browseTabHome, current == TouchDestination.Home, onHome, buttonWidth = btnWidth)
+                if (homeVisible) {
+                    BarButton(TmIcons.Home, s.browseTabHome, current == TouchDestination.Home, onHome, buttonWidth = btnWidth)
+                }
                 BarButton(
                     icon = TmIcons.Trailer,
                     label = "Movie",

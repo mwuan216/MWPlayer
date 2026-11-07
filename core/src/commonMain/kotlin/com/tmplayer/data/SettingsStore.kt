@@ -79,6 +79,7 @@ private val DEVICE_HINT_SHOWN = booleanPreferencesKey("device_hint_shown")
 private val TRICKPLAY = booleanPreferencesKey("trickplay")
 private val WATCH_NEXT = booleanPreferencesKey("watch_next")
 private val TV_CHANNELS = booleanPreferencesKey("tv_channels")
+private val HOME_ENABLED = booleanPreferencesKey("home_enabled")
 private val HOME_CAROUSEL = booleanPreferencesKey("home_carousel")
 private val HOME_CONTINUE = booleanPreferencesKey("home_continue")
 private val HOME_RECENT = booleanPreferencesKey("home_recent")
@@ -1357,6 +1358,12 @@ class SettingsStore(private val prefs: DataStore<Preferences>) : AllowedChatsSou
         prefs.edit { it[TV_CHANNELS] = value }
     }
 
+    val homeEnabled: Flow<Boolean> = read { it[HOME_ENABLED] ?: true }
+
+    suspend fun setHomeEnabled(value: Boolean) {
+        prefs.edit { it[HOME_ENABLED] = value }
+    }
+
     /**
      * The large picture turning over at the top of Home (user, 2026-10-23: an option to turn it
      * off). Off, Home opens on its rows; Recently added stays a row either way.
@@ -1374,6 +1381,7 @@ class SettingsStore(private val prefs: DataStore<Preferences>) : AllowedChatsSou
             continueWatching = it[HOME_CONTINUE],
             recentlyAdded = it[HOME_RECENT],
             starredRows = it[HOME_STARRED_ROWS],
+            enabled = it[HOME_ENABLED],
         )
     }
 
