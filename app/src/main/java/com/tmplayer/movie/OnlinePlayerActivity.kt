@@ -231,9 +231,14 @@ fun OnlinePlayerScreen(
         movieWatchlist.any { it.slug == detail.movie.slug }
     }
     var initialSeekDone by remember { mutableStateOf(false) }
+    var retryTrigger by remember { mutableIntStateOf(0) }
+    var autoRetryCount by remember { mutableIntStateOf(0) }
+    var pendingResumePositionMs by remember { mutableLongStateOf(-1L) }
+    var pendingSeekMs by remember { mutableLongStateOf(-1L) }
 
     var serverIdx by remember { mutableIntStateOf(OnlinePlayerSession.serverIndex) }
     var epIdx by remember { mutableIntStateOf(OnlinePlayerSession.episodeIndex) }
+    var lastLoadedEpIdx by remember { mutableIntStateOf(OnlinePlayerSession.episodeIndex) }
 
     val currentServer = detail.servers.getOrNull(serverIdx) ?: detail.servers.firstOrNull()
     val episodes = currentServer?.episodes ?: emptyList()
@@ -241,7 +246,7 @@ fun OnlinePlayerScreen(
 
     var streamInfo by remember {
         mutableStateOf(
-            if (!isAv && currentServer != null && currentEp != null) {
+            if (!isAv && detail.movie.source != MovieSource.VSMov && currentServer != null && currentEp != null) {
                 MovieRepository.resolveStream(detail.movie.source, detail.movie.name, currentServer, currentEp)
             } else null
         )
@@ -251,7 +256,22 @@ fun OnlinePlayerScreen(
     var selectedSubTrack by remember { mutableStateOf<MovieSubtitleTrack?>(null) }
     var isSubtitleEnabled by remember { mutableStateOf(true) }
 
+    var isPlaying by remember { mutableStateOf(true) }
+    var isLoading by remember { mutableStateOf(true) }
+    var isEnded by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var currentPosition by remember { mutableLongStateOf(0L) }
+    var duration by remember { mutableLongStateOf(0L) }
+
     LaunchedEffect(serverIdx, epIdx) {
+        if (epIdx != lastLoadedEpIdx) {
+            lastLoadedEpIdx = epIdx
+            currentPosition = 0L
+            duration = 0L
+            pendingResumePositionMs = -1L
+            pendingSeekMs = -1L
+            autoRetryCount = 0
+        }
         if (currentServer != null && currentEp != null) {
             val resolved = MovieRepository.resolveStreamWithSubtitles(
                 detail.movie.source,
@@ -264,13 +284,6 @@ fun OnlinePlayerScreen(
             isSubtitleEnabled = selectedSubTrack != null
         }
     }
-
-    var isPlaying by remember { mutableStateOf(true) }
-    var isLoading by remember { mutableStateOf(true) }
-    var isEnded by remember { mutableStateOf(false) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
-    var currentPosition by remember { mutableLongStateOf(0L) }
-    var duration by remember { mutableLongStateOf(0L) }
     var showControls by remember { mutableStateOf(true) }
     var lastInteraction by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var showEpisodesSheet by remember { mutableStateOf(false) }
@@ -367,8 +380,17 @@ fun OnlinePlayerScreen(
     }
 
     val exoPlayer = remember {
-        val defaultDataSourceFactory = DefaultDataSource.Factory(context, httpSourceFactory)
-        val mediaSourceFactory = DefaultMediaSourceFactory(defaultDataSourceFactory)
+        val extractorsFactory = androidx.media3.extractor.DefaultExtractorsFactory()
+            .setConstantBitrateSeekingEnabled(true)
+            .setTsExtractorFlags(
+                androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES or
+                    androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory.FLAG_DETECT_ACCESS_UNITS or
+                    androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory.FLAG_ENABLE_HDMV_DTS_AUDIO_STREAMS
+            )
+            .setTsExtractorTimestampSearchBytes(1500 * androidx.media3.extractor.ts.TsExtractor.TS_PACKET_SIZE)
+        val cleanHttpFactory = DisguisedTsDataSource.Factory(httpSourceFactory)
+        val defaultDataSourceFactory = DefaultDataSource.Factory(context, cleanHttpFactory)
+        val mediaSourceFactory = DefaultMediaSourceFactory(defaultDataSourceFactory, extractorsFactory)
 
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(mediaSourceFactory)
@@ -389,20 +411,64 @@ fun OnlinePlayerScreen(
             exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
                 .buildUpon()
                 .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                .setIgnoredTextSelectionFlags(0)
                 .setPreferredTextLanguage(sub.language)
                 .build()
         }
     }
 
-    // Update media source when stream changes
-    LaunchedEffect(streamInfo?.streamUrl, streamInfo?.subtitles) {
-        val stream = streamInfo
+    fun saveCurrentProgress(posMs: Long, durMs: Long) {
+        if (posMs > 3000L && durMs > 0L) {
+            if (isAv) {
+                com.tmplayer.av.AvStore.saveProgress(
+                    context = context,
+                    detail = detail,
+                    serverIndex = serverIdx,
+                    episodeIndex = epIdx,
+                    episodeName = currentEp?.name ?: "",
+                    positionMs = posMs,
+                    durationMs = durMs
+                )
+            } else {
+                MovieStore.saveProgress(
+                    context = context,
+                    detail = detail,
+                    serverIndex = serverIdx,
+                    episodeIndex = epIdx,
+                    episodeName = currentEp?.name ?: "",
+                    positionMs = posMs,
+                    durationMs = durMs
+                )
+            }
+        }
+    }
+
+    // Update media source when stream changes or retry is triggered
+    LaunchedEffect(streamInfo?.streamUrl, streamInfo?.subtitles, retryTrigger) {
+        var stream = streamInfo
         if (stream != null && stream.streamUrl.isNotBlank()) {
             isLoading = true
             isEnded = false
             initialSeekDone = false
             errorMessage = null
             try {
+                if (retryTrigger > 0 && stream.subtitles.isEmpty() && detail.movie.source == MovieSource.VSMov && currentServer != null && currentEp != null) {
+                    val reResolved = MovieRepository.resolveStreamWithSubtitles(
+                        detail.movie.source,
+                        detail.movie.name,
+                        currentServer,
+                        currentEp
+                    )
+                    if (reResolved.subtitles.isNotEmpty()) {
+                        stream = reResolved
+                        streamInfo = reResolved
+                        if (selectedSubTrack == null) {
+                            selectedSubTrack = reResolved.subtitles.firstOrNull { it.isDefault } ?: reResolved.subtitles.firstOrNull()
+                            isSubtitleEnabled = selectedSubTrack != null
+                        }
+                    }
+                }
+
                 val ref = stream.referer.ifBlank { if (isAv) "https://upload18.org/" else "https://phimapi.com/" }
                 if (isAv) {
                     httpSourceFactory.setUserAgent(com.tmplayer.av.AvRepository.IOS_SAFARI_UA)
@@ -428,13 +494,19 @@ fun OnlinePlayerScreen(
                     )
                 }
 
+                val activeSub = selectedSubTrack ?: stream.subtitles.firstOrNull { it.isDefault } ?: stream.subtitles.firstOrNull()
+                if (selectedSubTrack == null && activeSub != null) {
+                    selectedSubTrack = activeSub
+                }
+
                 val subConfigs = stream.subtitles.map { sub ->
                     val finalUri = MovieRepository.getNormalizedSubtitleUri(context, sub.url)
+                    val isDefaultSub = if (activeSub != null) sub.url == activeSub.url else sub.isDefault
                     MediaItem.SubtitleConfiguration.Builder(finalUri)
                         .setMimeType(MimeTypes.TEXT_VTT)
                         .setLanguage(sub.language)
                         .setLabel(sub.label)
-                        .setSelectionFlags(if (sub.isDefault) C.SELECTION_FLAG_DEFAULT else 0)
+                        .setSelectionFlags(if (isDefaultSub) C.SELECTION_FLAG_DEFAULT or C.SELECTION_FLAG_AUTOSELECT else 0)
                         .build()
                 }
 
@@ -455,15 +527,31 @@ fun OnlinePlayerScreen(
                     }
                     .build()
 
-                val defaultLang = selectedSubTrack?.language ?: "vi"
+                val defaultLang = activeSub?.language ?: "vi"
+                val enableTextTrack = isSubtitleEnabled && subConfigs.isNotEmpty()
                 exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
                     .buildUpon()
                     .setPreferredTextLanguage(defaultLang)
                     .setIgnoredTextSelectionFlags(0)
-                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !isSubtitleEnabled)
+                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !enableTextTrack)
                     .build()
 
-                exoPlayer.setMediaItem(mediaItem)
+                val saved = if (isAv) com.tmplayer.av.AvStore.getProgress(detail.movie.slug) else MovieStore.getProgress(detail.movie.slug)
+                val savedPos = if (saved != null && saved.episodeIndex == epIdx && !saved.isFinished && saved.positionMs > 1000L) {
+                    saved.positionMs
+                } else 0L
+                val targetStartPos = when {
+                    pendingResumePositionMs > 1000L -> pendingResumePositionMs
+                    currentPosition > 1000L -> currentPosition
+                    else -> savedPos
+                }
+                pendingSeekMs = targetStartPos
+
+                if (targetStartPos > 1000L) {
+                    exoPlayer.setMediaItem(mediaItem, targetStartPos)
+                } else {
+                    exoPlayer.setMediaItem(mediaItem)
+                }
                 exoPlayer.prepare()
                 exoPlayer.playWhenReady = true
             } catch (e: Exception) {
@@ -482,23 +570,40 @@ fun OnlinePlayerScreen(
                 if (state == Player.STATE_READY) {
                     isLoading = false
                     errorMessage = null
+                    autoRetryCount = 0
                     duration = exoPlayer.duration.coerceAtLeast(0L)
                     if (!initialSeekDone) {
                         initialSeekDone = true
-                        val saved = if (isAv) com.tmplayer.av.AvStore.getProgress(detail.movie.slug) else MovieStore.getProgress(detail.movie.slug)
-                        if (saved != null && saved.serverIndex == serverIdx && saved.episodeIndex == epIdx && !saved.isFinished && saved.positionMs > 1000L) {
-                            exoPlayer.seekTo(saved.positionMs)
+                        val seekTarget = pendingSeekMs
+                        pendingSeekMs = -1L
+                        pendingResumePositionMs = -1L
+                        if (seekTarget > 1000L && abs(exoPlayer.currentPosition - seekTarget) > 2000L) {
+                            exoPlayer.seekTo(seekTarget)
+                        }
+                        if (isSubtitleEnabled && selectedSubTrack != null) {
+                            applySubtitleSelection(selectedSubTrack, true)
                         }
                     }
                 }
             }
 
             override fun onPlayerError(error: PlaybackException) {
+                val playerPos = exoPlayer.currentPosition
+                if (playerPos > currentPosition) {
+                    currentPosition = playerPos
+                }
+                saveCurrentProgress(currentPosition, duration)
+
                 if (isAv && serverIdx + 1 < detail.servers.size) {
                     serverIdx += 1
                     epIdx = 0
                     OnlinePlayerSession.serverIndex = serverIdx
                     OnlinePlayerSession.episodeIndex = 0
+                } else if (autoRetryCount < 1 && currentPosition > 3000L) {
+                    autoRetryCount += 1
+                    pendingResumePositionMs = currentPosition
+                    isLoading = true
+                    retryTrigger += 1
                 } else {
                     isLoading = false
                     errorMessage = "Lỗi phát video (${error.errorCodeName}): ${error.message}"
@@ -511,29 +616,7 @@ fun OnlinePlayerScreen(
         }
         exoPlayer.addListener(listener)
         onDispose {
-            if (currentPosition > 3000L && duration > 0L) {
-                if (isAv) {
-                    com.tmplayer.av.AvStore.saveProgress(
-                        context = context,
-                        detail = detail,
-                        serverIndex = serverIdx,
-                        episodeIndex = epIdx,
-                        episodeName = currentEp?.name ?: "",
-                        positionMs = currentPosition,
-                        durationMs = duration
-                    )
-                } else {
-                    MovieStore.saveProgress(
-                        context = context,
-                        detail = detail,
-                        serverIndex = serverIdx,
-                        episodeIndex = epIdx,
-                        episodeName = currentEp?.name ?: "",
-                        positionMs = currentPosition,
-                        durationMs = duration
-                    )
-                }
-            }
+            saveCurrentProgress(currentPosition, duration)
             exoPlayer.removeListener(listener)
             exoPlayer.release()
         }
@@ -544,32 +627,18 @@ fun OnlinePlayerScreen(
         var lastSavedSec = 0L
         while (true) {
             if (exoPlayer.playbackState == Player.STATE_READY || exoPlayer.isPlaying) {
-                currentPosition = exoPlayer.currentPosition.coerceAtLeast(0L)
-                duration = exoPlayer.duration.coerceAtLeast(0L)
+                val pos = exoPlayer.currentPosition
+                if (pos > 0L) {
+                    currentPosition = pos
+                }
+                val dur = exoPlayer.duration
+                if (dur > 0L) {
+                    duration = dur
+                }
                 val curSec = currentPosition / 1000L
                 if (currentPosition > 3000L && duration > 0L && Math.abs(curSec - lastSavedSec) >= 5L) {
                     lastSavedSec = curSec
-                    if (isAv) {
-                        com.tmplayer.av.AvStore.saveProgress(
-                            context = context,
-                            detail = detail,
-                            serverIndex = serverIdx,
-                            episodeIndex = epIdx,
-                            episodeName = currentEp?.name ?: "",
-                            positionMs = currentPosition,
-                            durationMs = duration
-                        )
-                    } else {
-                        MovieStore.saveProgress(
-                            context = context,
-                            detail = detail,
-                            serverIndex = serverIdx,
-                            episodeIndex = epIdx,
-                            episodeName = currentEp?.name ?: "",
-                            positionMs = currentPosition,
-                            durationMs = duration
-                        )
-                    }
+                    saveCurrentProgress(currentPosition, duration)
                 }
             }
             delay(500)
@@ -955,15 +1024,15 @@ fun OnlinePlayerScreen(
                             text = "Thử lại",
                             icon = TmIcons.Refresh,
                             onClick = {
+                                val resumePos = maxOf(currentPosition, exoPlayer.currentPosition.coerceAtLeast(0L))
+                                if (resumePos > 0L) {
+                                    currentPosition = resumePos
+                                    pendingResumePositionMs = resumePos
+                                }
+                                autoRetryCount = 0
                                 errorMessage = null
                                 isLoading = true
-                                val stream = streamInfo
-                                if (stream != null && stream.streamUrl.isNotBlank()) {
-                                    val mediaItem = MediaItem.Builder().setUri(stream.streamUrl).build()
-                                    exoPlayer.setMediaItem(mediaItem)
-                                    exoPlayer.prepare()
-                                    exoPlayer.playWhenReady = true
-                                }
+                                retryTrigger += 1
                             }
                         )
                         if (detail.servers.size > 1) {
@@ -971,6 +1040,14 @@ fun OnlinePlayerScreen(
                                 text = "Đổi Server",
                                 icon = TmIcons.Episodes,
                                 onClick = {
+                                    val resumePos = maxOf(currentPosition, exoPlayer.currentPosition.coerceAtLeast(0L))
+                                    if (resumePos > 0L) {
+                                        currentPosition = resumePos
+                                        pendingResumePositionMs = resumePos
+                                    }
+                                    autoRetryCount = 0
+                                    errorMessage = null
+                                    isLoading = true
                                     serverIdx = (serverIdx + 1) % detail.servers.size
                                     OnlinePlayerSession.serverIndex = serverIdx
                                 }
@@ -1758,5 +1835,99 @@ private fun formatTimeMs(timeMs: Long): String {
         "%d:%02d:%02d".format(hrs, min, sec)
     } else {
         "%02d:%02d".format(min, sec)
+    }
+}
+
+/**
+ * Tự động loại bỏ header ảnh giả (PNG/JPEG/GIF/BMP) ở đầu các segment HLS (.png/.jpg/.ts)
+ * của nguồn VSMov/KKPhim trước byte đồng bộ MPEG-TS (0x47), tránh lỗi
+ * ERROR_CODE_PARSING_CONTAINER_MALFORMED khi phát hoặc tua.
+ */
+@OptIn(UnstableApi::class)
+private class DisguisedTsDataSource(
+    private val upstream: androidx.media3.datasource.DataSource
+) : androidx.media3.datasource.DataSource {
+
+    private val peekBuf = ByteArray(4096)
+    private var peekLen = 0
+    private var peekPos = 0
+
+    override fun addTransferListener(transferListener: androidx.media3.datasource.TransferListener) {
+        upstream.addTransferListener(transferListener)
+    }
+
+    override fun open(dataSpec: androidx.media3.datasource.DataSpec): Long {
+        peekLen = 0
+        peekPos = 0
+        val rawLength = upstream.open(dataSpec)
+        val uriStr = (upstream.uri ?: dataSpec.uri).toString().lowercase().substringBefore('?')
+        if (uriStr.endsWith(".m3u8") || uriStr.endsWith(".vtt") || uriStr.endsWith(".srt") ||
+            uriStr.endsWith(".mp4") || uriStr.endsWith(".m4s") || uriStr.endsWith(".mpd")
+        ) {
+            return rawLength
+        }
+
+        while (peekLen < peekBuf.size) {
+            val r = upstream.read(peekBuf, peekLen, peekBuf.size - peekLen)
+            if (r == C.RESULT_END_OF_INPUT || r <= 0) break
+            peekLen += r
+        }
+
+        if (peekLen >= 377) {
+            val alreadyTs = peekBuf[0] == 0x47.toByte() &&
+                peekBuf[188] == 0x47.toByte() &&
+                peekBuf[376] == 0x47.toByte()
+            val isTextOrMp4 = (peekBuf[0] == '#'.code.toByte() && peekBuf[1] == 'E'.code.toByte()) ||
+                (peekBuf[0] == 'W'.code.toByte() && peekBuf[1] == 'E'.code.toByte()) ||
+                (peekBuf[4] == 'f'.code.toByte() && peekBuf[5] == 't'.code.toByte() && peekBuf[6] == 'y'.code.toByte()) ||
+                (peekBuf[4] == 's'.code.toByte() && peekBuf[5] == 't'.code.toByte() && peekBuf[6] == 'y'.code.toByte()) ||
+                (peekBuf[4] == 'm'.code.toByte() && peekBuf[5] == 'o'.code.toByte() && peekBuf[6] == 'o'.code.toByte())
+            if (!alreadyTs && !isTextOrMp4) {
+                val maxScan = peekLen - 376
+                for (i in 1 until maxScan) {
+                    if (peekBuf[i] == 0x47.toByte() &&
+                        peekBuf[i + 188] == 0x47.toByte() &&
+                        peekBuf[i + 376] == 0x47.toByte()
+                    ) {
+                        peekPos = i
+                        break
+                    }
+                }
+            }
+        }
+
+        return if (rawLength != C.LENGTH_UNSET.toLong() && peekPos > 0) {
+            (rawLength - peekPos).coerceAtLeast(0L)
+        } else {
+            rawLength
+        }
+    }
+
+    override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+        if (length == 0) return 0
+        if (peekPos < peekLen) {
+            val toCopy = minOf(length, peekLen - peekPos)
+            System.arraycopy(peekBuf, peekPos, buffer, offset, toCopy)
+            peekPos += toCopy
+            return toCopy
+        }
+        return upstream.read(buffer, offset, length)
+    }
+
+    override fun getUri(): Uri? = upstream.uri
+
+    override fun getResponseHeaders(): Map<String, List<String>> = upstream.responseHeaders
+
+    override fun close() {
+        peekLen = 0
+        peekPos = 0
+        upstream.close()
+    }
+
+    class Factory(private val upstreamFactory: androidx.media3.datasource.DataSource.Factory) :
+        androidx.media3.datasource.DataSource.Factory {
+        override fun createDataSource(): androidx.media3.datasource.DataSource {
+            return DisguisedTsDataSource(upstreamFactory.createDataSource())
+        }
     }
 }

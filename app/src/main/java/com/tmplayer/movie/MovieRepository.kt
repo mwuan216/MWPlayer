@@ -433,17 +433,19 @@ object MovieRepository {
             val cacheDir = File(context.cacheDir, "movie_subs").apply { if (!exists()) mkdirs() }
             val hash = md5(subUrl)
             val file = File(cacheDir, "$hash.vtt")
-            if (file.exists() && file.length() > 0L) {
+            if (file.exists() && file.length() > 10L) {
                 return@withContext Uri.fromFile(file)
             }
 
-            val rawText = fetchJson(subUrl, "https://vsmov.com/") ?: return@withContext Uri.parse(subUrl)
+            val rawText = fetchJson(subUrl, "https://vsmov.com/")
+                ?: fetchJson(subUrl, "https://vsmov.com/")
+                ?: return@withContext Uri.parse(subUrl)
             // Normalize WebVTT:
-            // 1. Ensure WEBVTT header
-            val trimmed = rawText.trimStart()
+            // 1. Strip UTF-8 BOM and leading whitespace, then ensure WEBVTT header
+            val trimmed = rawText.trimStart('\uFEFF', ' ', '\t', '\r', '\n')
             val header = if (trimmed.startsWith("WEBVTT")) "" else "WEBVTT\n\n"
             // 2. Fix comma in timestamps: 00:01:30,780 --> 00:01:34,371 => 00:01:30.780 --> 00:01:34.371
-            val fixedText = header + rawText.replace(Regex("""(\d{2}:\d{2}(?::\d{2})?),(\d{3})"""), "$1.$2")
+            val fixedText = header + trimmed.replace(Regex("""(\d{2}:\d{2}(?::\d{2})?),(\d{3})"""), "$1.$2")
             file.writeText(fixedText, Charsets.UTF_8)
             Uri.fromFile(file)
         } catch (e: Exception) {
