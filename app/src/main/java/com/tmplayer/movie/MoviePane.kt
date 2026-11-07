@@ -3359,13 +3359,13 @@ fun CloudDestinationPickerModal(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "☁️ MovieBox › #bot",
+                            text = "☁️ MovieBox Cloud › MovieBox (#43264)",
                             color = if (isDefaultSelected) Tone.accent else Tone.text,
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "Kho lưu trữ mặc định trong MovieBox topic 1 (#bot) - Hỗ trợ Dual Bot",
+                            text = "Kho lưu trữ phim mặc định (Lệnh tự động gửi vào topic 1 #bot)",
                             color = Tone.text.copy(alpha = 0.6f),
                             fontSize = 11.sp
                         )

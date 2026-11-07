@@ -34,8 +34,13 @@ import java.net.URLEncoder
  */
 object MovieCloudDownloader {
 
+    // Kênh chuyên nhận lệnh bot xử lý (Topic 1 #bot của MovieBox)
+    const val BOT_COMMAND_CHAT_ID = -1004495574377L
+    const val BOT_COMMAND_TOPIC_ID = 1 // Topic 1 (#bot)
+
+    // Kho lưu trữ phim mặc định (Topic 43264)
     const val CLOUD_CHAT_ID = -1004495574377L
-    const val CLOUD_TOPIC_ID = 1
+    const val CLOUD_TOPIC_ID = 43264
     const val BOT_TOKEN = "9166002043:AAEgSw9QEIzlMYniod09qV7PyuIMajRUjuQ"
     const val BOT_1 = "Mw_movie_downloader_bot"
     const val BOT_2 = "Movie_bot_laptop_bot"
@@ -247,10 +252,10 @@ object MovieCloudDownloader {
         var sentViaTdlib = false
         var sentViaBotApi = false
 
-        // 1. Gửi lệnh qua TDLib tới đích đến đã chọn (nếu người dùng đã đăng nhập và client sẵn sàng)
+        // 1. Gửi lệnh qua TDLib vào Topic 1 (#bot) của MovieBox để Bot nhận và xử lý
         try {
             val td = Td.client
-            td.getChat(targetChatId)
+            td.getChat(BOT_COMMAND_CHAT_ID)
             for (cmd in commands) {
                 val content = InputMessageText(
                     FormattedText(cmd, emptyArray()),
@@ -258,10 +263,10 @@ object MovieCloudDownloader {
                     false
                 )
                 val options = MessageSendOptions(null, false, false, false, false, 0L, false, null, 0L, 0, false)
-                val topicForum = if (targetTopicId > 0) MessageTopicForum(targetTopicId) else null
-                var res = td.sendMessage(targetChatId, topicForum, null, options, null, content)
-                if (res.valueOrNull == null && topicForum != null) {
-                    res = td.sendMessage(targetChatId, null, null, options, null, content)
+                val topicForum = MessageTopicForum(BOT_COMMAND_TOPIC_ID)
+                var res = td.sendMessage(BOT_COMMAND_CHAT_ID, topicForum, null, options, null, content)
+                if (res.valueOrNull == null) {
+                    res = td.sendMessage(BOT_COMMAND_CHAT_ID, null, null, options, null, content)
                 }
                 if (res.valueOrNull != null) {
                     sentViaTdlib = true
@@ -334,12 +339,9 @@ object MovieCloudDownloader {
                 }
             }
 
-            if (sendBotMsg(targetChatId, targetTopicId)) {
+            // Lệnh luôn gửi vào Topic 1 (#bot) của MovieBox để Bot nhận lệnh
+            if (sendBotMsg(BOT_COMMAND_CHAT_ID, BOT_COMMAND_TOPIC_ID)) {
                 sentViaBotApi = true
-            } else if (targetChatId != CLOUD_CHAT_ID) {
-                if (sendBotMsg(CLOUD_CHAT_ID, CLOUD_TOPIC_ID)) {
-                    sentViaBotApi = true
-                }
             }
         } catch (_: Exception) {
             // Bỏ qua lỗi mạng bot API

@@ -2459,7 +2459,7 @@ private fun AvDetailWithInlinePlayer(
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = "Gửi duy nhất 1 lệnh /${if (selectedFormat == "json") "pull_json" else "pull"}@$selectedBot về ${currentDest.displayLabel}",
+                                text = "Gửi lệnh vào topic 1 (#bot) để tải về ${currentDest.displayLabel}",
                                 color = Color.Black.copy(alpha = 0.75f),
                                 fontSize = 11.sp
                             )

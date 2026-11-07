@@ -191,8 +191,8 @@ data class CloudDestination(
         val DEFAULT = CloudDestination(
             chatId = MovieCloudDownloader.CLOUD_CHAT_ID,
             topicId = MovieCloudDownloader.CLOUD_TOPIC_ID,
-            chatTitle = "MovieBox",
-            topicTitle = "#bot"
+            chatTitle = "MovieBox Cloud",
+            topicTitle = "MovieBox (#43264)"
         )
     }
 }
@@ -324,10 +324,10 @@ object MovieStore {
                 var topicId = prefs.getInt(KEY_CLOUD_DEST_TOPIC_ID, MovieCloudDownloader.CLOUD_TOPIC_ID)
                 var chatTitle = prefs.getString(KEY_CLOUD_DEST_CHAT_TITLE, "MovieBox").orEmpty().ifBlank { "MovieBox" }
                 var topicTitle = prefs.getString(KEY_CLOUD_DEST_TOPIC_TITLE, "").orEmpty()
-                if (topicId == 43264) {
+                if (topicId == 1) {
                     topicId = MovieCloudDownloader.CLOUD_TOPIC_ID
-                    topicTitle = "#bot"
-                    chatTitle = "MovieBox"
+                    topicTitle = "MovieBox (#43264)"
+                    chatTitle = "MovieBox Cloud"
                     prefs.edit()
                         .putInt(KEY_CLOUD_DEST_TOPIC_ID, topicId)
                         .putString(KEY_CLOUD_DEST_TOPIC_TITLE, topicTitle)
