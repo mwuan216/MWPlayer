@@ -211,6 +211,8 @@ object MovieStore {
     private const val KEY_CLOUD_DEST_TOPIC_ID = "movie_cloud_dest_topic_id"
     private const val KEY_CLOUD_DEST_CHAT_TITLE = "movie_cloud_dest_chat_title"
     private const val KEY_CLOUD_DEST_TOPIC_TITLE = "movie_cloud_dest_topic_title"
+    private const val KEY_SELECTED_BOT = "movie_selected_bot"
+    private const val KEY_PULL_FORMAT = "movie_pull_format"
 
     private val _watchlistFlow = MutableStateFlow<List<MovieItem>>(emptyList())
     val watchlistFlow: StateFlow<List<MovieItem>> = _watchlistFlow.asStateFlow()
@@ -226,6 +228,12 @@ object MovieStore {
 
     private val _cloudDestinationFlow = MutableStateFlow(CloudDestination.DEFAULT)
     val cloudDestinationFlow: StateFlow<CloudDestination> = _cloudDestinationFlow.asStateFlow()
+
+    private val _selectedBotFlow = MutableStateFlow(MovieCloudDownloader.BOT_1)
+    val selectedBotFlow: StateFlow<String> = _selectedBotFlow.asStateFlow()
+
+    private val _pullFormatFlow = MutableStateFlow("token")
+    val pullFormatFlow: StateFlow<String> = _pullFormatFlow.asStateFlow()
 
     private var initialized = false
 
@@ -325,7 +333,27 @@ object MovieStore {
             } else {
                 _cloudDestinationFlow.value = CloudDestination.DEFAULT
             }
+
+            // 6. Selected Bot & Pull Format
+            val bot = prefs.getString(KEY_SELECTED_BOT, MovieCloudDownloader.BOT_1) ?: MovieCloudDownloader.BOT_1
+            _selectedBotFlow.value = bot
+            val fmt = prefs.getString(KEY_PULL_FORMAT, "token") ?: "token"
+            _pullFormatFlow.value = fmt
         } catch (_: Exception) {}
+    }
+
+    @Synchronized
+    fun setSelectedBot(context: Context, bot: String) {
+        init(context)
+        _selectedBotFlow.value = bot
+        getPrefs(context).edit().putString(KEY_SELECTED_BOT, bot).apply()
+    }
+
+    @Synchronized
+    fun setPullFormat(context: Context, format: String) {
+        init(context)
+        _pullFormatFlow.value = format
+        getPrefs(context).edit().putString(KEY_PULL_FORMAT, format).apply()
     }
 
     @Synchronized

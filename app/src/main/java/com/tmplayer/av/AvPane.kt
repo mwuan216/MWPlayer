@@ -1086,6 +1086,10 @@ private fun AvDetailWithInlinePlayer(
     val movie = detail?.movie ?: item
     val scrollState = rememberScrollState()
 
+    val cloudSyncedList by MovieStore.cloudSyncedFlow.collectAsState()
+    val cloudSync = cloudSyncedList.firstOrNull { it.slug == movie.slug }
+    val isCloudSynced = cloudSync != null
+
     var serverIdx by remember(movie.slug) { mutableIntStateOf(historyRecord?.serverIndex ?: 0) }
     var epIdx by remember(movie.slug) { mutableIntStateOf(historyRecord?.episodeIndex ?: 0) }
     var showDetailsSection by remember(movie.slug) { mutableStateOf(true) }
@@ -1882,16 +1886,39 @@ private fun AvDetailWithInlinePlayer(
                 .padding(horizontal = 14.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Movie Title: Strictly max 3 lines with ellipsis (...)
-            Text(
-                text = movie.name,
-                color = Tone.text,
-                fontWeight = FontWeight.Bold,
-                fontSize = 16.sp,
-                lineHeight = 22.sp,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis
-            )
+            // Movie Title: Strictly max 3 lines with ellipsis (...) + Badge "Đã kéo" if synced
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Top,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = movie.name,
+                    color = Tone.text,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                    lineHeight = 22.sp,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                if (isCloudSynced) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color(0xE6104F32))
+                            .border(0.6.dp, Tone.accent, RoundedCornerShape(6.dp))
+                            .padding(horizontal = 7.dp, vertical = 3.dp)
+                    ) {
+                        Text(
+                            text = "☁️ Đã kéo",
+                            color = Tone.accent,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
 
             // Action Buttons Bar (Theo dõi | Kéo về Tele | Toàn màn hình)
             Row(
@@ -1906,9 +1933,9 @@ private fun AvDetailWithInlinePlayer(
                     onClick = onToggleWatchlist
                 )
                 AvActionPill(
-                    icon = "☁️",
-                    label = "Kéo về Tele",
-                    highlighted = false,
+                    icon = if (isCloudSynced) "✓" else "☁️",
+                    label = if (isCloudSynced) "Đã kéo Tele" else "Kéo về Tele",
+                    highlighted = isCloudSynced,
                     onClick = { showCloudPullSheet = true }
                 )
                 AvActionPill(
@@ -2126,6 +2153,8 @@ private fun AvDetailWithInlinePlayer(
     // =========================================================================
     if (showCloudPullSheet) {
         val currentDest by MovieStore.cloudDestinationFlow.collectAsState()
+        var selectedBot by remember { mutableStateOf(MovieStore.selectedBotFlow.value) }
+        var selectedFormat by remember { mutableStateOf(MovieStore.pullFormatFlow.value) }
         ModalBottomSheet(
             onDismissRequest = { showCloudPullSheet = false },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -2175,6 +2204,208 @@ private fun AvDetailWithInlinePlayer(
                 // Reusable Destination Picker Card (same as Movie tab)
                 CloudDestinationSelectorCard()
 
+                // Chọn Bot kéo phim
+                Text(
+                    text = "🤖 Chọn Bot kéo phim:",
+                    color = Tone.text,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    val isBot1 = selectedBot == MovieCloudDownloader.BOT_1
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (isBot1) Tone.accent.copy(alpha = 0.18f) else Tone.surfaceHigh)
+                            .border(
+                                width = if (isBot1) 1.5.dp else 0.5.dp,
+                                color = if (isBot1) Tone.accent else Tone.outline.copy(alpha = 0.4f),
+                                shape = RoundedCornerShape(10.dp)
+                            )
+                            .clickable {
+                                selectedBot = MovieCloudDownloader.BOT_1
+                                MovieStore.setSelectedBot(context, MovieCloudDownloader.BOT_1)
+                            }
+                            .padding(vertical = 10.dp, horizontal = 10.dp)
+                    ) {
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("🤖", fontSize = 13.sp)
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    text = "Bot 1 (Chính)",
+                                    color = if (isBot1) Tone.accent else Tone.text,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                text = "@${MovieCloudDownloader.BOT_1}",
+                                color = Tone.muted,
+                                fontSize = 10.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+
+                    val isBot2 = selectedBot == MovieCloudDownloader.BOT_2
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (isBot2) Tone.accent.copy(alpha = 0.18f) else Tone.surfaceHigh)
+                            .border(
+                                width = if (isBot2) 1.5.dp else 0.5.dp,
+                                color = if (isBot2) Tone.accent else Tone.outline.copy(alpha = 0.4f),
+                                shape = RoundedCornerShape(10.dp)
+                            )
+                            .clickable {
+                                selectedBot = MovieCloudDownloader.BOT_2
+                                MovieStore.setSelectedBot(context, MovieCloudDownloader.BOT_2)
+                            }
+                            .padding(vertical = 10.dp, horizontal = 10.dp)
+                    ) {
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("💻", fontSize = 13.sp)
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    text = "Bot 2 (Laptop)",
+                                    color = if (isBot2) Tone.accent else Tone.text,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                text = "@${MovieCloudDownloader.BOT_2}",
+                                color = Tone.muted,
+                                fontSize = 10.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+
+                // Định dạng lệnh (Chỉ gửi 1 cách duy nhất)
+                Text(
+                    text = "⚙️ Định dạng lệnh gửi (chọn 1 cách duy nhất):",
+                    color = Tone.text,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    val isToken = selectedFormat == "token"
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (isToken) Tone.accent.copy(alpha = 0.18f) else Tone.surfaceHigh)
+                            .border(
+                                width = if (isToken) 1.5.dp else 0.5.dp,
+                                color = if (isToken) Tone.accent else Tone.outline.copy(alpha = 0.4f),
+                                shape = RoundedCornerShape(10.dp)
+                            )
+                            .clickable {
+                                selectedFormat = "token"
+                                MovieStore.setPullFormat(context, "token")
+                            }
+                            .padding(vertical = 10.dp, horizontal = 10.dp)
+                    ) {
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("⚡", fontSize = 13.sp)
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    text = "Token /pull",
+                                    color = if (isToken) Tone.accent else Tone.text,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                text = "/pull@$selectedBot",
+                                color = Tone.muted,
+                                fontSize = 10.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+
+                    val isJson = selectedFormat == "json"
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (isJson) Tone.accent.copy(alpha = 0.18f) else Tone.surfaceHigh)
+                            .border(
+                                width = if (isJson) 1.5.dp else 0.5.dp,
+                                color = if (isJson) Tone.accent else Tone.outline.copy(alpha = 0.4f),
+                                shape = RoundedCornerShape(10.dp)
+                            )
+                            .clickable {
+                                selectedFormat = "json"
+                                MovieStore.setPullFormat(context, "json")
+                            }
+                            .padding(vertical = 10.dp, horizontal = 10.dp)
+                    ) {
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("📦", fontSize = 13.sp)
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    text = "JSON Block",
+                                    color = if (isJson) Tone.accent else Tone.text,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                text = "/pull_json@$selectedBot",
+                                color = Tone.muted,
+                                fontSize = 10.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+
+                if (cloudSync != null) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0x25104F32))
+                            .border(0.6.dp, Tone.accent.copy(alpha = 0.7f), RoundedCornerShape(10.dp))
+                            .padding(10.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("☁️", fontSize = 16.sp)
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = "Phim này đã từng gửi lệnh kéo về Tele Cloud (${java.text.SimpleDateFormat("HH:mm - dd/MM/yyyy", java.util.Locale.getDefault()).format(java.util.Date(cloudSync.updatedAt))})",
+                                color = Tone.accent,
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+                }
+
                 // Pull Full HD button
                 Box(
                     modifier = Modifier
@@ -2193,8 +2424,11 @@ private fun AvDetailWithInlinePlayer(
                                     totalEpisodes = 1,
                                     movie = movie,
                                     detail = detail,
+                                    destination = currentDest,
                                     directStreamUrl = resolvedStream?.streamUrl.orEmpty(),
-                                    directReferer = resolvedStream?.referer.orEmpty()
+                                    directReferer = resolvedStream?.referer.orEmpty(),
+                                    targetBot = selectedBot,
+                                    pullFormat = selectedFormat
                                 )
                             }
                         }
@@ -2217,14 +2451,15 @@ private fun AvDetailWithInlinePlayer(
                         }
                         Spacer(Modifier.width(14.dp))
                         Column {
+                            val shortBot = if (selectedBot.contains("laptop", ignoreCase = true)) "Bot 2" else "Bot 1"
                             Text(
-                                text = "☁️ Kéo bản Full HD về ${currentDest.displayLabel}",
+                                text = "☁️ Kéo Full HD qua $shortBot (${if (selectedFormat == "json") "JSON" else "Token"})",
                                 color = Color.Black,
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = "Tự động trích xuất luồng HLS m3u8 & gửi lệnh tải về đích đã chọn",
+                                text = "Gửi duy nhất 1 lệnh /${if (selectedFormat == "json") "pull_json" else "pull"}@$selectedBot về ${currentDest.displayLabel}",
                                 color = Color.Black.copy(alpha = 0.75f),
                                 fontSize = 11.sp
                             )
@@ -2468,6 +2703,9 @@ private fun AvLandscapeCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val cloudSyncedList by MovieStore.cloudSyncedFlow.collectAsState()
+    val isCloudSynced = cloudSyncedList.any { it.slug == item.slug }
+
     Column(
         modifier = modifier
             .clip(RoundedCornerShape(10.dp))
@@ -2486,6 +2724,26 @@ private fun AvLandscapeCard(
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
             )
+
+            // Top-right Cloud Synced Badge (Đã kéo về Tele)
+            if (isCloudSynced) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(6.dp)
+                        .clip(RoundedCornerShape(5.dp))
+                        .background(Color(0xE6104F32))
+                        .border(0.6.dp, Tone.accent, RoundedCornerShape(5.dp))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = "☁️ Đã kéo",
+                        color = Tone.accent,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
 
             // Bottom-left Uncensored / Category badge (matching MissAV screenshot 2)
             val leftTag = when {
@@ -2561,6 +2819,8 @@ private fun AvHistoryCard(
     modifier: Modifier = Modifier
 ) {
     val progress = record.progressFraction.coerceIn(0f, 1f)
+    val cloudSyncedList by MovieStore.cloudSyncedFlow.collectAsState()
+    val isCloudSynced = cloudSyncedList.any { it.slug == record.slug }
 
     Column(
         modifier = modifier
@@ -2584,6 +2844,26 @@ private fun AvHistoryCard(
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
             )
+
+            // Top-start Cloud Synced Badge (Đã kéo về Tele)
+            if (isCloudSynced) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(5.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color(0xE6104F32))
+                        .border(0.5.dp, Tone.accent, RoundedCornerShape(4.dp))
+                        .padding(horizontal = 5.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = "☁️ Đã kéo",
+                        color = Tone.accent,
+                        fontSize = 8.5.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
             if (isEditMode) {
                 Box(
                     modifier = Modifier

@@ -123,10 +123,16 @@ object MovieCloudDownloader {
         destination: CloudDestination? = null,
         directStreamUrl: String = "",
         directReferer: String = "",
+        targetBot: String = "",
+        pullFormat: String = "",
         silentToast: Boolean = false,
         onStatus: ((Boolean, String) -> Unit)? = null
     ) = withContext(Dispatchers.IO) {
         MovieStore.init(context)
+        val selectedBot = targetBot.ifBlank { MovieStore.selectedBotFlow.value }.ifBlank { BOT_1 }
+        val selectedFormat = pullFormat.ifBlank { MovieStore.pullFormatFlow.value }.ifBlank { "token" }
+        val botTag = if (selectedBot.isNotBlank()) "@$selectedBot" else ""
+
         val dest = destination ?: MovieStore.cloudDestinationFlow.value
         val targetChatId = dest.chatId
         val targetTopicId = dest.topicId
@@ -205,16 +211,16 @@ object MovieCloudDownloader {
             }
         } else null
 
-        val pullJsonCommand = if (avJsonBody != null) "/pull_json\n${avJsonBody.toString(2)}" else ""
+        val pullJsonCommand = if (avJsonBody != null) "/pull_json$botTag\n${avJsonBody.toString(2)}" else ""
         val pullTokenCommand = if (source.isAv) {
             buildString {
-                append("/pull $avStreamOrPage")
+                append("/pull$botTag $avStreamOrPage")
                 append(" title=\"${movieTitle.replace("\"", "")}\"")
                 append(" ref=\"$finalReferer\"")
                 if (posterUrl.isNotBlank()) append(" thumb=\"$posterUrl\"")
                 append(" dest=\"$targetChatId\"")
                 if (targetTopicId > 0) append(" topic=\"$targetTopicId\"")
-                append(" tag=\"${tagList.joinToString(" ")}\"")
+                if (tagList.isNotEmpty()) append(" tag=\"${tagList.joinToString(" ")}\"")
             }
         } else ""
 
@@ -224,12 +230,16 @@ object MovieCloudDownloader {
             splitRange(epRange, totalEpisodes)
         }
 
+        // CHỈ GỬI DUY NHẤT 1 LỆNH (TOKEN HOẶC JSON), KHÔNG GỬI CẢ 2 GÂY DUPLICATE
         val commands = mutableListOf<String>()
         if (source.isAv) {
-            commands.add(pullJsonCommand)
+            val singleCmd = if (selectedFormat == "json") pullJsonCommand else pullTokenCommand
+            commands.add(singleCmd)
         } else {
-            commands.add("/dl@$BOT_1 $slug $part1 seq $srcName")
-            if (part2 != null) {
+            if (part2 == null) {
+                commands.add("/dl@$selectedBot $slug $part1 seq $srcName")
+            } else {
+                commands.add("/dl@$BOT_1 $slug $part1 seq $srcName")
                 commands.add("/dl@$BOT_2 $slug $part2 seq $srcName")
             }
         }
@@ -257,16 +267,6 @@ object MovieCloudDownloader {
                     sentViaTdlib = true
                 }
             }
-            if (source.isAv && avJsonBody != null) {
-                val tokenContent = InputMessageText(
-                    FormattedText(pullTokenCommand, emptyArray()),
-                    LinkPreviewOptions(false, avStreamOrPage, false, false, false),
-                    false
-                )
-                val options = MessageSendOptions(null, false, false, false, false, 0L, false, null, 0L, 0, false)
-                val topicForum = if (targetTopicId > 0) MessageTopicForum(targetTopicId) else null
-                td.sendMessage(targetChatId, topicForum, null, options, null, tokenContent)
-            }
         } catch (_: Exception) {
             // TDLib client chưa sẵn sàng hoặc không trong phiên đăng nhập
         }
@@ -280,9 +280,15 @@ object MovieCloudDownloader {
                 else -> "Tập $epRange"
             }
             val botExecLines = if (source.isAv) {
+                val singleCmd = commands.firstOrNull().orEmpty()
                 buildString {
-                    append("🤖 <b>Cú pháp JSON Block:</b>\n<pre><code class=\"language-json\">$pullJsonCommand</code></pre>\n")
-                    append("🤖 <b>Cú pháp Token:</b>\n<code>$pullTokenCommand</code>\n")
+                    append("🤖 <b>Bot kéo:</b> <code>@$selectedBot</code>\n")
+                    append("⚡ <b>Lệnh thực thi (${if (selectedFormat == "json") "JSON Block" else "Token"}):</b>\n")
+                    if (selectedFormat == "json") {
+                        append("<pre><code class=\"language-json\">$singleCmd</code></pre>\n")
+                    } else {
+                        append("<code>$singleCmd</code>\n")
+                    }
                     if (finalReferer.isNotBlank()) {
                         append("🌐 <b>Referer:</b> <code>$finalReferer</code>\n")
                     }
@@ -371,17 +377,19 @@ object MovieCloudDownloader {
         }
 
         val success = sentViaTdlib || sentViaBotApi
-        if (success && !source.isAv) {
+        if (success) {
             val itemToTrack = movie ?: MovieItem(
                 name = movieTitle,
                 slug = slug,
-                source = source
+                source = source,
+                posterUrl = posterUrl,
+                thumbUrl = posterUrl
             )
             MovieStore.markCloudSynced(
                 context = context,
                 movie = itemToTrack,
-                epRange = epRange,
-                totalEpisodes = totalEpisodes
+                epRange = if (source.isAv) "full" else epRange,
+                totalEpisodes = if (source.isAv) 1 else totalEpisodes
             )
         }
         val rangeLabel = when {
@@ -393,8 +401,10 @@ object MovieCloudDownloader {
         val msg = if (success) {
             if (commands.size > 1) {
                 "Đã kích hoạt 2 bot song song (Bot 1: $part1, Bot 2: $part2) kéo '$movieTitle' về ${dest.displayLabel}!"
+            } else if (source.isAv) {
+                "Đã gửi lệnh kéo bản Full HD ($selectedFormat) tới @$selectedBot về ${dest.displayLabel}!"
             } else {
-                "Đã gửi yêu cầu kéo $rangeLabel phim '$movieTitle' về ${dest.displayLabel}!"
+                "Đã gửi yêu cầu kéo $rangeLabel phim '$movieTitle' tới @$selectedBot về ${dest.displayLabel}!"
             }
         } else {
             "Không thể kết nối Telegram. Vui lòng kiểm tra lại kết nối mạng!"

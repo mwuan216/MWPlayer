@@ -2001,6 +2001,8 @@ private fun MoviePosterCard(
                     Text(
                         text = if (cloudRecord.hasNewEpisodes) {
                             "🔔 +${cloudRecord.newEpisodesCount} mới"
+                        } else if (cloudRecord.pulledEpisodesText.equals("full", true) || cloudRecord.latestKnownEpisodes <= 1) {
+                            "☁️ Đã kéo"
                         } else {
                             "☁️ Tele (${cloudRecord.pulledUpToEpisode})"
                         },
@@ -2564,6 +2566,7 @@ private fun MovieDetailContent(
     if (showCloudSheet) {
         val hasUnpulledNewEps = cloudSync != null && epList.size > cloudSync.pulledUpToEpisode && cloudSync.pulledUpToEpisode > 0
         val currentDest by MovieStore.cloudDestinationFlow.collectAsState()
+        var selectedBot by remember { mutableStateOf(MovieStore.selectedBotFlow.value) }
         ModalBottomSheet(
             onDismissRequest = { showCloudSheet = false },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -2614,6 +2617,98 @@ private fun MovieDetailContent(
 
                 Spacer(Modifier.height(12.dp))
 
+                // Chọn Bot kéo phim
+                Text(
+                    text = "🤖 Chọn Bot kéo phim:",
+                    color = Tone.text,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    val isBot1 = selectedBot == MovieCloudDownloader.BOT_1
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (isBot1) Tone.accent.copy(alpha = 0.18f) else Tone.surfaceHigh)
+                            .border(
+                                width = if (isBot1) 1.5.dp else 0.5.dp,
+                                color = if (isBot1) Tone.accent else Tone.outline.copy(alpha = 0.4f),
+                                shape = RoundedCornerShape(10.dp)
+                            )
+                            .clickable {
+                                selectedBot = MovieCloudDownloader.BOT_1
+                                MovieStore.setSelectedBot(context, MovieCloudDownloader.BOT_1)
+                            }
+                            .padding(vertical = 10.dp, horizontal = 10.dp)
+                    ) {
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("🤖", fontSize = 13.sp)
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    text = "Bot 1 (Chính)",
+                                    color = if (isBot1) Tone.accent else Tone.text,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                text = "@${MovieCloudDownloader.BOT_1}",
+                                color = Tone.muted,
+                                fontSize = 10.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+
+                    val isBot2 = selectedBot == MovieCloudDownloader.BOT_2
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (isBot2) Tone.accent.copy(alpha = 0.18f) else Tone.surfaceHigh)
+                            .border(
+                                width = if (isBot2) 1.5.dp else 0.5.dp,
+                                color = if (isBot2) Tone.accent else Tone.outline.copy(alpha = 0.4f),
+                                shape = RoundedCornerShape(10.dp)
+                            )
+                            .clickable {
+                                selectedBot = MovieCloudDownloader.BOT_2
+                                MovieStore.setSelectedBot(context, MovieCloudDownloader.BOT_2)
+                            }
+                            .padding(vertical = 10.dp, horizontal = 10.dp)
+                    ) {
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("💻", fontSize = 13.sp)
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    text = "Bot 2 (Laptop)",
+                                    color = if (isBot2) Tone.accent else Tone.text,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                text = "@${MovieCloudDownloader.BOT_2}",
+                                color = Tone.muted,
+                                fontSize = 10.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+
                 // Nếu có tập mới chưa kéo: Nút kéo nhanh các tập mới
                 if (hasUnpulledNewEps && cloudSync != null) {
                     val nextEp = cloudSync.pulledUpToEpisode + 1
@@ -2633,7 +2728,8 @@ private fun MovieDetailContent(
                                         source = detail.movie.source,
                                         epRange = rangeStr,
                                         totalEpisodes = epList.size,
-                                        movie = detail.movie
+                                        movie = detail.movie,
+                                        targetBot = selectedBot
                                     )
                                 }
                             }
@@ -2689,7 +2785,8 @@ private fun MovieDetailContent(
                                     source = detail.movie.source,
                                     epRange = "all",
                                     totalEpisodes = epList.size,
-                                    movie = detail.movie
+                                    movie = detail.movie,
+                                    targetBot = selectedBot
                                 )
                             }
                         }
@@ -2745,7 +2842,8 @@ private fun MovieDetailContent(
                                     source = detail.movie.source,
                                     epRange = "remaining",
                                     totalEpisodes = epList.size,
-                                    movie = detail.movie
+                                    movie = detail.movie,
+                                    targetBot = selectedBot
                                 )
                             }
                         }
@@ -2842,7 +2940,8 @@ private fun MovieDetailContent(
                                         source = detail.movie.source,
                                         epRange = input,
                                         totalEpisodes = epList.size,
-                                        movie = detail.movie
+                                        movie = detail.movie,
+                                        targetBot = selectedBot
                                     )
                                 }
                             }
