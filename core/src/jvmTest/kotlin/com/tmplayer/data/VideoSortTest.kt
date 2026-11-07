@@ -126,4 +126,25 @@ class VideoSortTest {
         assertTrue(VideoSorting.compareNames("éclair", "Eclipse", collator) < 0)
         assertEquals(0, VideoSorting.compareNames("The Run", "run", collator))
     }
+
+    @Test
+    fun `menuEntries combines newest and oldest and includes random`() {
+        val entriesWhenNewest = VideoSort.menuEntries(VideoSort.Newest)
+        assertEquals(VideoSort.Newest, entriesWhenNewest.first())
+        assertEquals(VideoSort.Random, entriesWhenNewest.last())
+        assertEquals(7, entriesWhenNewest.size)
+
+        val entriesWhenOldest = VideoSort.menuEntries(VideoSort.Oldest)
+        assertEquals(VideoSort.Oldest, entriesWhenOldest.first())
+        assertEquals(VideoSort.Random, entriesWhenOldest.last())
+    }
+
+    @Test
+    fun `random sort contains all elements and is deterministic`() {
+        val sorted1 = names(VideoSort.Random)
+        val sorted2 = names(VideoSort.Random)
+        assertEquals(sorted1, sorted2)
+        assertEquals(entries.size, sorted1.size)
+        assertTrue(sorted1.containsAll(names(VideoSort.Newest)))
+    }
 }

@@ -386,6 +386,7 @@ internal fun BrowseScreen(
     val historyRemoval = rememberHistoryRemoval()
     var confirmClearFavorites by remember { mutableStateOf(false) }
     var confirmClearFavoriteVideos by remember { mutableStateOf(false) }
+    var showFavoriteForwardSettings by remember { mutableStateOf(false) }
     var favoriteVideoMenu by remember { mutableStateOf<com.tmplayer.data.FavoriteVideoRecord?>(null) }
     // The video whose detail panel is open, with its chat's name, from Home or the search, over
     // the pages "More like this" was taken from, so Back walks back through them.
@@ -751,17 +752,25 @@ internal fun BrowseScreen(
                     } else if (tab.isMovie) {
                         com.tmplayer.movie.MoviePane(Modifier.fillMaxSize())
                     } else if (isFavorites) {
-                        if (!touch && favoriteVideos.isNotEmpty()) {
+                        if (!touch) {
                             Row(
                                 Modifier.fillMaxWidth().padding(top = 4.dp, end = insets.end),
                                 horizontalArrangement = Arrangement.End,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 HeaderAction(
-                                    label = "Xóa tất cả",
-                                    icon = TmIcons.Delete,
-                                    onClick = { confirmClearFavoriteVideos = true }
+                                    label = "Cài đặt chuyển tiếp",
+                                    icon = TmIcons.ArrowForward,
+                                    onClick = { showFavoriteForwardSettings = true }
                                 )
+                                if (favoriteVideos.isNotEmpty()) {
+                                    Spacer(Modifier.width(8.dp))
+                                    HeaderAction(
+                                        label = "Xóa tất cả",
+                                        icon = TmIcons.Delete,
+                                        onClick = { confirmClearFavoriteVideos = true }
+                                    )
+                                }
                             }
                         }
                         if (favoriteVideos.isEmpty()) {
@@ -1031,13 +1040,19 @@ internal fun BrowseScreen(
             },
             // Home refreshes with a pull, and a page with nothing to offer has no pill at all.
             actions = unlessHidden(
-                tab.isHome || tab.isMovie || !(tab.listsVideos || (isFavorites && favoriteVideos.isNotEmpty())),
+                tab.isHome || tab.isMovie || !(tab.listsVideos || isFavorites),
             ) actions@{
                 // History's Select and Clear sit in the bar, one press each: a clear here is said
                 // with Undo, so a mis-tap costs nothing. Favourites' clear has no Undo and stays
                 // behind the overflow, asked first.
-                if (isFavorites && favoriteVideos.isNotEmpty()) {
-                    BarOverflow(items = listOf("Xóa tất cả video yêu thích" to { confirmClearFavoriteVideos = true }))
+                if (isFavorites) {
+                    val overflowItems = buildList {
+                        add("Cài đặt chuyển tiếp" to { showFavoriteForwardSettings = true })
+                        if (favoriteVideos.isNotEmpty()) {
+                            add("Xóa tất cả video yêu thích" to { confirmClearFavoriteVideos = true })
+                        }
+                    }
+                    BarOverflow(items = overflowItems)
                 } else if (tab.listsVideos && historyHas && !selecting) {
                     BarIcon(label = s.browseSelect, icon = TmIcons.Checklist, onClick = { startSelecting(null) })
                     BarIcon(
@@ -1316,6 +1331,15 @@ internal fun BrowseScreen(
                 onClearFavoriteVideos()
             },
             onDismiss = { confirmClearFavoriteVideos = false },
+        )
+    }
+
+    if (showFavoriteForwardSettings) {
+        FavoriteForwardSheet(
+            settings = browseSettings,
+            chats = (state as? UiState.Content)?.value?.chats.orEmpty(),
+            favorites = favoriteVideos,
+            onDismiss = { showFavoriteForwardSettings = false },
         )
     }
 

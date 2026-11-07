@@ -327,7 +327,10 @@ internal fun MediaDetailOpened(
                 val add = action == DetailAction.AddFavoriteVideo
                 App.backgroundScope.launch {
                     runCatching {
-                        settings.toggleFavoriteVideo(item, chatTitle)
+                        val isFav = settings.toggleFavoriteVideo(item, chatTitle)
+                        if (isFav) {
+                            com.tmplayer.data.FavoriteForwarder.forwardIfEnabled(settings, item)
+                        }
                     }
                 }
                 com.tmplayer.ui.components.showMessage(context, if (add) "Đã thêm '${item.title}' vào Yêu thích (*)" else "Đã xóa '${item.title}' khỏi Yêu thích")

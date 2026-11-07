@@ -28,6 +28,7 @@ fun videoSortLabel(sort: VideoSort, s: Messages): String = when (sort) {
     VideoSort.Shortest -> s.gridSortShortest
     VideoSort.Unwatched -> s.gridSortUnwatched
     VideoSort.WatchedFirst -> s.gridSortWatched
+    VideoSort.Random -> s.gridSortRandom
 }
 
 /** The glyph beside [sort] in the menu. */
@@ -39,6 +40,7 @@ fun videoSortIcon(sort: VideoSort): ImageVector = when (sort) {
     VideoSort.Size, VideoSort.SizeAsc -> TmIcons.Download
     VideoSort.Longest, VideoSort.Shortest -> TmIcons.Frames
     VideoSort.Unwatched, VideoSort.WatchedFirst -> TmIcons.Play
+    VideoSort.Random -> TmIcons.Shuffle
 }
 
 /** What [filter] is called in the Show group, and in the "Showing ..." line over the grid. */

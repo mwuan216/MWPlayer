@@ -31,6 +31,7 @@ enum class VideoSort {
     Shortest,
     Unwatched,
     WatchedFirst,
+    Random,
     ;
 
     /** Returns the reversed sort direction when clicking an already active sort option. */
@@ -47,6 +48,7 @@ enum class VideoSort {
         Shortest -> Longest
         Unwatched -> WatchedFirst
         WatchedFirst -> Unwatched
+        Random -> Random
     }
 
     companion object {
@@ -60,13 +62,13 @@ enum class VideoSort {
          * each reversible category shows its active direction when selected.
          */
         fun menuEntries(current: VideoSort): List<VideoSort> = listOf(
-            Newest,
-            Oldest,
+            if (current == Oldest) Oldest else Newest,
             if (current == NameDesc) NameDesc else Name,
             if (current == YearAsc) YearAsc else Year,
             if (current == SizeAsc) SizeAsc else Size,
             if (current == Shortest) Shortest else Longest,
             if (current == WatchedFirst) WatchedFirst else Unwatched,
+            Random,
         )
     }
 }
@@ -154,9 +156,24 @@ object VideoSorting {
             }
             VideoSort.Unwatched -> compareBy { progressOf(it.value, progress) }
             VideoSort.WatchedFirst -> compareByDescending { progressOf(it.value, progress) }
+            VideoSort.Random -> {
+                val hashes = indexed.map { randomKeyOf(it.value) }
+                compareBy<IndexedValue<ShelfEntry>> { hashes[it.index] }
+            }
         }
         // sortedWith is stable, and the index as the last word makes it so whatever the order says.
         return indexed.sortedWith(order.thenBy { it.index }).map { it.value }
+    }
+
+    private fun randomKeyOf(entry: ShelfEntry): Int {
+        val first = items(entry).firstOrNull() ?: return entry.hashCode()
+        var h = (first.chatId.hashCode() * 31) xor first.messageId.hashCode()
+        h = h xor (h ushr 16)
+        h *= 0x85ebca6b.toInt()
+        h = h xor (h ushr 13)
+        h *= 0xc2b2ae35.toInt()
+        h = h xor (h ushr 16)
+        return h
     }
 
     /** Every file an entry stands for: a show's episodes and their copies, a film's copies. */
@@ -181,7 +198,7 @@ object VideoSorting {
         VideoSort.Year, VideoSort.YearAsc -> yearOf(entry)
         VideoSort.Size, VideoSort.SizeAsc -> sizeOf(entry)
         VideoSort.Longest, VideoSort.Shortest -> lengthOf(entry)
-        VideoSort.Unwatched, VideoSort.WatchedFirst -> null
+        VideoSort.Unwatched, VideoSort.WatchedFirst, VideoSort.Random -> null
     }
 
     /** The title an entry is listed under: the show's, or the file's own without its year. */

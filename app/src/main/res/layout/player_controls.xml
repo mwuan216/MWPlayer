@@ -132,6 +132,18 @@
                 android:visibility="gone" />
         </LinearLayout>
 
+        <!-- Quick favorite button (*) beside cast -->
+        <ImageButton
+            android:id="@+id/control_favorite"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="@drawable/bg_control_button"
+            android:contentDescription="Yêu thích"
+            android:padding="12dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_star_outline"
+            android:tint="@color/player_control_icon" />
+
         <!-- Cast to a TV (CP73): shown only where casting exists, by the activity. -->
         <ImageButton
             android:id="@+id/control_cast"
@@ -570,6 +582,92 @@
                 android:textColor="@color/player_control_icon"
                 android:textSize="15sp"
                 android:visibility="gone" />
+
+            <!-- Quick seek buttons: -10m, -1m, +1m, +10m -->
+            <LinearLayout
+                android:id="@+id/controls_seek_buttons"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:background="@drawable/bg_controls_pill"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingStart="2dp"
+                android:paddingTop="4dp"
+                android:paddingEnd="2dp"
+                android:paddingBottom="4dp">
+
+                <TextView
+                    android:id="@+id/control_seek_back_10m"
+                    android:layout_width="wrap_content"
+                    android:layout_height="40dp"
+                    android:minWidth="34dp"
+                    android:background="@drawable/bg_control_button"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:fontFamily="sans-serif-medium"
+                    android:gravity="center"
+                    android:nextFocusUp="@id/controls_timebar"
+                    android:paddingStart="4dp"
+                    android:paddingEnd="4dp"
+                    android:text="-10m"
+                    android:textColor="@color/player_control_icon"
+                    android:textSize="12sp" />
+
+                <TextView
+                    android:id="@+id/control_seek_back_1m"
+                    android:layout_width="wrap_content"
+                    android:layout_height="40dp"
+                    android:minWidth="30dp"
+                    android:layout_marginStart="2dp"
+                    android:background="@drawable/bg_control_button"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:fontFamily="sans-serif-medium"
+                    android:gravity="center"
+                    android:nextFocusUp="@id/controls_timebar"
+                    android:paddingStart="4dp"
+                    android:paddingEnd="4dp"
+                    android:text="-1m"
+                    android:textColor="@color/player_control_icon"
+                    android:textSize="12sp" />
+
+                <TextView
+                    android:id="@+id/control_seek_forward_1m"
+                    android:layout_width="wrap_content"
+                    android:layout_height="40dp"
+                    android:minWidth="30dp"
+                    android:layout_marginStart="2dp"
+                    android:background="@drawable/bg_control_button"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:fontFamily="sans-serif-medium"
+                    android:gravity="center"
+                    android:nextFocusUp="@id/controls_timebar"
+                    android:paddingStart="4dp"
+                    android:paddingEnd="4dp"
+                    android:text="+1m"
+                    android:textColor="@color/player_control_icon"
+                    android:textSize="12sp" />
+
+                <TextView
+                    android:id="@+id/control_seek_forward_10m"
+                    android:layout_width="wrap_content"
+                    android:layout_height="40dp"
+                    android:minWidth="34dp"
+                    android:layout_marginStart="2dp"
+                    android:background="@drawable/bg_control_button"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:fontFamily="sans-serif-medium"
+                    android:gravity="center"
+                    android:nextFocusUp="@id/controls_timebar"
+                    android:paddingStart="4dp"
+                    android:paddingEnd="4dp"
+                    android:text="+10m"
+                    android:textColor="@color/player_control_icon"
+                    android:textSize="12sp" />
+            </LinearLayout>
 
             <!-- On a television OK here flips the total to the time left, and its focus cue is
                  a white pill with the text turned dark (bg_tv_focus_pill), like the buttons. -->

@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
@@ -347,6 +348,11 @@ private fun videoSizeFilterKey(chatId: Long) = stringPreferencesKey("vsz_$chatId
 
 /** Favorite videos marked with a star (*), replacing chat-level favorites. */
 private val FAVORITE_VIDEOS = stringPreferencesKey("favorite_videos_data")
+private val FAVORITE_FORWARD_ENABLED = booleanPreferencesKey("favorite_forward_enabled")
+private val FAVORITE_FORWARD_CHAT_ID = longPreferencesKey("favorite_forward_chat_id")
+private val FAVORITE_FORWARD_TOPIC_ID = intPreferencesKey("favorite_forward_topic_id")
+private val FAVORITE_FORWARD_CHAT_TITLE = stringPreferencesKey("favorite_forward_chat_title")
+private val FAVORITE_FORWARD_TOPIC_TITLE = stringPreferencesKey("favorite_forward_topic_title")
 
 /** The subtitle and audio offsets the viewer set for one file. See [SyncDelays]. */
 private fun delayKey(chatId: Long, messageId: Long) =
@@ -779,6 +785,40 @@ class SettingsStore(private val prefs: DataStore<Preferences>) : AllowedChatsSou
     suspend fun clearFavoriteVideos() {
         prefs.edit { p ->
             p.remove(FAVORITE_VIDEOS)
+        }
+    }
+
+    val favoriteForwardEnabled: Flow<Boolean> = read { it[FAVORITE_FORWARD_ENABLED] ?: false }
+    val favoriteForwardChatId: Flow<Long> = read { it[FAVORITE_FORWARD_CHAT_ID] ?: 0L }
+    val favoriteForwardTopicId: Flow<Int> = read { it[FAVORITE_FORWARD_TOPIC_ID] ?: 0 }
+    val favoriteForwardChatTitle: Flow<String> = read { it[FAVORITE_FORWARD_CHAT_TITLE] ?: "" }
+    val favoriteForwardTopicTitle: Flow<String> = read { it[FAVORITE_FORWARD_TOPIC_TITLE] ?: "" }
+
+    suspend fun setFavoriteForward(
+        enabled: Boolean,
+        chatId: Long = 0L,
+        topicId: Int = 0,
+        chatTitle: String = "",
+        topicTitle: String = "",
+    ) {
+        prefs.edit { p ->
+            p[FAVORITE_FORWARD_ENABLED] = enabled
+            if (chatId != 0L) {
+                p[FAVORITE_FORWARD_CHAT_ID] = chatId
+                p[FAVORITE_FORWARD_TOPIC_ID] = topicId
+                p[FAVORITE_FORWARD_CHAT_TITLE] = chatTitle
+                p[FAVORITE_FORWARD_TOPIC_TITLE] = topicTitle
+            }
+        }
+    }
+
+    suspend fun clearFavoriteForward() {
+        prefs.edit { p ->
+            p.remove(FAVORITE_FORWARD_ENABLED)
+            p.remove(FAVORITE_FORWARD_CHAT_ID)
+            p.remove(FAVORITE_FORWARD_TOPIC_ID)
+            p.remove(FAVORITE_FORWARD_CHAT_TITLE)
+            p.remove(FAVORITE_FORWARD_TOPIC_TITLE)
         }
     }
 

@@ -1525,7 +1525,15 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                     runCatching { settings.updateTouchPrefs { it.copy(showRemaining = remaining) } }
                 }
             },
+            onToggleFavorite = ::toggleCurrentFavorite,
+            onSeekDelta = { delta -> skipBy(delta) },
         )
+        lifecycleScope.launch {
+            settings.favoriteVideoKeys.collect { keys ->
+                val key = "${chatId}_${messageId}"
+                controls?.setFavorite(key in keys)
+            }
+        }
         controls?.previewArt = scrubArt.takeIf { Trickplay.PICTURES_SHOWN }
         // The text answers (and the resume offer) on both devices; the touch feedback around them
         // only ever fires from the phone's gestures.
@@ -2258,6 +2266,19 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     /** The single tap: the one gesture that raises the transport row, and drops it again. */
     private fun toggleControls() {
         controls?.toggle()
+    }
+
+    private fun toggleCurrentFavorite() {
+        val item = currentItem()
+        lifecycleScope.launch {
+            val isFav = settings.toggleFavoriteVideo(item, chatTitle)
+            controls?.setFavorite(isFav)
+            val msg = if (isFav) "Đã thêm vào Yêu thích (*)" else "Đã bỏ khỏi Yêu thích"
+            feedback?.message(msg)
+            if (isFav) {
+                com.tmplayer.data.FavoriteForwarder.forwardIfEnabled(settings, item)
+            }
+        }
     }
 
     /**

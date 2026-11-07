@@ -79,6 +79,8 @@ class PlayerControls(
     private val onCycleShape: () -> Unit = {},
     /** The phone row's lock, shown while the row has room for it. */
     private val onLock: () -> Unit = {},
+    private val onToggleFavorite: () -> Unit = {},
+    private val onSeekDelta: (Long) -> Unit = {},
 ) {
 
     private val container: View = root.findViewById(R.id.player_controls)
@@ -101,6 +103,7 @@ class PlayerControls(
     private val topBar: View = root.findViewById(R.id.controls_topbar)
     private val topTitle: TextView = root.findViewById(R.id.topbar_title)
     private val topSubtitle: TextView = root.findViewById(R.id.topbar_subtitle)
+    private val favoriteButton: ImageButton? = root.findViewById(R.id.control_favorite)
     private val center: View = root.findViewById(R.id.controls_center)
     private val centerPrevious: ImageButton = root.findViewById(R.id.center_previous)
     private val centerNext: ImageButton = root.findViewById(R.id.center_next)
@@ -118,6 +121,11 @@ class PlayerControls(
     private val buttons: View = root.findViewById(R.id.controls_buttons)
     private val episodesButton: TextView = root.findViewById(R.id.control_episodes)
     private val copyButton: TextView = root.findViewById(R.id.control_copy)
+    private val seekButtonsContainer: View? = root.findViewById(R.id.controls_seek_buttons)
+    private val seekBack10m: TextView? = root.findViewById(R.id.control_seek_back_10m)
+    private val seekBack1m: TextView? = root.findViewById(R.id.control_seek_back_1m)
+    private val seekForward1m: TextView? = root.findViewById(R.id.control_seek_forward_1m)
+    private val seekForward10m: TextView? = root.findViewById(R.id.control_seek_forward_10m)
 
     /** The phone's times line shows what is left rather than the total. */
     var showRemaining = false
@@ -268,6 +276,23 @@ class PlayerControls(
         wire(lockButton) { onLock() }
         wire(episodesButton) { onEpisodes() }
         wire(copyButton) { onCopies() }
+        favoriteButton?.let { btn ->
+            wire(btn) { onToggleFavorite() }
+        }
+        seekBack10m?.let { btn ->
+            wire(btn) { onSeekDelta(-600_000L); poke() }
+        }
+        seekBack1m?.let { btn ->
+            wire(btn) { onSeekDelta(-60_000L); poke() }
+            btn.setOnLongClickListener { onSeekDelta(-600_000L); poke(); true }
+        }
+        seekForward1m?.let { btn ->
+            wire(btn) { onSeekDelta(60_000L); poke() }
+            btn.setOnLongClickListener { onSeekDelta(600_000L); poke(); true }
+        }
+        seekForward10m?.let { btn ->
+            wire(btn) { onSeekDelta(600_000L); poke() }
+        }
         episodesButton.text = L.episodesTitle
         rotate.visibility = if (isTv) View.GONE else View.VISIBLE
         // The scrims on five stops, which their XML stand-ins cannot hold without a seam.
@@ -610,21 +635,53 @@ class PlayerControls(
     val shapeOnRow: Boolean get() = shapeButton.visibility == View.VISIBLE || !shapeOffered
     val lockOnRow: Boolean get() = lockButton.visibility == View.VISIBLE
 
+    fun setFavorite(isFavorite: Boolean) {
+        favoriteButton?.apply {
+            setImageResource(if (isFavorite) R.drawable.ic_star_filled else R.drawable.ic_star_outline)
+            imageTintList = if (isFavorite) {
+                android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#FFD700"))
+            } else {
+                ContextCompat.getColorStateList(context, R.color.player_control_icon)
+            }
+            contentDescription = if (isFavorite) "Bỏ yêu thích (*)" else "Thêm vào yêu thích (*)"
+        }
+    }
+
     /**
      * Shows or hides the phone's two extra buttons by the room the row has. Before the first
      * layout the width is the screen's, less the row's padding.
      */
     private fun fitRow() {
+        val metrics = cluster.resources.displayMetrics
+        val width = cluster.width.takeIf { it > 0 } ?: metrics.widthPixels
+        val across = (width - cluster.paddingLeft - cluster.paddingRight) / metrics.density
+        val isWide = isTv || across >= WIDE_ROW_DP
+
+        if (isWide) {
+            seekBack10m?.visibility = View.VISIBLE
+            seekForward10m?.visibility = View.VISIBLE
+            val padH = (8 * metrics.density).toInt()
+            listOfNotNull(seekBack10m, seekBack1m, seekForward1m, seekForward10m).forEach {
+                it.setPadding(padH, 0, padH, 0)
+                it.textSize = 13f
+            }
+        } else {
+            val spaceTight = (episodesButton.visibility == View.VISIBLE || copyButton.visibility == View.VISIBLE) && across < 420
+            seekBack10m?.visibility = if (spaceTight) View.GONE else View.VISIBLE
+            seekForward10m?.visibility = if (spaceTight) View.GONE else View.VISIBLE
+            val padH = (3 * metrics.density).toInt()
+            listOfNotNull(seekBack10m, seekBack1m, seekForward1m, seekForward10m).forEach {
+                it.setPadding(padH, 0, padH, 0)
+                it.textSize = 11f
+            }
+        }
+
         if (isTv) {
             shapeButton.visibility = if (shapeOffered) View.VISIBLE else View.GONE
             return
         }
-        val metrics = cluster.resources.displayMetrics
-        val width = cluster.width.takeIf { it > 0 } ?: metrics.widthPixels
-        val across = (width - cluster.paddingLeft - cluster.paddingRight) / metrics.density
         val wanted = if (across >= WIDE_ROW_DP) View.VISIBLE else View.GONE
         val shapeWanted = if (shapeOffered) wanted else View.GONE
-        if (shapeButton.visibility == shapeWanted && lockButton.visibility == wanted) return
         shapeButton.visibility = shapeWanted
         lockButton.visibility = wanted
     }
@@ -821,6 +878,7 @@ class PlayerControls(
         // Leaving the button the remote stands on would drop focus on the floor: back to the row.
         val hadFocus = episodesButton.hasFocus()
         episodesButton.visibility = wanted
+        fitRow()
         if (hadFocus) focusRow()
     }
 
@@ -834,6 +892,7 @@ class PlayerControls(
         if (copyButton.visibility == wanted) return
         val hadFocus = copyButton.hasFocus()
         copyButton.visibility = wanted
+        fitRow()
         if (hadFocus) focusRow()
     }
 

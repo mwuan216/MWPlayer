@@ -15,6 +15,12 @@ class BackupCoverageTest {
     /** Keys that travel as fields of their own rather than as settings or memories. */
     private val ownFields = setOf(
         "favorite_chats", // favourites
+        "favorite_videos_data",
+        "favorite_forward_enabled",
+        "favorite_forward_chat_id",
+        "favorite_forward_topic_id",
+        "favorite_forward_chat_title",
+        "favorite_forward_topic_title",
         "recent_searches", // recentSearches
         "resume_", // resume points, without a download's path
     )
