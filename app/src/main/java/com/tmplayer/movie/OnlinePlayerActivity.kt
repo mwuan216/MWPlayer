@@ -590,10 +590,11 @@ fun OnlinePlayerScreen(
                                     val next = (getScreenVolume() + deltaFraction).coerceIn(0f, 1f)
                                     setScreenVolume(next)
                                 }
-                                3 -> { // Scrub
+                                3 -> { // Scrub (proportional to video duration + swipe velocity)
                                     if (duration > 0) {
-                                        val scrubFactor = 120_000L // full screen swipe = 2 minutes
-                                        val deltaMs = (dx / screenWidthPx * scrubFactor).toLong()
+                                        val baseRangeMs = (duration * 0.30f).coerceIn(180_000f, 2_700_000f)
+                                        val velocityBoost = 1f + (abs(dx) / (screenWidthPx * 0.03f)).coerceIn(0f, 2.2f)
+                                        val deltaMs = (dx / screenWidthPx * baseRangeMs * velocityBoost).toLong()
                                         initialSeekPos = (initialSeekPos + deltaMs).coerceIn(0L, duration)
                                         scrubTargetMs = initialSeekPos
                                         scrubDeltaMs = scrubTargetMs - currentPosition
@@ -1001,18 +1002,24 @@ fun OnlinePlayerScreen(
                     ControlButton(icon = TmIcons.Fullscreen, onClick = onToggleOrientation)
                 }
 
-                // CENTER CONTROLS
+                // CENTER CONTROLS (Previous Episode / Play-Pause / Next Episode)
+                val hasPrevEp = epIdx > 0
+                val hasNextEp = epIdx + 1 < episodes.size
                 Row(
                     modifier = Modifier.align(Alignment.Center),
                     horizontalArrangement = Arrangement.spacedBy(28.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Rewind 10s
+                    // Previous Episode
                     ControlButton(
-                        icon = TmIcons.Rewind,
+                        icon = TmIcons.SkipPrevious,
+                        tint = if (hasPrevEp) Color.White else Color.White.copy(alpha = 0.35f),
                         size = 48.dp,
                         onClick = {
-                            exoPlayer.seekTo((exoPlayer.currentPosition - 10000).coerceAtLeast(0L))
+                            if (hasPrevEp) {
+                                epIdx -= 1
+                                OnlinePlayerSession.episodeIndex = epIdx
+                            }
                             lastInteraction = System.currentTimeMillis()
                         }
                     )
@@ -1037,14 +1044,16 @@ fun OnlinePlayerScreen(
                         )
                     }
 
-                    // Forward 10s
+                    // Next Episode
                     ControlButton(
-                        icon = TmIcons.FastForward,
+                        icon = TmIcons.SkipNext,
+                        tint = if (hasNextEp) Color.White else Color.White.copy(alpha = 0.35f),
                         size = 48.dp,
                         onClick = {
-                            val dur = exoPlayer.duration
-                            val target = exoPlayer.currentPosition + 10000
-                            exoPlayer.seekTo(if (dur > 0) target.coerceAtMost(dur) else target)
+                            if (hasNextEp) {
+                                epIdx += 1
+                                OnlinePlayerSession.episodeIndex = epIdx
+                            }
                             lastInteraction = System.currentTimeMillis()
                         }
                     )
@@ -1120,32 +1129,6 @@ fun OnlinePlayerScreen(
                                     lastInteraction = System.currentTimeMillis()
                                 }
                             )
-
-                            // Prev episode
-                            if (epIdx > 0) {
-                                ControlPill(
-                                    text = "Tập trước",
-                                    icon = TmIcons.SkipPrevious,
-                                    onClick = {
-                                        epIdx -= 1
-                                        OnlinePlayerSession.episodeIndex = epIdx
-                                        lastInteraction = System.currentTimeMillis()
-                                    }
-                                )
-                            }
-
-                            // Next episode
-                            if (epIdx + 1 < episodes.size) {
-                                ControlPill(
-                                    text = "Tập tiếp",
-                                    icon = TmIcons.SkipNext,
-                                    onClick = {
-                                        epIdx += 1
-                                        OnlinePlayerSession.episodeIndex = epIdx
-                                        lastInteraction = System.currentTimeMillis()
-                                    }
-                                )
-                            }
                         }
 
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {

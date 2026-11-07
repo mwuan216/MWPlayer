@@ -31,12 +31,14 @@ Tải trực tiếp bản APK mới nhất đã được build sẵn từ reposi
 ## ✨ Tính năng Nổi bật (Key Features)
 
 ### 1. 📺 Xem Phim Trực tuyến (Movie Online)
-- **Đa nguồn chất lượng cao:** Tích hợp trực tiếp **KKPhim** và **VSMov** với kho phim khổng lồ: *Phim chiếu rạp, Phim bộ, Phim lẻ, Cổ trang, Hàn Quốc, Trung Quốc, Hoạt hình/Anime, TV Shows, Subteam/Thuyết minh*.
+- **Đa nguồn chất lượng cao (Cache thông minh & Pull-to-Refresh):** Tích hợp trực tiếp **VSMov** (mặc định Tab 1) và **KKPhim** (Tab 2) với bộ nhớ đệm từng nguồn, chỉ tải lại khi vuốt từ trên xuống (Pull-to-Refresh).
 - **Featured Hero Carousel:** Slide banner chuyển tự động mượt mà các phim nổi bật nhất.
 - **Quản lý phim toàn diện & tinh gọn:**
-  - 🎬 **Phim Xem Gần Đây (Gộp chung Đang xem dở & Lịch sử):** Tự động lưu tiến trình xem, hiển thị thanh tiến trình % ngay trên thẻ phim và nút *"Tiếp tục xem: Tập X (xx%)"* khôi phục chính xác vị trí đang xem dở, kèm tính năng xóa lịch sử một chạm.
-  - ⭐ **Danh sách theo dõi (Watchlist):** Thêm nhanh vào danh sách theo dõi/yêu thích với nút ⭐ và lọc nhanh ngay trên thanh bộ lọc.
-- **Kéo phim về Tele Cloud:** Hỗ trợ tải phim trực tuyến và tự động đẩy lưu trữ về kho Telegram Cloud cá nhân (tính năng MovieCloudDownloader).
+  - ⭐ **Phim Đang Theo Dõi (Watchlist):** Hiển thị trực tiếp kệ phim theo dõi ngay trên màn hình chính của Movie (phía trên kệ Phim Xem Gần Đây) và trong bộ lọc nhanh.
+  - 🎬 **Phim Xem Gần Đây (Gộp chung Đang xem dở & Lịch sử):** Tự động lưu tiến trình xem, hiển thị thanh tiến trình % ngay trên thẻ phim và nút *"Tiếp tục xem: Tập X (xx%)"* khôi phục chính xác vị trí đang xem dở. Hỗ trợ **chọn xóa từng phim** hoặc xóa nhanh một chạm trên từng thẻ phim bên cạnh nút xóa tất cả.
+- **☁️ Đánh dấu & Theo dõi Phim đã kéo về Tele Cloud:**
+  - Tự động đánh dấu các bộ phim đã kéo về kho Telegram Cloud (`MovieBox #43264`), hiển thị tiến độ tập đã kéo (`☁️ Đã kéo X/Y`) ngay trên thẻ phim và trang chi tiết.
+  - Tự động kiểm tra tập mới phát hành từ nguồn online, gửi **thông báo đẩy (Android Notification + Telegram)** và hỗ trợ **tự động kéo tập mới** về Tele Cloud.
 
 ### 2. ✈️ Nguồn Video Telegram Đỉnh cao
 - Đồng bộ mượt mà với tài nguyên video từ Telegram (Saved Messages, channels, groups, supergroups, topics).
@@ -49,9 +51,10 @@ Tải trực tiếp bản APK mới nhất đã được build sẵn từ reposi
   - **Tự động Forward thông minh:** Tùy chọn cấu hình tự động forward video yêu thích về một kho tin nhắn / group / channel / topic riêng biệt (hỗ trợ `drop_author = true` giữ trọn sự riêng tư).
 
 ### 3. 🎥 Trình phát Video Hiện đại (Advanced Video Player)
-- **Tua nhanh thông minh:** Bổ sung cụm phím tua nhanh chuyên dụng **-10m, -1m** (bên trái) và **+1m, +10m** (bên phải) với icon tùy biến sang trọng.
+- **Chuyển tập trực tiếp ở cụm điều khiển trung tâm (Online Movie Player):** Tích hợp nút **Tập trước / Tập tiếp** ngay hai bên nút Play/Pause chính giữa màn hình giúp chuyển tập tức thì, lược bỏ các nút phụ rườm rà ở thanh dưới.
+- **Vuốt ngang tua thông minh theo thời lượng & tốc độ vuốt (Dynamic Swipe-to-Seek):** Tự động tăng tốc độ tua khi vuốt ngang tỷ lệ thuận với độ dài video (30% tổng thời lượng, lên tới 45 phút cho một lượt vuốt trên phim dài 1–2 giờ) kết hợp nhân gia tốc theo tốc độ lướt ngón tay — áp dụng đồng bộ cho cả trình phát Online Movie và trình phát Telegram.
+- **Tua nhanh thông minh:** Bổ sung cụm phím tua nhanh chuyên dụng **-10m, -1m** (bên trái) và **+1m, +10m** (bên phải) với icon tùy biến sang trọng, cùng chạm đúp hai bên màn hình để tua nhanh 10 giây.
 - **Đa âm thanh & Phụ đề:** Tích hợp bộ chọn kênh âm thanh (Audio tracks) và phụ đề ngoài (Subtitles) đa ngôn ngữ.
-- **Cử chỉ thông minh:** Vuốt điều chỉnh âm lượng (bên phải), độ sáng (bên trái), vuốt ngang tua thời gian, chạm đúp hai bên để tua 10s.
 - **Chế độ phát:** Hỗ trợ Picture-in-Picture (PiP), phát nền khi tắt màn hình (Background playback), xoay ngang/dọc nhanh, khóa màn hình cảm ứng chống chạm nhầm.
 
 ### 4. 🎨 Thiết kế Thương hiệu MWPlayer Đồng bộ

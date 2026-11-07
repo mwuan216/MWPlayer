@@ -212,6 +212,22 @@ fun MoviePane(
 
     val watchlist by MovieStore.watchlistFlow.collectAsState()
     val history by MovieStore.historyFlow.collectAsState()
+    val cloudSynced by MovieStore.cloudSyncedFlow.collectAsState()
+    var isCheckingCloudUpdates by remember { mutableStateOf(false) }
+    var isSelectingHistory by remember { mutableStateOf(false) }
+    var selectedHistorySlugs by remember { mutableStateOf<Set<String>>(emptySet()) }
+
+    LaunchedEffect(selectedCategory) {
+        if (selectedCategory != "history") {
+            isSelectingHistory = false
+            selectedHistorySlugs = emptySet()
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        MovieStore.init(context)
+        MovieCloudDownloader.checkTrackedMoviesForNewEpisodes(context, forceCheck = false)
+    }
 
     val activeFilterCount = (if (selectedCategory.isNotBlank()) 1 else 0) +
         (if (selectedGenre.isNotBlank()) 1 else 0) +
@@ -320,6 +336,24 @@ fun MoviePane(
             onComplete()
             return
         }
+        if (selectedCategory == "cloud") {
+            gridMovies = cloudSynced.map { it.toMovieItem() }
+            gridPage = 1
+            gridTotalPages = 1
+            isGridLoading = false
+            if (forceRefresh) {
+                scope.launch {
+                    isCheckingCloudUpdates = true
+                    MovieCloudDownloader.checkTrackedMoviesForNewEpisodes(context, forceCheck = true) { _, _ ->
+                        isCheckingCloudUpdates = false
+                        onComplete()
+                    }
+                }
+            } else {
+                onComplete()
+            }
+            return
+        }
 
         val targetSource = activeSource
         val cacheKey = currentGridCacheKey(targetSource)
@@ -387,7 +421,7 @@ fun MoviePane(
 
     // Load More Grid Data (Endless Pagination)
     fun loadGridMore() {
-        if (selectedCategory in listOf("watchlist", "history")) return
+        if (selectedCategory in listOf("watchlist", "history", "cloud")) return
         if (isGridLoadingMore || isGridLoading || gridPage >= gridTotalPages) return
         val targetSource = activeSource
         val cacheKey = currentGridCacheKey(targetSource)
@@ -830,6 +864,7 @@ fun MoviePane(
                             val emptyMsg = when (selectedCategory) {
                                 "watchlist" -> "Chưa có phim trong danh sách theo dõi"
                                 "history" -> "Chưa có phim xem gần đây"
+                                "cloud" -> "Chưa có phim nào được đánh dấu kéo về Tele Cloud"
                                 else -> "Không tìm thấy phim phù hợp"
                             }
                             Text(
@@ -857,32 +892,177 @@ fun MoviePane(
                         if (selectedCategory == "history" && gridMovies.isNotEmpty()) {
                             item(span = { GridItemSpan(maxLineSpan) }) {
                                 Row(
-                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(Tone.surfaceHigh)
+                                        .padding(horizontal = 12.dp, vertical = 8.dp),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text(
-                                        text = "${gridMovies.size} phim trong lịch sử",
-                                        color = Tone.text.copy(alpha = 0.6f),
-                                        fontSize = 13.sp
-                                    )
-                                    Text(
-                                        text = "Xóa lịch sử",
-                                        color = Tone.accent,
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        modifier = Modifier.clickable {
-                                            MovieStore.clearHistory(context)
-                                            gridMovies = emptyList()
+                                    if (!isSelectingHistory) {
+                                        Text(
+                                            text = "${gridMovies.size} phim trong lịch sử",
+                                            color = Tone.text.copy(alpha = 0.7f),
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                        Row(
+                                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .background(Tone.surface)
+                                                    .border(0.5.dp, Tone.accent.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
+                                                    .clickable {
+                                                        isSelectingHistory = true
+                                                        selectedHistorySlugs = emptySet()
+                                                    }
+                                                    .padding(horizontal = 10.dp, vertical = 5.dp)
+                                            ) {
+                                                Text(
+                                                    text = "Chọn xóa",
+                                                    color = Tone.accent,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                            Text(
+                                                text = "Xóa tất cả",
+                                                color = Tone.text.copy(alpha = 0.6f),
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                modifier = Modifier.clickable {
+                                                    MovieStore.clearHistory(context)
+                                                    gridMovies = emptyList()
+                                                    isSelectingHistory = false
+                                                    selectedHistorySlugs = emptySet()
+                                                }
+                                            )
                                         }
-                                    )
+                                    } else {
+                                        val allSelected = selectedHistorySlugs.size == gridMovies.size && gridMovies.isNotEmpty()
+                                        Text(
+                                            text = if (allSelected) "Bỏ chọn tất cả" else "Chọn tất cả (${gridMovies.size})",
+                                            color = Tone.accent,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.clickable {
+                                                selectedHistorySlugs = if (allSelected) {
+                                                    emptySet()
+                                                } else {
+                                                    gridMovies.map { it.slug }.toSet()
+                                                }
+                                            }
+                                        )
+                                        Row(
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .background(if (selectedHistorySlugs.isNotEmpty()) Tone.accent else Tone.surface)
+                                                    .clickable(enabled = selectedHistorySlugs.isNotEmpty()) {
+                                                        MovieStore.removeMultipleFromHistory(context, selectedHistorySlugs)
+                                                        selectedHistorySlugs = emptySet()
+                                                        isSelectingHistory = false
+                                                    }
+                                                    .padding(horizontal = 10.dp, vertical = 5.dp)
+                                            ) {
+                                                Text(
+                                                    text = "Xóa (${selectedHistorySlugs.size})",
+                                                    color = if (selectedHistorySlugs.isNotEmpty()) Color.Black else Tone.text.copy(alpha = 0.4f),
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                            Text(
+                                                text = "Hủy",
+                                                color = Tone.text.copy(alpha = 0.7f),
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                modifier = Modifier.clickable {
+                                                    isSelectingHistory = false
+                                                    selectedHistorySlugs = emptySet()
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        } else if (selectedCategory == "cloud" && gridMovies.isNotEmpty()) {
+                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(Tone.surfaceHigh)
+                                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        val newEpsMovies = cloudSynced.count { it.hasNewEpisodes }
+                                        Text(
+                                            text = if (newEpsMovies > 0) "🔔 $newEpsMovies phim có tập mới chưa kéo!" else "☁️ ${gridMovies.size} phim đã kéo về Tele Cloud",
+                                            color = if (newEpsMovies > 0) Tone.accent else Tone.text,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text(
+                                            text = "Tự động theo dõi tập mới & kéo về MovieBox",
+                                            color = Tone.text.copy(alpha = 0.6f),
+                                            fontSize = 11.sp
+                                        )
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(Tone.accent)
+                                            .clickable(enabled = !isCheckingCloudUpdates) {
+                                                scope.launch {
+                                                    isCheckingCloudUpdates = true
+                                                    MovieCloudDownloader.checkTrackedMoviesForNewEpisodes(context, forceCheck = true) { _, _ ->
+                                                        isCheckingCloudUpdates = false
+                                                    }
+                                                }
+                                            }
+                                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                                    ) {
+                                        Text(
+                                            text = if (isCheckingCloudUpdates) "Đang quét..." else "🔄 Quét tập mới",
+                                            color = Color.Black,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
                                 }
                             }
                         }
                         items(gridMovies, key = { it.slug }) { item ->
+                            val isHistoryGrid = selectedCategory == "history"
+                            val isItemSelected = isHistoryGrid && isSelectingHistory && item.slug in selectedHistorySlugs
                             MoviePosterCard(
                                 movie = item,
-                                onClick = { selectedMovieSlug = item.slug }
+                                isSelectionMode = isHistoryGrid && isSelectingHistory,
+                                isSelected = isItemSelected,
+                                onRemoveItem = if (isHistoryGrid && !isSelectingHistory) {
+                                    { MovieStore.removeFromHistory(context, item.slug) }
+                                } else null,
+                                onClick = {
+                                    if (isHistoryGrid && isSelectingHistory) {
+                                        selectedHistorySlugs = if (item.slug in selectedHistorySlugs) {
+                                            selectedHistorySlugs - item.slug
+                                        } else {
+                                            selectedHistorySlugs + item.slug
+                                        }
+                                    } else {
+                                        selectedMovieSlug = item.slug
+                                    }
+                                }
                             )
                         }
 
@@ -936,6 +1116,18 @@ fun MoviePane(
                             }
                         }
 
+                        // SHELF: PHIM ĐANG THEO DÕI (Nằm trên danh sách Phim Xem Gần Đây)
+                        if (watchlist.isNotEmpty()) {
+                            item(key = "shelf_watchlist") {
+                                MovieShelfRow(
+                                    title = "⭐ Phim Đang Theo Dõi",
+                                    movies = watchlist,
+                                    onViewAll = { selectedCategory = "watchlist" },
+                                    onMovieClick = { selectedMovieSlug = it.slug }
+                                )
+                            }
+                        }
+
                         // SHELF: PHIM XEM GẦN ĐÂY (Gộp chung phim đang xem dở & lịch sử gần đây)
                         if (history.isNotEmpty()) {
                             item(key = "shelf_history") {
@@ -943,7 +1135,8 @@ fun MoviePane(
                                     title = "🎬 Phim Xem Gần Đây",
                                     records = history,
                                     onViewAll = { selectedCategory = "history" },
-                                    onRecordClick = { rec -> selectedMovieSlug = rec.slug }
+                                    onRecordClick = { rec -> selectedMovieSlug = rec.slug },
+                                    onRemoveRecord = { rec -> MovieStore.removeFromHistory(context, rec.slug) }
                                 )
                             }
                         }
@@ -1471,7 +1664,8 @@ private fun MovieContinueShelfRow(
     title: String,
     records: List<MovieWatchProgress>,
     onViewAll: () -> Unit,
-    onRecordClick: (MovieWatchProgress) -> Unit
+    onRecordClick: (MovieWatchProgress) -> Unit,
+    onRemoveRecord: ((MovieWatchProgress) -> Unit)? = null
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
@@ -1504,7 +1698,13 @@ private fun MovieContinueShelfRow(
         ) {
             items(records, key = { it.slug }) { record ->
                 Box(modifier = Modifier.width(135.dp)) {
-                    MovieContinueCard(record = record, onClick = { onRecordClick(record) })
+                    MovieContinueCard(
+                        record = record,
+                        onClick = { onRecordClick(record) },
+                        onRemove = if (onRemoveRecord != null) {
+                            { onRemoveRecord(record) }
+                        } else null
+                    )
                 }
             }
         }
@@ -1514,7 +1714,8 @@ private fun MovieContinueShelfRow(
 @Composable
 private fun MovieContinueCard(
     record: MovieWatchProgress,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onRemove: (() -> Unit)? = null
 ) {
     Column(
         modifier = Modifier
@@ -1566,6 +1767,27 @@ private fun MovieContinueCard(
                         color = Color.White,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+
+            // Quick single-item remove button on top-right
+            if (onRemove != null) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(4.dp)
+                        .size(20.dp)
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.7f))
+                        .clickable { onRemove() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = TmIcons.Close,
+                        contentDescription = "Xóa khỏi lịch sử",
+                        tint = Color.White.copy(alpha = 0.85f),
+                        modifier = Modifier.size(12.dp)
                     )
                 }
             }
@@ -1655,8 +1877,14 @@ private fun MovieShelfRow(
 @Composable
 private fun MoviePosterCard(
     movie: MovieItem,
+    isSelectionMode: Boolean = false,
+    isSelected: Boolean = false,
+    onRemoveItem: (() -> Unit)? = null,
     onClick: () -> Unit
 ) {
+    val cloudSyncedList by MovieStore.cloudSyncedFlow.collectAsState()
+    val cloudRecord = cloudSyncedList.firstOrNull { it.slug == movie.slug }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1669,11 +1897,56 @@ private fun MoviePosterCard(
                 .aspectRatio(2f / 3f)
                 .clip(RoundedCornerShape(10.dp))
                 .background(Tone.surfaceHigh)
+                .then(
+                    if (isSelected) Modifier.border(2.dp, Tone.accent, RoundedCornerShape(10.dp))
+                    else Modifier
+                )
         ) {
             AsyncMovieImage(
                 url = movie.thumbUrl.ifBlank { movie.posterUrl },
                 modifier = Modifier.fillMaxSize()
             )
+
+            // Top-right selection checkbox or quick remove button (for History screen)
+            if (isSelectionMode) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(6.dp)
+                        .size(22.dp)
+                        .clip(CircleShape)
+                        .background(if (isSelected) Tone.accent else Color.Black.copy(alpha = 0.65f))
+                        .border(1.5.dp, if (isSelected) Tone.accent else Color.White.copy(alpha = 0.8f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (isSelected) {
+                        Icon(
+                            imageVector = TmIcons.Check,
+                            contentDescription = null,
+                            tint = Color.Black,
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                }
+            } else if (onRemoveItem != null) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(5.dp)
+                        .size(22.dp)
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.72f))
+                        .clickable { onRemoveItem() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = TmIcons.Close,
+                        contentDescription = "Xóa phim này",
+                        tint = Color.White.copy(alpha = 0.9f),
+                        modifier = Modifier.size(13.dp)
+                    )
+                }
+            }
 
             // Top-left badge: Rating or Episode
             if (movie.rating.isNotBlank()) {
@@ -1704,6 +1977,34 @@ private fun MoviePosterCard(
                     Text(
                         text = movie.episodeCurrent,
                         color = Color.Black,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            // Top-right or Bottom-left badge: Cloud Sync status ("☁️ Tele" or "🔔 +N tập mới")
+            if (cloudRecord != null) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(4.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(if (cloudRecord.hasNewEpisodes) Tone.accent else Color(0xDD123829))
+                        .border(
+                            0.5.dp,
+                            if (cloudRecord.hasNewEpisodes) Color.Black else Tone.accent.copy(alpha = 0.8f),
+                            RoundedCornerShape(4.dp)
+                        )
+                        .padding(horizontal = 5.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = if (cloudRecord.hasNewEpisodes) {
+                            "🔔 +${cloudRecord.newEpisodesCount} mới"
+                        } else {
+                            "☁️ Tele (${cloudRecord.pulledUpToEpisode})"
+                        },
+                        color = if (cloudRecord.hasNewEpisodes) Color.Black else Tone.accent,
                         fontSize = 9.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -1767,9 +2068,17 @@ private fun MovieDetailContent(
     val savedProgress = remember(detail.movie.slug) { MovieStore.getProgress(detail.movie.slug) }
     val watchlist by MovieStore.watchlistFlow.collectAsState()
     val isFollowed = watchlist.any { it.slug == detail.movie.slug }
+    val cloudSyncedList by MovieStore.cloudSyncedFlow.collectAsState()
+    val cloudSync = cloudSyncedList.firstOrNull { it.slug == detail.movie.slug }
 
     val activeServer = detail.servers.getOrNull(selectedServerIdx) ?: detail.servers.firstOrNull()
     val epList = activeServer?.episodes ?: emptyList()
+
+    LaunchedEffect(detail.movie.slug, epList.size) {
+        if (epList.isNotEmpty() && cloudSync != null && epList.size > cloudSync.latestKnownEpisodes) {
+            MovieStore.updateCloudLatestEpisodes(context, detail.movie.slug, epList.size)
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -1968,29 +2277,51 @@ private fun MovieDetailContent(
             }
 
             // Kéo về Cloud (MovieBox)
+            val hasUnpulledNewEps = cloudSync != null && epList.size > cloudSync.pulledUpToEpisode && cloudSync.pulledUpToEpisode > 0
+            val newEpCount = if (hasUnpulledNewEps) epList.size - cloudSync!!.pulledUpToEpisode else 0
             Box(
                 modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(10.dp))
-                    .background(Tone.surfaceHigh)
-                    .border(0.5.dp, Tone.outline.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+                    .background(
+                        when {
+                            hasUnpulledNewEps -> Tone.accent
+                            cloudSync != null -> Tone.accent.copy(alpha = 0.18f)
+                            else -> Tone.surfaceHigh
+                        }
+                    )
+                    .border(
+                        0.5.dp,
+                        if (cloudSync != null) Tone.accent else Tone.outline.copy(alpha = 0.5f),
+                        RoundedCornerShape(10.dp)
+                    )
                     .clickable { showCloudSheet = true }
                     .padding(vertical = 12.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
-                        imageVector = TmIcons.Download,
+                        imageVector = if (cloudSync != null && !hasUnpulledNewEps) TmIcons.Check else TmIcons.Download,
                         contentDescription = null,
-                        tint = Tone.accent,
+                        tint = if (hasUnpulledNewEps) Color.Black else Tone.accent,
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(Modifier.width(4.dp))
                     Text(
-                        text = "Về Cloud",
-                        color = Tone.text,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
+                        text = when {
+                            hasUnpulledNewEps -> "🔔 +$newEpCount tập mới"
+                            cloudSync != null -> "Đã kéo (${cloudSync.pulledUpToEpisode}/${epList.size.coerceAtLeast(cloudSync.pulledUpToEpisode)})"
+                            else -> "Về Cloud"
+                        },
+                        color = when {
+                            hasUnpulledNewEps -> Color.Black
+                            cloudSync != null -> Tone.accent
+                            else -> Tone.text
+                        },
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
@@ -2125,27 +2456,42 @@ private fun MovieDetailContent(
                         ) {
                             rowEps.forEach { ep ->
                                 val eIdx = epList.indexOf(ep)
+                                val epNumber = eIdx + 1
+                                val isPulledToCloud = cloudSync != null && epNumber <= cloudSync.pulledUpToEpisode
+                                val isNewUnpulledEp = cloudSync != null && cloudSync.pulledUpToEpisode > 0 && epNumber > cloudSync.pulledUpToEpisode
                                 Box(
                                     modifier = Modifier
                                         .weight(1f)
                                         .clip(RoundedCornerShape(8.dp))
-                                        .background(if (isCloudMode) Tone.accent.copy(alpha = 0.15f) else Tone.surfaceHigh)
+                                        .background(
+                                            when {
+                                                isCloudMode -> Tone.accent.copy(alpha = 0.15f)
+                                                isNewUnpulledEp -> Tone.accent.copy(alpha = 0.22f)
+                                                isPulledToCloud -> Tone.surfaceHigh.copy(alpha = 0.9f)
+                                                else -> Tone.surfaceHigh
+                                            }
+                                        )
                                         .border(
                                             0.5.dp,
-                                            if (isCloudMode) Tone.accent.copy(alpha = 0.6f) else Tone.outline.copy(alpha = 0.5f),
+                                            when {
+                                                isCloudMode || isNewUnpulledEp -> Tone.accent
+                                                isPulledToCloud -> Tone.accent.copy(alpha = 0.45f)
+                                                else -> Tone.outline.copy(alpha = 0.5f)
+                                            },
                                             RoundedCornerShape(8.dp)
                                         )
                                         .clickable {
                                             if (isCloudMode) {
                                                 scope.launch {
-                                                    val epNum = "${eIdx + 1}"
+                                                    val epNum = "$epNumber"
                                                     MovieCloudDownloader.pullToCloud(
                                                         context = context,
                                                         slug = detail.movie.slug,
                                                         movieTitle = detail.movie.name,
                                                         source = detail.movie.source,
                                                         epRange = epNum,
-                                                        totalEpisodes = epList.size
+                                                        totalEpisodes = epList.size,
+                                                        movie = detail.movie
                                                     )
                                                 }
                                             } else {
@@ -2164,10 +2510,22 @@ private fun MovieDetailContent(
                                                 modifier = Modifier.size(12.dp)
                                             )
                                             Spacer(Modifier.width(3.dp))
+                                        } else if (isPulledToCloud) {
+                                            Text(
+                                                text = "☁️",
+                                                fontSize = 10.sp
+                                            )
+                                            Spacer(Modifier.width(3.dp))
+                                        } else if (isNewUnpulledEp) {
+                                            Text(
+                                                text = "🔔",
+                                                fontSize = 10.sp
+                                            )
+                                            Spacer(Modifier.width(3.dp))
                                         }
                                         Text(
                                             text = ep.name,
-                                            color = if (isCloudMode) Tone.accent else Tone.text,
+                                            color = if (isCloudMode || isNewUnpulledEp) Tone.accent else Tone.text,
                                             fontSize = 12.sp,
                                             fontWeight = FontWeight.SemiBold,
                                             maxLines = 1,
@@ -2204,6 +2562,7 @@ private fun MovieDetailContent(
 
     // CLOUD PULL OPTIONS SHEET / DIALOG
     if (showCloudSheet) {
+        val hasUnpulledNewEps = cloudSync != null && epList.size > cloudSync.pulledUpToEpisode && cloudSync.pulledUpToEpisode > 0
         ModalBottomSheet(
             onDismissRequest = { showCloudSheet = false },
             sheetState = rememberModalBottomSheetState(),
@@ -2238,8 +2597,76 @@ private fun MovieDetailContent(
                     color = Tone.text.copy(alpha = 0.6f),
                     fontSize = 13.sp
                 )
+                if (cloudSync != null) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "☁️ Đã kéo tới tập ${cloudSync.pulledUpToEpisode}/${epList.size} • Khoảng gần nhất: ${cloudSync.pulledEpisodesText}",
+                        color = Tone.accent,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
 
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(14.dp))
+
+                // Nếu có tập mới chưa kéo: Nút kéo nhanh các tập mới
+                if (hasUnpulledNewEps && cloudSync != null) {
+                    val nextEp = cloudSync.pulledUpToEpisode + 1
+                    val rangeStr = if (nextEp == epList.size) "$nextEp" else "$nextEp-${epList.size}"
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Tone.accent)
+                            .clickable {
+                                showCloudSheet = false
+                                scope.launch {
+                                    MovieCloudDownloader.pullToCloud(
+                                        context = context,
+                                        slug = detail.movie.slug,
+                                        movieTitle = detail.movie.name,
+                                        source = detail.movie.source,
+                                        epRange = rangeStr,
+                                        totalEpisodes = epList.size,
+                                        movie = detail.movie
+                                    )
+                                }
+                            }
+                            .padding(16.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(Color.Black.copy(alpha = 0.2f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = TmIcons.Download,
+                                    contentDescription = null,
+                                    tint = Color.Black,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            Spacer(Modifier.width(14.dp))
+                            Column {
+                                Text(
+                                    text = "⚡ Kéo ngay tập mới (Tập $rangeStr)",
+                                    color = Color.Black,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "Kéo thêm ${epList.size - cloudSync.pulledUpToEpisode} tập mới phát hành về Tele",
+                                    color = Color.Black.copy(alpha = 0.75f),
+                                    fontSize = 12.sp
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                }
 
                 // Option 1: Kéo toàn bộ phim
                 Box(
@@ -2256,7 +2683,8 @@ private fun MovieDetailContent(
                                     movieTitle = detail.movie.name,
                                     source = detail.movie.source,
                                     epRange = "all",
-                                    totalEpisodes = epList.size
+                                    totalEpisodes = epList.size,
+                                    movie = detail.movie
                                 )
                             }
                         }
@@ -2311,7 +2739,8 @@ private fun MovieDetailContent(
                                     movieTitle = detail.movie.name,
                                     source = detail.movie.source,
                                     epRange = "remaining",
-                                    totalEpisodes = epList.size
+                                    totalEpisodes = epList.size,
+                                    movie = detail.movie
                                 )
                             }
                         }
@@ -2407,7 +2836,8 @@ private fun MovieDetailContent(
                                         movieTitle = detail.movie.name,
                                         source = detail.movie.source,
                                         epRange = input,
-                                        totalEpisodes = epList.size
+                                        totalEpisodes = epList.size,
+                                        movie = detail.movie
                                     )
                                 }
                             }
@@ -2423,7 +2853,87 @@ private fun MovieDetailContent(
                     }
                 }
 
-                Spacer(Modifier.height(30.dp))
+                Spacer(Modifier.height(14.dp))
+
+                // Option 4: Đánh dấu & Tự động theo dõi tập mới để kéo về Tele
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Tone.surfaceHigh)
+                        .clickable {
+                            if (cloudSync != null) {
+                                MovieStore.setCloudAutoPull(context, detail.movie.slug, !cloudSync.autoPullNewEpisodes)
+                            } else {
+                                MovieStore.markCloudSynced(
+                                    context = context,
+                                    movie = detail.movie,
+                                    epRange = "all",
+                                    totalEpisodes = epList.size,
+                                    autoPull = true
+                                )
+                            }
+                        }
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "🤖 Tự động kéo & báo tập mới",
+                            color = Tone.text,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = if (cloudSync != null)
+                                "Tự động kiểm tra và kéo tập mới về Tele khi có cập nhật"
+                            else
+                                "Bấm để đánh dấu phim đã kéo Tele & bật tự động kéo tập mới",
+                            color = Tone.text.copy(alpha = 0.6f),
+                            fontSize = 11.sp
+                        )
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    val autoEnabled = cloudSync?.autoPullNewEpisodes == true
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (autoEnabled) Tone.accent else Tone.surface)
+                            .border(0.5.dp, if (autoEnabled) Tone.accent else Tone.outline, RoundedCornerShape(8.dp))
+                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = if (autoEnabled) "Đang BẬT" else "TẮT",
+                            color = if (autoEnabled) Color.Black else Tone.text.copy(alpha = 0.7f),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                if (cloudSync != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.End)
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable {
+                                MovieStore.removeCloudSynced(context, detail.movie.slug)
+                                showCloudSheet = false
+                            }
+                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = "Bỏ đánh dấu đã kéo Tele",
+                            color = Tone.danger,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(24.dp))
             }
         }
     }

@@ -1,7 +1,12 @@
 package com.tmplayer.movie
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Context
+import android.os.Build
 import android.widget.Toast
+import androidx.core.app.NotificationCompat
+import com.tmplayer.R
 import com.tmplayer.data.Td
 import com.tmplayer.data.valueOrNull
 import dev.g000sha256.tdl.dto.FormattedText
@@ -34,6 +39,8 @@ object MovieCloudDownloader {
     const val BOT_TOKEN = "9166002043:AAEgSw9QEIzlMYniod09qV7PyuIMajRUjuQ"
     const val BOT_1 = "Mw_movie_downloader_bot"
     const val BOT_2 = "Movie_bot_laptop_bot"
+    private const val NOTIF_CHANNEL_ID = "mwplayer_cloud_episode_updates"
+    private var lastAutoCheckTimeMs = 0L
 
     /**
      * Chia khoảng tập ra cho 2 bot để chạy song song x2 tốc độ, tránh duplicate:
@@ -111,6 +118,8 @@ object MovieCloudDownloader {
         source: MovieSource,
         epRange: String = "all",
         totalEpisodes: Int = 0,
+        movie: MovieItem? = null,
+        silentToast: Boolean = false,
         onStatus: ((Boolean, String) -> Unit)? = null
     ) = withContext(Dispatchers.IO) {
         val srcName = if (source == MovieSource.VSMov) "vsmov" else "kkphim"
@@ -213,6 +222,19 @@ object MovieCloudDownloader {
         }
 
         val success = sentViaTdlib || sentViaBotApi
+        if (success) {
+            val itemToTrack = movie ?: MovieItem(
+                name = movieTitle,
+                slug = slug,
+                source = source
+            )
+            MovieStore.markCloudSynced(
+                context = context,
+                movie = itemToTrack,
+                epRange = epRange,
+                totalEpisodes = totalEpisodes
+            )
+        }
         val rangeLabel = when (epRange) {
             "all" -> "toàn bộ phim"
             "remaining" -> "các tập còn lại"
@@ -229,8 +251,187 @@ object MovieCloudDownloader {
         }
 
         withContext(Dispatchers.Main) {
-            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+            if (!silentToast) {
+                Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+            }
             onStatus?.invoke(success, msg)
         }
+    }
+
+    /**
+     * Kiểm tra các phim đã đánh dấu kéo về Tele Cloud xem có tập mới không.
+     * Nếu có tập mới:
+     * - Gửi thông báo hệ thống (Android Notification) và thông báo lên Telegram MovieBox
+     * - Nếu phim bật `autoPullNewEpisodes = true`, tự động kích hoạt lệnh kéo các tập mới về Tele Cloud
+     */
+    suspend fun checkTrackedMoviesForNewEpisodes(
+        context: Context,
+        forceCheck: Boolean = false,
+        onComplete: ((checkedCount: Int, updatedMoviesCount: Int) -> Unit)? = null
+    ) = withContext(Dispatchers.IO) {
+        MovieStore.init(context)
+        val now = System.currentTimeMillis()
+        if (!forceCheck && now - lastAutoCheckTimeMs < 15 * 60_000L) {
+            return@withContext
+        }
+        lastAutoCheckTimeMs = now
+
+        val trackedList = MovieStore.cloudSyncedFlow.value
+        if (trackedList.isEmpty()) {
+            withContext(Dispatchers.Main) {
+                onComplete?.invoke(0, 0)
+            }
+            return@withContext
+        }
+
+        var updatedMoviesCount = 0
+        for (tracked in trackedList) {
+            try {
+                val src = MovieSource.fromString(tracked.source)
+                val detail = MovieRepository.getMovieDetail(src, tracked.slug) ?: continue
+                val latestEpCount = detail.servers.maxOfOrNull { it.episodes.size } ?: 0
+                if (latestEpCount <= 0) continue
+
+                if (latestEpCount > tracked.pulledUpToEpisode && tracked.pulledUpToEpisode > 0) {
+                    val newCount = latestEpCount - tracked.pulledUpToEpisode
+                    val newRange = if (newCount == 1) "$latestEpCount" else "${tracked.pulledUpToEpisode + 1}-$latestEpCount"
+                    updatedMoviesCount++
+
+                    if (tracked.autoPullNewEpisodes) {
+                        // Tự động kéo các tập mới về Tele Cloud
+                        pullToCloud(
+                            context = context,
+                            slug = tracked.slug,
+                            movieTitle = tracked.name,
+                            source = src,
+                            epRange = newRange,
+                            totalEpisodes = latestEpCount,
+                            movie = detail.movie,
+                            silentToast = true
+                        )
+                        MovieStore.updateCloudLatestEpisodes(
+                            context = context,
+                            slug = tracked.slug,
+                            latestEpisodes = latestEpCount,
+                            newPulledUpTo = latestEpCount
+                        )
+                        postNewEpisodeNotification(
+                            context = context,
+                            movieTitle = tracked.name,
+                            newRange = newRange,
+                            autoPulled = true
+                        )
+                    } else {
+                        // Chỉ cập nhật trạng thái có tập mới & gửi thông báo
+                        MovieStore.updateCloudLatestEpisodes(
+                            context = context,
+                            slug = tracked.slug,
+                            latestEpisodes = latestEpCount,
+                            newPulledUpTo = null
+                        )
+                        postNewEpisodeNotification(
+                            context = context,
+                            movieTitle = tracked.name,
+                            newRange = newRange,
+                            autoPulled = false
+                        )
+                        sendTelegramNewEpisodeAlert(
+                            movieTitle = tracked.name,
+                            slug = tracked.slug,
+                            source = src,
+                            newRange = newRange,
+                            latestEpCount = latestEpCount
+                        )
+                    }
+                } else if (latestEpCount > tracked.latestKnownEpisodes) {
+                    MovieStore.updateCloudLatestEpisodes(
+                        context = context,
+                        slug = tracked.slug,
+                        latestEpisodes = latestEpCount
+                    )
+                }
+            } catch (_: Exception) {
+            }
+        }
+
+        withContext(Dispatchers.Main) {
+            if (forceCheck) {
+                val msg = if (updatedMoviesCount > 0) {
+                    "🔔 Phát hiện $updatedMoviesCount phim có tập mới! Đã xử lý kéo/thông báo."
+                } else {
+                    "✅ Đã kiểm tra ${trackedList.size} phim đã kéo Cloud: Chưa có tập mới."
+                }
+                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+            }
+            onComplete?.invoke(trackedList.size, updatedMoviesCount)
+        }
+    }
+
+    private fun postNewEpisodeNotification(
+        context: Context,
+        movieTitle: String,
+        newRange: String,
+        autoPulled: Boolean
+    ) {
+        try {
+            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val channel = NotificationChannel(
+                    NOTIF_CHANNEL_ID,
+                    "Cập nhật tập mới (Tele Cloud)",
+                    NotificationManager.IMPORTANCE_DEFAULT
+                ).apply {
+                    description = "Thông báo khi phim đã kéo về Tele Cloud có tập mới"
+                }
+                nm.createNotificationChannel(channel)
+            }
+            val title = if (autoPulled) {
+                "☁️ Đã tự động kéo tập mới: $movieTitle"
+            } else {
+                "🔔 Có tập mới: $movieTitle"
+            }
+            val body = if (autoPulled) {
+                "Phát hiện Tập $newRange mới — đã tự động kích hoạt bot kéo về Tele Cloud (MovieBox)!"
+            } else {
+                "Phát hiện Tập $newRange mới — mở MWPlayer để kéo tập mới về Tele Cloud!"
+            }
+            val notif = NotificationCompat.Builder(context, NOTIF_CHANNEL_ID)
+                .setSmallIcon(R.mipmap.ic_launcher)
+                .setContentTitle(title)
+                .setContentText(body)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+                .setAutoCancel(true)
+                .build()
+            nm.notify(movieTitle.hashCode(), notif)
+        } catch (_: Exception) {}
+    }
+
+    private fun sendTelegramNewEpisodeAlert(
+        movieTitle: String,
+        slug: String,
+        source: MovieSource,
+        newRange: String,
+        latestEpCount: Int
+    ) {
+        try {
+            val text = "🔔 <b>[MWPlayer] Phát hiện tập mới của phim đã kéo Cloud!</b>\n" +
+                "📌 <b>Phim:</b> $movieTitle (<code>$slug</code>)\n" +
+                "🆕 <b>Tập mới:</b> Tập $newRange (Tổng hiện tại: $latestEpCount tập)\n" +
+                "🌐 <b>Nguồn:</b> ${source.displayName}"
+            val url = URL("https://api.telegram.org/bot$BOT_TOKEN/sendMessage")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+            conn.doOutput = true
+            conn.connectTimeout = 8_000
+            conn.readTimeout = 8_000
+            val postData = "chat_id=$CLOUD_CHAT_ID" +
+                "&message_thread_id=$CLOUD_TOPIC_ID" +
+                "&parse_mode=HTML" +
+                "&text=" + URLEncoder.encode(text, "UTF-8")
+            conn.outputStream.use { it.write(postData.toByteArray(Charsets.UTF_8)) }
+            conn.responseCode
+            conn.disconnect()
+        } catch (_: Exception) {}
     }
 }

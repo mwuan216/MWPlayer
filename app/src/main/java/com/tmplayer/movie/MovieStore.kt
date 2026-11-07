@@ -88,8 +88,88 @@ data class MovieWatchProgress(
     }
 }
 
+@Immutable
+data class CloudSyncedMovie(
+    val slug: String,
+    val name: String,
+    val originName: String = "",
+    val thumbUrl: String = "",
+    val posterUrl: String = "",
+    val year: String = "",
+    val quality: String = "HD",
+    val lang: String = "Vietsub",
+    val source: String = "vsmov",
+    val pulledUpToEpisode: Int = 0,
+    val pulledEpisodesText: String = "",
+    val latestKnownEpisodes: Int = 0,
+    val autoPullNewEpisodes: Boolean = true,
+    val updatedAt: Long = System.currentTimeMillis()
+) {
+    val hasNewEpisodes: Boolean
+        get() = latestKnownEpisodes > pulledUpToEpisode && pulledUpToEpisode > 0
+
+    val newEpisodesCount: Int
+        get() = (latestKnownEpisodes - pulledUpToEpisode).coerceAtLeast(0)
+
+    val newEpisodeRange: String
+        get() = if (latestKnownEpisodes <= pulledUpToEpisode + 1) "$latestKnownEpisodes" else "${pulledUpToEpisode + 1}-$latestKnownEpisodes"
+
+    fun toMovieItem(): MovieItem = MovieItem(
+        name = name,
+        originName = originName,
+        slug = slug,
+        thumbUrl = thumbUrl,
+        posterUrl = posterUrl,
+        year = year,
+        quality = quality,
+        lang = lang,
+        episodeCurrent = if (hasNewEpisodes) "🔔 +$newEpisodesCount tập mới" else "☁️ Đã kéo $pulledUpToEpisode tập",
+        source = MovieSource.fromString(source)
+    )
+
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("slug", slug)
+        put("name", name)
+        put("originName", originName)
+        put("thumbUrl", thumbUrl)
+        put("posterUrl", posterUrl)
+        put("year", year)
+        put("quality", quality)
+        put("lang", lang)
+        put("source", source)
+        put("pulledUpToEpisode", pulledUpToEpisode)
+        put("pulledEpisodesText", pulledEpisodesText)
+        put("latestKnownEpisodes", latestKnownEpisodes)
+        put("autoPullNewEpisodes", autoPullNewEpisodes)
+        put("updatedAt", updatedAt)
+    }
+
+    companion object {
+        fun fromJson(json: JSONObject): CloudSyncedMovie? {
+            val slug = json.optString("slug").takeIf { it.isNotBlank() } ?: return null
+            val name = json.optString("name").takeIf { it.isNotBlank() } ?: return null
+            return CloudSyncedMovie(
+                slug = slug,
+                name = name,
+                originName = json.optString("originName"),
+                thumbUrl = json.optString("thumbUrl"),
+                posterUrl = json.optString("posterUrl"),
+                year = json.optString("year"),
+                quality = json.optString("quality", "HD"),
+                lang = json.optString("lang", "Vietsub"),
+                source = json.optString("source", "vsmov"),
+                pulledUpToEpisode = json.optInt("pulledUpToEpisode", 0),
+                pulledEpisodesText = json.optString("pulledEpisodesText", ""),
+                latestKnownEpisodes = json.optInt("latestKnownEpisodes", 0),
+                autoPullNewEpisodes = json.optBoolean("autoPullNewEpisodes", true),
+                updatedAt = json.optLong("updatedAt", System.currentTimeMillis())
+            )
+        }
+    }
+}
+
 /**
- * Trình quản lý danh sách phim (Theo dõi / Yêu thích, Đang xem dở, Lịch sử xem gần đây)
+ * Trình quản lý danh sách phim (Theo dõi / Yêu thích, Đang xem dở, Lịch sử xem gần đây, Đã kéo về Tele Cloud)
  * Lưu trữ bằng SharedPreferences JSON, tự động đồng bộ StateFlow tức thì
  */
 object MovieStore {
@@ -97,6 +177,7 @@ object MovieStore {
     private const val KEY_WATCHLIST = "movie_watchlist"
     private const val KEY_CONTINUE = "movie_continue"
     private const val KEY_HISTORY = "movie_history"
+    private const val KEY_CLOUD_SYNCED = "movie_cloud_synced"
 
     private val _watchlistFlow = MutableStateFlow<List<MovieItem>>(emptyList())
     val watchlistFlow: StateFlow<List<MovieItem>> = _watchlistFlow.asStateFlow()
@@ -106,6 +187,9 @@ object MovieStore {
 
     private val _historyFlow = MutableStateFlow<List<MovieWatchProgress>>(emptyList())
     val historyFlow: StateFlow<List<MovieWatchProgress>> = _historyFlow.asStateFlow()
+
+    private val _cloudSyncedFlow = MutableStateFlow<List<CloudSyncedMovie>>(emptyList())
+    val cloudSyncedFlow: StateFlow<List<CloudSyncedMovie>> = _cloudSyncedFlow.asStateFlow()
 
     private var initialized = false
 
@@ -171,6 +255,21 @@ object MovieStore {
                     MovieWatchProgress.fromJson(array.getJSONObject(i))?.let { list.add(it) }
                 }
                 _historyFlow.value = list.sortedByDescending { it.updatedAt }
+            }
+        } catch (_: Exception) {}
+
+        // 4. Cloud Synced Movies
+        try {
+            val cloudRaw = prefs.getString(KEY_CLOUD_SYNCED, null)
+            if (!cloudRaw.isNullOrBlank()) {
+                val array = JSONArray(cloudRaw)
+                val list = mutableListOf<CloudSyncedMovie>()
+                for (i in 0 until array.length()) {
+                    CloudSyncedMovie.fromJson(array.getJSONObject(i))?.let { list.add(it) }
+                }
+                _cloudSyncedFlow.value = list.sortedWith(
+                    compareByDescending<CloudSyncedMovie> { it.hasNewEpisodes }.thenByDescending { it.updatedAt }
+                )
             }
         } catch (_: Exception) {}
     }
@@ -309,6 +408,27 @@ object MovieStore {
             _historyFlow.value = histList
             saveHistory(context, histList)
         }
+        val contList = _continueWatchingFlow.value.toMutableList()
+        if (contList.removeAll { it.slug == slug }) {
+            _continueWatchingFlow.value = contList
+            saveContinue(context, contList)
+        }
+    }
+
+    @Synchronized
+    fun removeMultipleFromHistory(context: Context, slugs: Set<String>) {
+        if (slugs.isEmpty()) return
+        init(context)
+        val histList = _historyFlow.value.toMutableList()
+        if (histList.removeAll { it.slug in slugs }) {
+            _historyFlow.value = histList
+            saveHistory(context, histList)
+        }
+        val contList = _continueWatchingFlow.value.toMutableList()
+        if (contList.removeAll { it.slug in slugs }) {
+            _continueWatchingFlow.value = contList
+            saveContinue(context, contList)
+        }
     }
 
     @Synchronized
@@ -332,6 +452,129 @@ object MovieStore {
             val array = JSONArray()
             list.forEach { array.put(it.toJson()) }
             getPrefs(context).edit().putString(KEY_HISTORY, array.toString()).apply()
+        } catch (_: Exception) {}
+    }
+
+    // =========================================================================
+    // CLOUD SYNCED MOVIES (TRACKING PHIM ĐÃ KÉO VỀ TELE CLOUD & TẬP MỚI)
+    // =========================================================================
+
+    fun getCloudSynced(slug: String): CloudSyncedMovie? {
+        return _cloudSyncedFlow.value.firstOrNull { it.slug == slug }
+    }
+
+    fun parseMaxEpisodeFromRange(epRange: String, totalEpisodes: Int, previousPulled: Int): Int {
+        val trimmed = epRange.trim().lowercase()
+        if (trimmed == "all" || trimmed == "full" || trimmed == "remaining") {
+            return maxOf(totalEpisodes, previousPulled, 1)
+        }
+        val nums = Regex("""\d+""").findAll(trimmed).mapNotNull { it.value.toIntOrNull() }.toList()
+        val maxInRange = nums.maxOrNull() ?: totalEpisodes
+        return maxOf(maxInRange, previousPulled)
+    }
+
+    @Synchronized
+    fun markCloudSynced(
+        context: Context,
+        movie: MovieItem,
+        epRange: String,
+        totalEpisodes: Int,
+        autoPull: Boolean? = null
+    ): CloudSyncedMovie {
+        init(context)
+        val currentList = _cloudSyncedFlow.value.toMutableList()
+        val existing = currentList.firstOrNull { it.slug == movie.slug }
+        val newPulledUpTo = parseMaxEpisodeFromRange(
+            epRange = epRange,
+            totalEpisodes = totalEpisodes,
+            previousPulled = existing?.pulledUpToEpisode ?: 0
+        )
+        val latestKnown = maxOf(totalEpisodes, existing?.latestKnownEpisodes ?: 0, newPulledUpTo)
+        val rangeText = when (epRange.trim().lowercase()) {
+            "all", "full", "remaining" -> if (newPulledUpTo > 1) "1-$newPulledUpTo" else "Full"
+            else -> if (newPulledUpTo > 1) "1-$newPulledUpTo" else epRange.trim()
+        }
+        val updated = CloudSyncedMovie(
+            slug = movie.slug,
+            name = movie.name,
+            originName = movie.originName.ifBlank { existing?.originName ?: "" },
+            thumbUrl = movie.thumbUrl.ifBlank { existing?.thumbUrl ?: "" },
+            posterUrl = movie.posterUrl.ifBlank { existing?.posterUrl ?: "" },
+            year = movie.year.ifBlank { existing?.year ?: "" },
+            quality = movie.quality.ifBlank { existing?.quality ?: "HD" },
+            lang = movie.lang.ifBlank { existing?.lang ?: "Vietsub" },
+            source = movie.source.name.lowercase(),
+            pulledUpToEpisode = newPulledUpTo,
+            pulledEpisodesText = rangeText,
+            latestKnownEpisodes = latestKnown,
+            autoPullNewEpisodes = autoPull ?: (existing?.autoPullNewEpisodes ?: true),
+            updatedAt = System.currentTimeMillis()
+        )
+        currentList.removeAll { it.slug == movie.slug }
+        currentList.add(0, updated)
+        val sorted = currentList.sortedWith(
+            compareByDescending<CloudSyncedMovie> { it.hasNewEpisodes }.thenByDescending { it.updatedAt }
+        )
+        _cloudSyncedFlow.value = sorted
+        saveCloudSynced(context, sorted)
+        return updated
+    }
+
+    @Synchronized
+    fun updateCloudLatestEpisodes(
+        context: Context,
+        slug: String,
+        latestEpisodes: Int,
+        newPulledUpTo: Int? = null
+    ): CloudSyncedMovie? {
+        init(context)
+        val currentList = _cloudSyncedFlow.value.toMutableList()
+        val idx = currentList.indexOfFirst { it.slug == slug }
+        if (idx < 0) return null
+        val existing = currentList[idx]
+        val pulled = newPulledUpTo?.let { maxOf(it, existing.pulledUpToEpisode) } ?: existing.pulledUpToEpisode
+        val latest = maxOf(latestEpisodes, existing.latestKnownEpisodes, pulled)
+        val updated = existing.copy(
+            pulledUpToEpisode = pulled,
+            pulledEpisodesText = if (pulled > 1) "1-$pulled" else existing.pulledEpisodesText,
+            latestKnownEpisodes = latest,
+            updatedAt = if (latest > existing.latestKnownEpisodes || newPulledUpTo != null) System.currentTimeMillis() else existing.updatedAt
+        )
+        currentList[idx] = updated
+        val sorted = currentList.sortedWith(
+            compareByDescending<CloudSyncedMovie> { it.hasNewEpisodes }.thenByDescending { it.updatedAt }
+        )
+        _cloudSyncedFlow.value = sorted
+        saveCloudSynced(context, sorted)
+        return updated
+    }
+
+    @Synchronized
+    fun setCloudAutoPull(context: Context, slug: String, autoPull: Boolean) {
+        init(context)
+        val currentList = _cloudSyncedFlow.value.toMutableList()
+        val idx = currentList.indexOfFirst { it.slug == slug }
+        if (idx < 0) return
+        currentList[idx] = currentList[idx].copy(autoPullNewEpisodes = autoPull)
+        _cloudSyncedFlow.value = currentList
+        saveCloudSynced(context, currentList)
+    }
+
+    @Synchronized
+    fun removeCloudSynced(context: Context, slug: String) {
+        init(context)
+        val currentList = _cloudSyncedFlow.value.toMutableList()
+        if (currentList.removeAll { it.slug == slug }) {
+            _cloudSyncedFlow.value = currentList
+            saveCloudSynced(context, currentList)
+        }
+    }
+
+    private fun saveCloudSynced(context: Context, list: List<CloudSyncedMovie>) {
+        try {
+            val array = JSONArray()
+            list.forEach { array.put(it.toJson()) }
+            getPrefs(context).edit().putString(KEY_CLOUD_SYNCED, array.toString()).apply()
         } catch (_: Exception) {}
     }
 }

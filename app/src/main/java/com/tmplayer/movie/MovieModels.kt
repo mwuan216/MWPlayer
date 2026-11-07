@@ -98,6 +98,7 @@ object MovieFilterData {
         FilterOption("", "Tất cả"),
         FilterOption("history", "Xem gần đây"),
         FilterOption("watchlist", "Theo dõi"),
+        FilterOption("cloud", "Đã kéo Tele"),
         FilterOption("phim-moi-cap-nhat", "Mới cập nhật"),
         FilterOption("phim-bo", "Phim bộ"),
         FilterOption("phim-le", "Phim lẻ"),

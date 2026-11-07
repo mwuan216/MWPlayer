@@ -202,12 +202,10 @@ class PlayerGestures(
                 if (pinched) return false
                 if (dragKind == DRAG_NONE && !begin(from, event)) return false
 
-                // Measured from where the finger went down rather than summed step by step, so a
-                // drag that wanders and comes back lands where it started.
                 if (dragKind == DRAG_SEEK) {
                     val tracker = fine ?: FineScrub.Tracker(from.x).also { fine = it }
                     tracker.move(event.x, (event.y - from.y) / density)
-                    applySeek(tracker, from.x)
+                    applySeek(tracker, -distanceX)
                     return true
                 }
                 val travel = (from.y - event.y) / (viewHeight * DRAG_RANGE)
@@ -411,14 +409,17 @@ class PlayerGestures(
      * network video fetching a new window for each one: a stutter, and a pile of cancelled
      * requests for a position the viewer was only passing through.
      */
-    private fun applySeek(tracker: FineScrub.Tracker, startX: Float) {
+    private fun applySeek(tracker: FineScrub.Tracker, dx: Float) {
         val length = durationMs()
         if (viewWidth <= 0 || length <= 0) return
-        // Held to the video's two ends, so travel past one is not banked and owed back later.
-        val pxPerMs = viewWidth / SEEK_RANGE_MS
-        tracker.clamp(startX - dragFromMs * pxPerMs, startX + (length - dragFromMs) * pxPerMs)
-        val delta = ((tracker.x - startX) / pxPerMs).toLong()
-        val target = (dragFromMs + delta).coerceIn(0L, length)
+        // Base full-screen seek range scales proportionally with video length (at least 3 mins, ~30% of duration, up to 45 mins)
+        val baseRangeMs = (length * 0.30f).coerceIn(SEEK_RANGE_MS, 2_700_000f)
+        // Velocity boost: faster horizontal swipes multiply the scrub rate up to 3.2x
+        val dpStep = abs(dx) / density
+        val velocityBoost = 1f + (dpStep / 10f).coerceIn(0f, 2.2f)
+        val stepMs = ((dx / viewWidth) * baseRangeMs * velocityBoost * tracker.rate).toLong()
+        val currentTarget = if (seekTarget >= 0L) seekTarget else dragFromMs
+        val target = (currentTarget + stepMs).coerceIn(0L, length)
         seekTarget = target
         onScrub(target - dragFromMs, target, length, tracker.rate)
     }
