@@ -96,9 +96,8 @@ data class FilterOption(
 object MovieFilterData {
     val categories = listOf(
         FilterOption("", "Tất cả"),
-        FilterOption("continue", "Đang xem dở"),
+        FilterOption("history", "Xem gần đây"),
         FilterOption("watchlist", "Theo dõi"),
-        FilterOption("history", "Lịch sử"),
         FilterOption("phim-moi-cap-nhat", "Mới cập nhật"),
         FilterOption("phim-bo", "Phim bộ"),
         FilterOption("phim-le", "Phim lẻ"),

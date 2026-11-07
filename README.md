@@ -33,10 +33,9 @@ Tải trực tiếp bản APK mới nhất đã được build sẵn từ reposi
 ### 1. 📺 Xem Phim Trực tuyến (Movie Online)
 - **Đa nguồn chất lượng cao:** Tích hợp trực tiếp **KKPhim** và **VSMov** với kho phim khổng lồ: *Phim chiếu rạp, Phim bộ, Phim lẻ, Cổ trang, Hàn Quốc, Trung Quốc, Hoạt hình/Anime, TV Shows, Subteam/Thuyết minh*.
 - **Featured Hero Carousel:** Slide banner chuyển tự động mượt mà các phim nổi bật nhất.
-- **Quản lý phim toàn diện:**
-  - 🎬 **Phim đang xem dở (Continue Watching):** Tự động lưu tiến trình xem, hiển thị thanh tiến trình % và nút *"Tiếp tục xem: Tập X (xx%)"* khôi phục chính xác vị trí đang xem dở.
-  - ⭐ **Danh sách theo dõi (Watchlist):** Thêm nhanh vào danh sách theo dõi/yêu thích với nút ⭐, có hàng kệ riêng và tab lọc riêng biệt.
-  - 🕒 **Phim xem gần đây (History):** Quản lý toàn bộ lịch sử các tập phim đã phát, hỗ trợ xóa lịch sử một chạm.
+- **Quản lý phim toàn diện & tinh gọn:**
+  - 🎬 **Phim Xem Gần Đây (Gộp chung Đang xem dở & Lịch sử):** Tự động lưu tiến trình xem, hiển thị thanh tiến trình % ngay trên thẻ phim và nút *"Tiếp tục xem: Tập X (xx%)"* khôi phục chính xác vị trí đang xem dở, kèm tính năng xóa lịch sử một chạm.
+  - ⭐ **Danh sách theo dõi (Watchlist):** Thêm nhanh vào danh sách theo dõi/yêu thích với nút ⭐ và lọc nhanh ngay trên thanh bộ lọc.
 - **Kéo phim về Tele Cloud:** Hỗ trợ tải phim trực tuyến và tự động đẩy lưu trữ về kho Telegram Cloud cá nhân (tính năng MovieCloudDownloader).
 
 ### 2. ✈️ Nguồn Video Telegram Đỉnh cao

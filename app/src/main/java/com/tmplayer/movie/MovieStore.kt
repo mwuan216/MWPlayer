@@ -315,7 +315,8 @@ object MovieStore {
     fun clearHistory(context: Context) {
         init(context)
         _historyFlow.value = emptyList()
-        getPrefs(context).edit().remove(KEY_HISTORY).apply()
+        _continueWatchingFlow.value = emptyList()
+        getPrefs(context).edit().remove(KEY_HISTORY).remove(KEY_CONTINUE).apply()
     }
 
     private fun saveContinue(context: Context, list: List<MovieWatchProgress>) {

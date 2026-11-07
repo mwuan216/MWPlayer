@@ -186,7 +186,6 @@ fun MoviePane(
     var movieDetail by catalogState::movieDetail
     var isDetailLoading by catalogState::isDetailLoading
 
-    val continueWatching by MovieStore.continueWatchingFlow.collectAsState()
     val watchlist by MovieStore.watchlistFlow.collectAsState()
     val history by MovieStore.historyFlow.collectAsState()
 
@@ -231,10 +230,7 @@ fun MoviePane(
             isGridLoading = true
             gridPage = 1
             try {
-                if (selectedCategory == "continue") {
-                    gridMovies = continueWatching.map { it.toMovieItem() }
-                    gridTotalPages = 1
-                } else if (selectedCategory == "watchlist") {
+                if (selectedCategory == "watchlist") {
                     gridMovies = watchlist
                     gridTotalPages = 1
                 } else if (selectedCategory == "history") {
@@ -277,7 +273,7 @@ fun MoviePane(
 
     // Load More Grid Data (Endless Pagination)
     fun loadGridMore() {
-        if (selectedCategory in listOf("continue", "watchlist", "history")) return
+        if (selectedCategory in listOf("watchlist", "history")) return
         if (isGridLoadingMore || isGridLoading || gridPage >= gridTotalPages) return
         scope.launch {
             isGridLoadingMore = true
@@ -359,11 +355,8 @@ fun MoviePane(
         }
     }
 
-    LaunchedEffect(continueWatching, watchlist, history, selectedCategory) {
-        if (selectedCategory == "continue") {
-            gridMovies = continueWatching.map { it.toMovieItem() }
-            gridTotalPages = 1
-        } else if (selectedCategory == "watchlist") {
+    LaunchedEffect(watchlist, history, selectedCategory) {
+        if (selectedCategory == "watchlist") {
             gridMovies = watchlist
             gridTotalPages = 1
         } else if (selectedCategory == "history") {
@@ -689,9 +682,8 @@ fun MoviePane(
                             )
                             Spacer(Modifier.height(12.dp))
                             val emptyMsg = when (selectedCategory) {
-                                "continue" -> "Chưa có phim đang xem dở"
                                 "watchlist" -> "Chưa có phim trong danh sách theo dõi"
-                                "history" -> "Chưa có lịch sử xem phim"
+                                "history" -> "Chưa có phim xem gần đây"
                                 else -> "Không tìm thấy phim phù hợp"
                             }
                             Text(
@@ -798,35 +790,11 @@ fun MoviePane(
                             }
                         }
 
-                        // SHELF: PHIM ĐANG XEM DỞ
-                        if (continueWatching.isNotEmpty()) {
-                            item(key = "shelf_continue") {
-                                MovieContinueShelfRow(
-                                    title = "🎬 Phim Đang Xem Dở",
-                                    records = continueWatching,
-                                    onViewAll = { selectedCategory = "continue" },
-                                    onRecordClick = { rec -> selectedMovieSlug = rec.slug }
-                                )
-                            }
-                        }
-
-                        // SHELF: PHIM ĐANG THEO DÕI
-                        if (watchlist.isNotEmpty()) {
-                            item(key = "shelf_watchlist") {
-                                MovieShelfRow(
-                                    title = "⭐ Phim Đang Theo Dõi",
-                                    movies = watchlist,
-                                    onViewAll = { selectedCategory = "watchlist" },
-                                    onMovieClick = { selectedMovieSlug = it.slug }
-                                )
-                            }
-                        }
-
-                        // SHELF: PHIM XEM GẦN ĐÂY
+                        // SHELF: PHIM XEM GẦN ĐÂY (Gộp chung phim đang xem dở & lịch sử gần đây)
                         if (history.isNotEmpty()) {
                             item(key = "shelf_history") {
                                 MovieContinueShelfRow(
-                                    title = "🕒 Phim Xem Gần Đây",
+                                    title = "🎬 Phim Xem Gần Đây",
                                     records = history,
                                     onViewAll = { selectedCategory = "history" },
                                     onRecordClick = { rec -> selectedMovieSlug = rec.slug }
