@@ -46,6 +46,9 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -79,13 +82,34 @@ import com.tmplayer.ui.theme.Tone
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+data class SourceHomeCache(
+    val latestMovies: List<MovieItem> = emptyList(),
+    val cinemaMovies: List<MovieItem> = emptyList(),
+    val seriesMovies: List<MovieItem> = emptyList(),
+    val singleMovies: List<MovieItem> = emptyList(),
+    val costumeMovies: List<MovieItem> = emptyList(),
+    val chinaMovies: List<MovieItem> = emptyList(),
+    val koreaMovies: List<MovieItem> = emptyList(),
+    val animeMovies: List<MovieItem> = emptyList(),
+    val subteamMovies: List<MovieItem> = emptyList()
+)
+
+data class GridCacheEntry(
+    val movies: List<MovieItem>,
+    val page: Int,
+    val totalPages: Int
+)
+
 /**
  * State holder singleton for Movie catalog to preserve data across navigation,
  * player activity launches, and screen configuration changes.
  */
 object MovieCatalogState {
-    var activeSource by mutableStateOf(MovieSource.KKPhim)
+    var activeSource by mutableStateOf(MovieSource.VSMov)
     var lastLoadedSource: MovieSource? = null
+
+    val homeCache = mutableMapOf<MovieSource, SourceHomeCache>()
+    val gridCache = mutableMapOf<String, GridCacheEntry>()
 
     var searchQuery by mutableStateOf("")
 
@@ -201,58 +225,135 @@ fun MoviePane(
         selectedYear.isNotBlank() ||
         viewAllCategory != null
 
-    // Load Home Shelves
-    fun loadHome() {
+    var isRefreshing by remember { mutableStateOf(false) }
+    val pullRefreshState = rememberPullToRefreshState()
+
+    fun currentGridCacheKey(source: MovieSource = activeSource): String =
+        "${source.name}|${searchQuery.trim()}|$selectedCategory|$selectedGenre|$selectedCountry|$selectedYear|${viewAllCategory?.first.orEmpty()}"
+
+    // Load Home Shelves (with per-source caching; only reloads from network if cache is empty or forceRefresh = true)
+    fun loadHome(forceRefresh: Boolean = false, onComplete: () -> Unit = {}) {
+        val targetSource = activeSource
+        val cached = catalogState.homeCache[targetSource]
+        if (!forceRefresh && cached != null && cached.latestMovies.isNotEmpty()) {
+            latestMovies = cached.latestMovies
+            cinemaMovies = cached.cinemaMovies
+            seriesMovies = cached.seriesMovies
+            singleMovies = cached.singleMovies
+            costumeMovies = cached.costumeMovies
+            chinaMovies = cached.chinaMovies
+            koreaMovies = cached.koreaMovies
+            animeMovies = cached.animeMovies
+            subteamMovies = cached.subteamMovies
+            isHomeLoading = false
+            onComplete()
+            return
+        }
+
         scope.launch {
-            isHomeLoading = true
+            if (!forceRefresh || latestMovies.isEmpty()) {
+                isHomeLoading = true
+            }
             try {
-                latestMovies = MovieRepository.getLatestMovies(activeSource, 1)
-                cinemaMovies = MovieRepository.getCategoryMovies(activeSource, "phim-chieu-rap", 1)
-                seriesMovies = MovieRepository.getCategoryMovies(activeSource, "phim-bo", 1)
-                singleMovies = MovieRepository.getCategoryMovies(activeSource, "phim-le", 1)
-                costumeMovies = MovieRepository.getGenreMovies(activeSource, "co-trang", 1)
-                chinaMovies = MovieRepository.getCountryMovies(activeSource, "trung-quoc", 1)
-                koreaMovies = MovieRepository.getCountryMovies(activeSource, "han-quoc", 1)
-                animeMovies = MovieRepository.getCategoryMovies(activeSource, "hoat-hinh", 1)
-                if (activeSource == MovieSource.VSMov) {
-                    subteamMovies = MovieRepository.getCategoryMovies(activeSource, "subteam", 1)
+                val latest = MovieRepository.getLatestMovies(targetSource, 1)
+                val cinema = MovieRepository.getCategoryMovies(targetSource, "phim-chieu-rap", 1)
+                val series = MovieRepository.getCategoryMovies(targetSource, "phim-bo", 1)
+                val single = MovieRepository.getCategoryMovies(targetSource, "phim-le", 1)
+                val costume = MovieRepository.getGenreMovies(targetSource, "co-trang", 1)
+                val china = MovieRepository.getCountryMovies(targetSource, "trung-quoc", 1)
+                val korea = MovieRepository.getCountryMovies(targetSource, "han-quoc", 1)
+                val anime = MovieRepository.getCategoryMovies(targetSource, "hoat-hinh", 1)
+                val subteam = if (targetSource == MovieSource.VSMov) {
+                    MovieRepository.getCategoryMovies(targetSource, "subteam", 1)
+                } else {
+                    emptyList()
+                }
+
+                if (latest.isNotEmpty()) {
+                    catalogState.homeCache[targetSource] = SourceHomeCache(
+                        latestMovies = latest,
+                        cinemaMovies = cinema,
+                        seriesMovies = series,
+                        singleMovies = single,
+                        costumeMovies = costume,
+                        chinaMovies = china,
+                        koreaMovies = korea,
+                        animeMovies = anime,
+                        subteamMovies = subteam
+                    )
+                }
+
+                if (activeSource == targetSource) {
+                    latestMovies = latest
+                    cinemaMovies = cinema
+                    seriesMovies = series
+                    singleMovies = single
+                    costumeMovies = costume
+                    chinaMovies = china
+                    koreaMovies = korea
+                    animeMovies = anime
+                    subteamMovies = subteam
                 }
             } catch (_: Exception) {
             } finally {
                 isHomeLoading = false
+                onComplete()
             }
         }
     }
 
-    // Load Grid Data Initial
-    fun loadGridInitial() {
+    // Load Grid Data Initial (with per-source & filter caching; only reloads from network if cache is empty or forceRefresh = true)
+    fun loadGridInitial(forceRefresh: Boolean = false, onComplete: () -> Unit = {}) {
+        if (selectedCategory == "watchlist") {
+            gridMovies = watchlist
+            gridPage = 1
+            gridTotalPages = 1
+            isGridLoading = false
+            onComplete()
+            return
+        }
+        if (selectedCategory == "history") {
+            gridMovies = history.map { it.toMovieItem() }
+            gridPage = 1
+            gridTotalPages = 1
+            isGridLoading = false
+            onComplete()
+            return
+        }
+
+        val targetSource = activeSource
+        val cacheKey = currentGridCacheKey(targetSource)
+        val cached = catalogState.gridCache[cacheKey]
+        if (!forceRefresh && cached != null && cached.movies.isNotEmpty()) {
+            gridMovies = cached.movies
+            gridPage = cached.page
+            gridTotalPages = cached.totalPages
+            isGridLoading = false
+            onComplete()
+            return
+        }
+
         scope.launch {
-            isGridLoading = true
+            if (!forceRefresh || gridMovies.isEmpty()) {
+                isGridLoading = true
+            }
             gridPage = 1
             try {
-                if (selectedCategory == "watchlist") {
-                    gridMovies = watchlist
-                    gridTotalPages = 1
-                } else if (selectedCategory == "history") {
-                    gridMovies = history.map { it.toMovieItem() }
-                    gridTotalPages = 1
-                } else if (searchQuery.isNotBlank()) {
-                    val res = MovieRepository.searchMovies(activeSource, searchQuery, 1)
-                    gridMovies = res
-                    gridTotalPages = if (res.size >= 18) 2 else 1
+                val (resItems, resTotal) = if (searchQuery.isNotBlank()) {
+                    val res = MovieRepository.searchMovies(targetSource, searchQuery, 1)
+                    res to (if (res.size >= 18) 2 else 1)
                 } else if (viewAllCategory != null) {
                     val slug = viewAllCategory!!.first
                     val res = when (slug) {
-                        "trung-quoc", "han-quoc", "au-my" -> MovieRepository.getCountryMovies(activeSource, slug, 1)
-                        "co-trang" -> MovieRepository.getGenreMovies(activeSource, slug, 1)
-                        "latest" -> MovieRepository.getLatestMovies(activeSource, 1)
-                        else -> MovieRepository.getCategoryMovies(activeSource, slug, 1)
+                        "trung-quoc", "han-quoc", "au-my" -> MovieRepository.getCountryMovies(targetSource, slug, 1)
+                        "co-trang" -> MovieRepository.getGenreMovies(targetSource, slug, 1)
+                        "latest" -> MovieRepository.getLatestMovies(targetSource, 1)
+                        else -> MovieRepository.getCategoryMovies(targetSource, slug, 1)
                     }
-                    gridMovies = res
-                    gridTotalPages = if (res.size >= 12) 2 else 1
+                    res to (if (res.size >= 12) 2 else 1)
                 } else {
-                    val (items, total) = MovieRepository.filterMovies(
-                        source = activeSource,
+                    MovieRepository.filterMovies(
+                        source = targetSource,
                         category = selectedCategory,
                         genre = selectedGenre,
                         country = selectedCountry,
@@ -260,13 +361,26 @@ fun MoviePane(
                         keyword = "",
                         page = 1
                     )
-                    gridMovies = items
-                    gridTotalPages = total
+                }
+
+                if (resItems.isNotEmpty()) {
+                    catalogState.gridCache[cacheKey] = GridCacheEntry(
+                        movies = resItems,
+                        page = 1,
+                        totalPages = resTotal
+                    )
+                }
+                if (activeSource == targetSource && currentGridCacheKey(activeSource) == cacheKey) {
+                    gridMovies = resItems
+                    gridTotalPages = resTotal
                 }
             } catch (_: Exception) {
-                gridMovies = emptyList()
+                if (!forceRefresh) {
+                    gridMovies = emptyList()
+                }
             } finally {
                 isGridLoading = false
+                onComplete()
             }
         }
     }
@@ -275,27 +389,29 @@ fun MoviePane(
     fun loadGridMore() {
         if (selectedCategory in listOf("watchlist", "history")) return
         if (isGridLoadingMore || isGridLoading || gridPage >= gridTotalPages) return
+        val targetSource = activeSource
+        val cacheKey = currentGridCacheKey(targetSource)
         scope.launch {
             isGridLoadingMore = true
             val nextPage = gridPage + 1
             try {
                 val newItems = if (searchQuery.isNotBlank()) {
-                    val res = MovieRepository.searchMovies(activeSource, searchQuery, nextPage)
+                    val res = MovieRepository.searchMovies(targetSource, searchQuery, nextPage)
                     if (res.size >= 18) gridTotalPages = nextPage + 1
                     res
                 } else if (viewAllCategory != null) {
                     val slug = viewAllCategory!!.first
                     val res = when (slug) {
-                        "trung-quoc", "han-quoc", "au-my" -> MovieRepository.getCountryMovies(activeSource, slug, nextPage)
-                        "co-trang" -> MovieRepository.getGenreMovies(activeSource, slug, nextPage)
-                        "latest" -> MovieRepository.getLatestMovies(activeSource, nextPage)
-                        else -> MovieRepository.getCategoryMovies(activeSource, slug, nextPage)
+                        "trung-quoc", "han-quoc", "au-my" -> MovieRepository.getCountryMovies(targetSource, slug, nextPage)
+                        "co-trang" -> MovieRepository.getGenreMovies(targetSource, slug, nextPage)
+                        "latest" -> MovieRepository.getLatestMovies(targetSource, nextPage)
+                        else -> MovieRepository.getCategoryMovies(targetSource, slug, nextPage)
                     }
                     if (res.size >= 12) gridTotalPages = nextPage + 1
                     res
                 } else {
                     val (items, total) = MovieRepository.filterMovies(
-                        source = activeSource,
+                        source = targetSource,
                         category = selectedCategory,
                         genre = selectedGenre,
                         country = selectedCountry,
@@ -310,8 +426,14 @@ fun MoviePane(
                 if (newItems.isNotEmpty()) {
                     val existingSlugs = gridMovies.map { it.slug }.toSet()
                     val distinctNew = newItems.filter { it.slug !in existingSlugs }
-                    gridMovies = gridMovies + distinctNew
+                    val updatedList = gridMovies + distinctNew
+                    gridMovies = updatedList
                     gridPage = nextPage
+                    catalogState.gridCache[cacheKey] = GridCacheEntry(
+                        movies = updatedList,
+                        page = nextPage,
+                        totalPages = gridTotalPages
+                    )
                 }
             } catch (_: Exception) {
             } finally {
@@ -336,22 +458,20 @@ fun MoviePane(
         }
     }
 
-    // Trigger home load on source change
-    LaunchedEffect(activeSource) {
+    // Trigger home or grid load on source / filter change (uses cache unless cache for that source/filter is empty)
+    LaunchedEffect(activeSource, isCatalogGridActive) {
         if (!isCatalogGridActive) {
-            if (catalogState.lastLoadedSource != activeSource || latestMovies.isEmpty()) {
-                catalogState.lastLoadedSource = activeSource
-                loadHome()
-            }
+            catalogState.lastLoadedSource = activeSource
+            loadHome(forceRefresh = false)
         } else {
-            loadGridInitial()
+            loadGridInitial(forceRefresh = false)
         }
     }
 
     // Trigger grid load when filter / search / viewAll changes
     LaunchedEffect(searchQuery, selectedCategory, selectedGenre, selectedCountry, selectedYear, viewAllCategory) {
         if (isCatalogGridActive) {
-            loadGridInitial()
+            loadGridInitial(forceRefresh = false)
         }
     }
 
@@ -417,7 +537,7 @@ fun MoviePane(
                     )
                 }
 
-                // SOURCE SWITCHER (KKPhim / VSMov)
+                // SOURCE SWITCHER (VSMov Tab 1 / KKPhim Tab 2)
                 Row(
                     modifier = Modifier
                         .clip(RoundedCornerShape(20.dp))
@@ -426,14 +546,14 @@ fun MoviePane(
                     horizontalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
                     SourceTabButton(
-                        title = "KKPhim",
-                        isSelected = activeSource == MovieSource.KKPhim,
-                        onClick = { activeSource = MovieSource.KKPhim }
-                    )
-                    SourceTabButton(
                         title = "VSMov",
                         isSelected = activeSource == MovieSource.VSMov,
                         onClick = { activeSource = MovieSource.VSMov }
+                    )
+                    SourceTabButton(
+                        title = "KKPhim",
+                        isSelected = activeSource == MovieSource.KKPhim,
+                        onClick = { activeSource = MovieSource.KKPhim }
                     )
                 }
             }
@@ -537,6 +657,8 @@ fun MoviePane(
                 // Quick Category Pills
                 val quickPills = listOf(
                     "" to "Tất cả",
+                    "history" to "Xem gần đây",
+                    "watchlist" to "Theo dõi",
                     "phim-bo" to "Phim bộ",
                     "phim-le" to "Phim lẻ",
                     "phim-chieu-rap" to "Chiếu rạp",
@@ -657,8 +779,27 @@ fun MoviePane(
 
         HorizontalDivider(color = Tone.outline.copy(alpha = 0.5f), thickness = 0.5.dp)
 
-        // MAIN CONTENT AREA
-        Box(
+        // MAIN CONTENT AREA (PULL TO REFRESH)
+        PullToRefreshBox(
+            isRefreshing = isRefreshing,
+            onRefresh = {
+                isRefreshing = true
+                if (isCatalogGridActive) {
+                    loadGridInitial(forceRefresh = true) { isRefreshing = false }
+                } else {
+                    loadHome(forceRefresh = true) { isRefreshing = false }
+                }
+            },
+            state = pullRefreshState,
+            indicator = {
+                PullToRefreshDefaults.Indicator(
+                    state = pullRefreshState,
+                    isRefreshing = isRefreshing,
+                    containerColor = Tone.surfaceHigh,
+                    color = Tone.accent,
+                    modifier = Modifier.align(Alignment.TopCenter)
+                )
+            },
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
@@ -672,7 +813,12 @@ fun MoviePane(
                         CircularProgressIndicator(color = Tone.accent, strokeWidth = 3.dp)
                     }
                 } else if (gridMovies.isEmpty()) {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState()),
+                        contentAlignment = Alignment.Center
+                    ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Icon(
                                 imageVector = TmIcons.Trailer,

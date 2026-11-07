@@ -4,14 +4,14 @@ import androidx.compose.runtime.Immutable
 
 /** Nguồn phim hỗ trợ */
 enum class MovieSource(val displayName: String, val badge: String) {
-    KKPhim("KKPhim (Khuyên dùng)", "KKPhim"),
-    VSMov("VSMov (Đa chất lượng)", "VSMov");
+    VSMov("VSMov (Đa chất lượng)", "VSMov"),
+    KKPhim("KKPhim (Khuyên dùng)", "KKPhim");
 
     companion object {
         fun fromString(value: String?): MovieSource {
             return when (value?.lowercase()) {
-                "vsmov" -> VSMov
-                else -> KKPhim
+                "kkphim" -> KKPhim
+                else -> VSMov
             }
         }
     }
@@ -31,7 +31,7 @@ data class MovieItem(
     val type: String = "",
     val episodeCurrent: String = "",
     val rating: String = "",
-    val source: MovieSource = MovieSource.KKPhim
+    val source: MovieSource = MovieSource.VSMov
 )
 
 /** Chi tiết bộ phim */
