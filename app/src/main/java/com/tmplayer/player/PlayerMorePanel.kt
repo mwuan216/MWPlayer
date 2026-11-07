@@ -382,6 +382,7 @@ class PlayerMorePanel(
     /** Every line the panel can carry: the phone's and the television's entries share these names. */
     private enum class Kind {
         LockScreen, PictureInPicture, PlaybackDetails, StartOver, PictureShape, ResetZoom, Stereo, Speed,
+        Subtitles, Audio,
         VolumeBoost, NightMode, EvenVolume, SleepTimer, AbLoop, NextChapter, PreviousChapter,
         NextFrame, PreviousFrame, SaveFrame, AddBookmark, Bookmarks, OpenInAnotherApp,
         LoadSubtitleFile, SaveToDownloads, MarkWatched, RemoteKeys,
@@ -438,6 +439,8 @@ class PlayerMorePanel(
             Kind.ResetZoom -> Line(kind, s.playerResetZoom, TmIcons.Refresh, host.zoomDetail())
             Kind.Stereo -> Line(kind, s.playerStereo, TmIcons.Visibility, host.stereoDetail() ?: s.commonOff)
             Kind.Speed -> Line(kind, s.playerSpeed, ImageVector.vectorResource(R.drawable.ic_speed), PlaybackSpeed.label(host.speed()))
+            Kind.Subtitles -> Line(kind, s.tracksSubtitles, TmIcons.Subtitles, null)
+            Kind.Audio -> Line(kind, s.playerAudio, ImageVector.vectorResource(R.drawable.ic_audio_language), null)
             Kind.VolumeBoost -> Line(kind, s.playerVolumeBoost, volume, if (host.volumeBoost()) s.playerVolumeBoostOnDetail else s.commonOff)
             Kind.NightMode -> Line(kind, s.playerNightMode, TmIcons.VolumeDown, if (host.nightMode()) s.playerNightModeOnDetail else s.commonOff)
             Kind.EvenVolume -> Line(kind, s.playerEvenVolume, volume, if (host.evenVolume()) s.playerEvenVolumeOnDetail else s.commonOff)

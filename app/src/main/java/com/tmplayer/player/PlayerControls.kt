@@ -122,10 +122,10 @@ class PlayerControls(
     private val episodesButton: TextView = root.findViewById(R.id.control_episodes)
     private val copyButton: TextView = root.findViewById(R.id.control_copy)
     private val seekButtonsContainer: View? = root.findViewById(R.id.controls_seek_buttons)
-    private val seekBack10m: TextView? = root.findViewById(R.id.control_seek_back_10m)
-    private val seekBack1m: TextView? = root.findViewById(R.id.control_seek_back_1m)
-    private val seekForward1m: TextView? = root.findViewById(R.id.control_seek_forward_1m)
-    private val seekForward10m: TextView? = root.findViewById(R.id.control_seek_forward_10m)
+    private val seekBack10m: View? = root.findViewById(R.id.control_seek_back_10m)
+    private val seekBack1m: View? = root.findViewById(R.id.control_seek_back_1m)
+    private val seekForward1m: View? = root.findViewById(R.id.control_seek_forward_1m)
+    private val seekForward10m: View? = root.findViewById(R.id.control_seek_forward_10m)
 
     /** The phone's times line shows what is left rather than the total. */
     var showRemaining = false
@@ -601,6 +601,12 @@ class PlayerControls(
     private fun setUpPhone(root: View) {
         listOf(tint, topBar, center, times).forEach { it.visibility = View.VISIBLE }
         listOf(timeText, title, subtitle).forEach { it.visibility = View.GONE }
+        val subtitlesBtn = root.findViewById<View>(R.id.control_subtitles)
+        val audioBtn = root.findViewById<View>(R.id.control_audio)
+        val speedBtn = root.findViewById<View>(R.id.control_speed)
+        listOfNotNull(subtitlesBtn, audioBtn, speedBtn, shapeButton, lockButton).forEach {
+            it.visibility = View.GONE
+        }
 
         wire(centerPlay) { onTogglePlay(); renderPlayPause(animate = true) }
         wire(root.findViewById(R.id.control_back)) { onBack() }
@@ -660,30 +666,18 @@ class PlayerControls(
         if (isWide) {
             seekBack10m?.visibility = View.VISIBLE
             seekForward10m?.visibility = View.VISIBLE
-            val padH = (8 * metrics.density).toInt()
-            listOfNotNull(seekBack10m, seekBack1m, seekForward1m, seekForward10m).forEach {
-                it.setPadding(padH, 0, padH, 0)
-                it.textSize = 13f
-            }
         } else {
             val spaceTight = (episodesButton.visibility == View.VISIBLE || copyButton.visibility == View.VISIBLE) && across < 420
             seekBack10m?.visibility = if (spaceTight) View.GONE else View.VISIBLE
             seekForward10m?.visibility = if (spaceTight) View.GONE else View.VISIBLE
-            val padH = (3 * metrics.density).toInt()
-            listOfNotNull(seekBack10m, seekBack1m, seekForward1m, seekForward10m).forEach {
-                it.setPadding(padH, 0, padH, 0)
-                it.textSize = 11f
-            }
         }
 
         if (isTv) {
             shapeButton.visibility = if (shapeOffered) View.VISIBLE else View.GONE
             return
         }
-        val wanted = if (across >= WIDE_ROW_DP) View.VISIBLE else View.GONE
-        val shapeWanted = if (shapeOffered) wanted else View.GONE
-        shapeButton.visibility = shapeWanted
-        lockButton.visibility = wanted
+        shapeButton.visibility = View.GONE
+        lockButton.visibility = View.GONE
     }
 
     /** Offers or takes away the picture shape button, for a video that is sound alone. */
@@ -775,10 +769,14 @@ class PlayerControls(
             R.id.center_play_pause to L.commonPause,
             R.id.center_next to L.playerNextEpisode,
             R.id.times_duration to L.playerShowTimeRemaining,
+            R.id.control_rotate to L.playerScreenOrientation,
+            R.id.control_seek_back_10m to "Tua lùi 10 phút",
+            R.id.control_seek_back_1m to "Tua lùi 1 phút",
+            R.id.control_seek_forward_1m to "Tua đi 1 phút",
+            R.id.control_seek_forward_10m to "Tua đi 10 phút",
             R.id.control_subtitles to L.tracksSubtitles,
             R.id.control_audio to L.playerAudio,
             R.id.control_speed to L.playerPlaybackSpeed,
-            R.id.control_rotate to L.playerScreenOrientation,
             R.id.control_lock to L.playerLockScreen,
             R.id.control_tv_more to L.commonMore,
             R.id.control_episodes to L.episodesTitle,

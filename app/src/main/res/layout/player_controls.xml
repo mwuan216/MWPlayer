@@ -431,6 +431,51 @@
                     android:paddingBottom="4dp">
 
                     <ImageButton
+                        android:id="@+id/control_rotate"
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:layout_marginStart="4dp"
+                        android:background="@drawable/bg_control_button"
+                        android:contentDescription="Screen orientation"
+                        android:nextFocusUp="@id/controls_timebar"
+                        android:padding="12dp"
+                        android:scaleType="fitCenter"
+                        android:src="@drawable/ic_rotate_landscape"
+                        android:tint="@color/player_control_icon"
+                        android:visibility="gone" />
+
+                    <!-- Quick seek rewind buttons: -10m, -1m -->
+                    <ImageButton
+                        android:id="@+id/control_seek_back_10m"
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:layout_marginStart="4dp"
+                        android:background="@drawable/bg_control_button"
+                        android:clickable="true"
+                        android:contentDescription="Tua lùi 10 phút"
+                        android:focusable="true"
+                        android:nextFocusUp="@id/controls_timebar"
+                        android:padding="12dp"
+                        android:scaleType="fitCenter"
+                        android:src="@drawable/ic_player_replay_10m"
+                        android:tint="@color/player_control_icon" />
+
+                    <ImageButton
+                        android:id="@+id/control_seek_back_1m"
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:layout_marginStart="4dp"
+                        android:background="@drawable/bg_control_button"
+                        android:clickable="true"
+                        android:contentDescription="Tua lùi 1 phút"
+                        android:focusable="true"
+                        android:nextFocusUp="@id/controls_timebar"
+                        android:padding="12dp"
+                        android:scaleType="fitCenter"
+                        android:src="@drawable/ic_player_replay_1m"
+                        android:tint="@color/player_control_icon" />
+
+                    <ImageButton
                         android:id="@+id/control_subtitles"
                         android:layout_width="48dp"
                         android:layout_height="48dp"
@@ -441,7 +486,8 @@
                         android:padding="12dp"
                         android:scaleType="fitCenter"
                         android:src="@drawable/ic_subtitles"
-                        android:tint="@color/player_control_icon" />
+                        android:tint="@color/player_control_icon"
+                        android:visibility="gone" />
 
                     <ImageButton
                         android:id="@+id/control_audio"
@@ -454,7 +500,8 @@
                         android:padding="12dp"
                         android:scaleType="fitCenter"
                         android:src="@drawable/ic_audio_language"
-                        android:tint="@color/player_control_icon" />
+                        android:tint="@color/player_control_icon"
+                        android:visibility="gone" />
 
                     <ImageButton
                         android:id="@+id/control_speed"
@@ -467,12 +514,9 @@
                         android:padding="12dp"
                         android:scaleType="fitCenter"
                         android:src="@drawable/ic_speed"
-                        android:tint="@color/player_control_icon" />
+                        android:tint="@color/player_control_icon"
+                        android:visibility="gone" />
 
-                    <!-- Picture shape: Fit, Crop, Stretch, a press each, the glyph showing the
-                         one in force. On both devices: on a television it was a page inside More,
-                         three presses and a list for the one control a sofa reaches for when a
-                         wide video leaves bars. A phone shows it only while the row has room. -->
                     <ImageButton
                         android:id="@+id/control_shape"
                         android:layout_width="48dp"
@@ -488,22 +532,6 @@
                         android:visibility="gone" />
 
                     <ImageButton
-                        android:id="@+id/control_rotate"
-                        android:layout_width="48dp"
-                        android:layout_height="48dp"
-                        android:layout_marginStart="4dp"
-                        android:background="@drawable/bg_control_button"
-                        android:contentDescription="Screen orientation"
-                        android:nextFocusUp="@id/controls_timebar"
-                        android:padding="12dp"
-                        android:scaleType="fitCenter"
-                        android:src="@drawable/ic_rotate_landscape"
-                        android:tint="@color/player_control_icon"
-                        android:visibility="gone" />
-
-                    <!-- Phone only, and only while the row has room: the lock, a press away
-                         rather than first in the overflow. A phone held upright keeps it there. -->
-                    <ImageButton
                         android:id="@+id/control_lock"
                         android:layout_width="48dp"
                         android:layout_height="48dp"
@@ -516,8 +544,6 @@
                         android:tint="@color/player_control_icon"
                         android:visibility="gone" />
 
-                    <!-- Television only: the row's overflow, last so it is the end of the walk.
-                         The phone's is in its top bar. -->
                     <ImageButton
                         android:id="@+id/control_tv_more"
                         android:layout_width="48dp"
@@ -583,7 +609,7 @@
                 android:textSize="15sp"
                 android:visibility="gone" />
 
-            <!-- Quick seek buttons: -10m, -1m, +1m, +10m -->
+            <!-- Quick seek forward buttons: +1m, +10m -->
             <LinearLayout
                 android:id="@+id/controls_seek_buttons"
                 android:layout_width="wrap_content"
@@ -592,81 +618,40 @@
                 android:background="@drawable/bg_controls_pill"
                 android:gravity="center_vertical"
                 android:orientation="horizontal"
-                android:paddingStart="2dp"
+                android:paddingStart="0dp"
                 android:paddingTop="4dp"
-                android:paddingEnd="2dp"
+                android:paddingEnd="4dp"
                 android:paddingBottom="4dp">
 
-                <TextView
-                    android:id="@+id/control_seek_back_10m"
-                    android:layout_width="wrap_content"
-                    android:layout_height="40dp"
-                    android:minWidth="34dp"
-                    android:background="@drawable/bg_control_button"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:fontFamily="sans-serif-medium"
-                    android:gravity="center"
-                    android:nextFocusUp="@id/controls_timebar"
-                    android:paddingStart="4dp"
-                    android:paddingEnd="4dp"
-                    android:text="-10m"
-                    android:textColor="@color/player_control_icon"
-                    android:textSize="12sp" />
-
-                <TextView
-                    android:id="@+id/control_seek_back_1m"
-                    android:layout_width="wrap_content"
-                    android:layout_height="40dp"
-                    android:minWidth="30dp"
-                    android:layout_marginStart="2dp"
-                    android:background="@drawable/bg_control_button"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:fontFamily="sans-serif-medium"
-                    android:gravity="center"
-                    android:nextFocusUp="@id/controls_timebar"
-                    android:paddingStart="4dp"
-                    android:paddingEnd="4dp"
-                    android:text="-1m"
-                    android:textColor="@color/player_control_icon"
-                    android:textSize="12sp" />
-
-                <TextView
+                <ImageButton
                     android:id="@+id/control_seek_forward_1m"
-                    android:layout_width="wrap_content"
-                    android:layout_height="40dp"
-                    android:minWidth="30dp"
-                    android:layout_marginStart="2dp"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:layout_marginStart="4dp"
                     android:background="@drawable/bg_control_button"
                     android:clickable="true"
+                    android:contentDescription="Tua đi 1 phút"
                     android:focusable="true"
-                    android:fontFamily="sans-serif-medium"
-                    android:gravity="center"
                     android:nextFocusUp="@id/controls_timebar"
-                    android:paddingStart="4dp"
-                    android:paddingEnd="4dp"
-                    android:text="+1m"
-                    android:textColor="@color/player_control_icon"
-                    android:textSize="12sp" />
+                    android:padding="12dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/ic_player_forward_1m"
+                    android:tint="@color/player_control_icon" />
 
-                <TextView
+                <ImageButton
                     android:id="@+id/control_seek_forward_10m"
-                    android:layout_width="wrap_content"
-                    android:layout_height="40dp"
-                    android:minWidth="34dp"
-                    android:layout_marginStart="2dp"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:layout_marginStart="4dp"
                     android:background="@drawable/bg_control_button"
                     android:clickable="true"
+                    android:contentDescription="Tua đi 10 phút"
                     android:focusable="true"
-                    android:fontFamily="sans-serif-medium"
-                    android:gravity="center"
                     android:nextFocusUp="@id/controls_timebar"
-                    android:paddingStart="4dp"
-                    android:paddingEnd="4dp"
-                    android:text="+10m"
-                    android:textColor="@color/player_control_icon"
-                    android:textSize="12sp" />
+                    android:padding="12dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/ic_player_forward_10m"
+                    android:tint="@color/player_control_icon" />
             </LinearLayout>
 
             <!-- On a television OK here flips the total to the time left, and its focus cue is

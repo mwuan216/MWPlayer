@@ -6384,6 +6384,8 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         when (entry) {
             PhoneMenuEntry.LockScreen -> lockScreen()
             PhoneMenuEntry.PictureInPicture -> enterPictureInPictureNow()
+            PhoneMenuEntry.Subtitles -> showTrackPicker(androidx.media3.common.C.TRACK_TYPE_TEXT)
+            PhoneMenuEntry.Audio -> showTrackPicker(androidx.media3.common.C.TRACK_TYPE_AUDIO)
             PhoneMenuEntry.VolumeBoost -> toggleVolumeBoost()
             PhoneMenuEntry.NightMode -> toggleNightMode()
             PhoneMenuEntry.EvenVolume -> toggleEvenVolume()

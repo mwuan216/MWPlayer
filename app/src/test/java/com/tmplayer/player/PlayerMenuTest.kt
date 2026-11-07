@@ -161,6 +161,8 @@ class PlayerMenuTest {
                 PhoneMenuEntry.LockScreen,
                 PhoneMenuEntry.PictureInPicture,
                 PhoneMenuEntry.Speed,
+                PhoneMenuEntry.Subtitles,
+                PhoneMenuEntry.Audio,
                 PhoneMenuEntry.VolumeBoost,
                 PhoneMenuEntry.NightMode,
                 PhoneMenuEntry.EvenVolume,
@@ -247,6 +249,8 @@ class PlayerMenuTest {
             listOf(
                 PhoneMenuEntry.LockScreen,
                 PhoneMenuEntry.Speed,
+                PhoneMenuEntry.Subtitles,
+                PhoneMenuEntry.Audio,
                 PhoneMenuEntry.VolumeBoost,
                 PhoneMenuEntry.NightMode,
                 PhoneMenuEntry.EvenVolume,

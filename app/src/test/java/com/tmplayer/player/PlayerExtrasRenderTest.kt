@@ -415,8 +415,8 @@ class PlayerExtrasRenderTest {
     @Config(sdk = [35], qualifiers = "w891dp-h411dp-land-night-xhdpi")
     fun rowPhoneSideways() {
         val controls = row(tv = false, name = "extras-row-phone-land.png")
-        assertTrue("picture shape on the row", controls.shapeOnRow)
-        assertTrue("the lock on the row", controls.lockOnRow)
+        // Picture shape and lock are in options menu
+        assertTrue(!controls.shapeOnRow && !controls.lockOnRow)
     }
 
     @Test

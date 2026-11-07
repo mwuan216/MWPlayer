@@ -86,6 +86,8 @@ enum class PhoneMenuEntry {
     Stereo,
     /** The speeds as a page, the one playing on the line, as the row's button opens them. */
     Speed,
+    Subtitles,
+    Audio,
     VolumeBoost,
     NightMode,
     EvenVolume,
@@ -133,6 +135,8 @@ fun PhoneMenuEntry.label(
     PhoneMenuEntry.ResetZoom -> L.playerResetZoom
     PhoneMenuEntry.Stereo -> stereo?.let { L.commonWithDetail(L.playerStereo, it) } ?: L.playerStereo
     PhoneMenuEntry.Speed -> L.playerSpeed
+    PhoneMenuEntry.Subtitles -> L.tracksSubtitles
+    PhoneMenuEntry.Audio -> L.playerAudio
     PhoneMenuEntry.VolumeBoost -> L.playerVolumeBoost
     PhoneMenuEntry.NightMode -> L.playerNightMode
     PhoneMenuEntry.EvenVolume -> L.playerEvenVolume
@@ -262,6 +266,8 @@ object PlayerMenu {
         if (pictureShape && zoomed) add(PhoneMenuEntry.ResetZoom)
         if (stereo) add(PhoneMenuEntry.Stereo)
         add(PhoneMenuEntry.Speed)
+        add(PhoneMenuEntry.Subtitles)
+        add(PhoneMenuEntry.Audio)
         add(PhoneMenuEntry.VolumeBoost)
         add(PhoneMenuEntry.NightMode)
         add(PhoneMenuEntry.EvenVolume)
