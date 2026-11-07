@@ -48,6 +48,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -185,6 +186,10 @@ fun MoviePane(
     var movieDetail by catalogState::movieDetail
     var isDetailLoading by catalogState::isDetailLoading
 
+    val continueWatching by MovieStore.continueWatchingFlow.collectAsState()
+    val watchlist by MovieStore.watchlistFlow.collectAsState()
+    val history by MovieStore.historyFlow.collectAsState()
+
     val activeFilterCount = (if (selectedCategory.isNotBlank()) 1 else 0) +
         (if (selectedGenre.isNotBlank()) 1 else 0) +
         (if (selectedCountry.isNotBlank()) 1 else 0) +
@@ -226,7 +231,16 @@ fun MoviePane(
             isGridLoading = true
             gridPage = 1
             try {
-                if (searchQuery.isNotBlank()) {
+                if (selectedCategory == "continue") {
+                    gridMovies = continueWatching.map { it.toMovieItem() }
+                    gridTotalPages = 1
+                } else if (selectedCategory == "watchlist") {
+                    gridMovies = watchlist
+                    gridTotalPages = 1
+                } else if (selectedCategory == "history") {
+                    gridMovies = history.map { it.toMovieItem() }
+                    gridTotalPages = 1
+                } else if (searchQuery.isNotBlank()) {
                     val res = MovieRepository.searchMovies(activeSource, searchQuery, 1)
                     gridMovies = res
                     gridTotalPages = if (res.size >= 18) 2 else 1
@@ -263,6 +277,7 @@ fun MoviePane(
 
     // Load More Grid Data (Endless Pagination)
     fun loadGridMore() {
+        if (selectedCategory in listOf("continue", "watchlist", "history")) return
         if (isGridLoadingMore || isGridLoading || gridPage >= gridTotalPages) return
         scope.launch {
             isGridLoadingMore = true
@@ -341,6 +356,19 @@ fun MoviePane(
     LaunchedEffect(searchQuery, selectedCategory, selectedGenre, selectedCountry, selectedYear, viewAllCategory) {
         if (isCatalogGridActive) {
             loadGridInitial()
+        }
+    }
+
+    LaunchedEffect(continueWatching, watchlist, history, selectedCategory) {
+        if (selectedCategory == "continue") {
+            gridMovies = continueWatching.map { it.toMovieItem() }
+            gridTotalPages = 1
+        } else if (selectedCategory == "watchlist") {
+            gridMovies = watchlist
+            gridTotalPages = 1
+        } else if (selectedCategory == "history") {
+            gridMovies = history.map { it.toMovieItem() }
+            gridTotalPages = 1
         }
     }
 
@@ -660,8 +688,14 @@ fun MoviePane(
                                 modifier = Modifier.size(54.dp)
                             )
                             Spacer(Modifier.height(12.dp))
+                            val emptyMsg = when (selectedCategory) {
+                                "continue" -> "Chưa có phim đang xem dở"
+                                "watchlist" -> "Chưa có phim trong danh sách theo dõi"
+                                "history" -> "Chưa có lịch sử xem phim"
+                                else -> "Không tìm thấy phim phù hợp"
+                            }
                             Text(
-                                "Không tìm thấy phim phù hợp",
+                                emptyMsg,
                                 color = Tone.text.copy(alpha = 0.6f),
                                 fontSize = 15.sp,
                                 fontWeight = FontWeight.Medium
@@ -682,6 +716,31 @@ fun MoviePane(
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                         modifier = Modifier.fillMaxSize()
                     ) {
+                        if (selectedCategory == "history" && gridMovies.isNotEmpty()) {
+                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "${gridMovies.size} phim trong lịch sử",
+                                        color = Tone.text.copy(alpha = 0.6f),
+                                        fontSize = 13.sp
+                                    )
+                                    Text(
+                                        text = "Xóa lịch sử",
+                                        color = Tone.accent,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        modifier = Modifier.clickable {
+                                            MovieStore.clearHistory(context)
+                                            gridMovies = emptyList()
+                                        }
+                                    )
+                                }
+                            }
+                        }
                         items(gridMovies, key = { it.slug }) { item ->
                             MoviePosterCard(
                                 movie = item,
@@ -735,6 +794,42 @@ fun MoviePane(
                                 MovieHeroCarousel(
                                     movies = latestMovies.take(6),
                                     onMovieClick = { selectedMovieSlug = it.slug }
+                                )
+                            }
+                        }
+
+                        // SHELF: PHIM ĐANG XEM DỞ
+                        if (continueWatching.isNotEmpty()) {
+                            item(key = "shelf_continue") {
+                                MovieContinueShelfRow(
+                                    title = "🎬 Phim Đang Xem Dở",
+                                    records = continueWatching,
+                                    onViewAll = { selectedCategory = "continue" },
+                                    onRecordClick = { rec -> selectedMovieSlug = rec.slug }
+                                )
+                            }
+                        }
+
+                        // SHELF: PHIM ĐANG THEO DÕI
+                        if (watchlist.isNotEmpty()) {
+                            item(key = "shelf_watchlist") {
+                                MovieShelfRow(
+                                    title = "⭐ Phim Đang Theo Dõi",
+                                    movies = watchlist,
+                                    onViewAll = { selectedCategory = "watchlist" },
+                                    onMovieClick = { selectedMovieSlug = it.slug }
+                                )
+                            }
+                        }
+
+                        // SHELF: PHIM XEM GẦN ĐÂY
+                        if (history.isNotEmpty()) {
+                            item(key = "shelf_history") {
+                                MovieContinueShelfRow(
+                                    title = "🕒 Phim Xem Gần Đây",
+                                    records = history,
+                                    onViewAll = { selectedCategory = "history" },
+                                    onRecordClick = { rec -> selectedMovieSlug = rec.slug }
                                 )
                             }
                         }
@@ -1258,6 +1353,147 @@ private fun MovieHeroCarousel(
 }
 
 @Composable
+private fun MovieContinueShelfRow(
+    title: String,
+    records: List<MovieWatchProgress>,
+    onViewAll: () -> Unit,
+    onRecordClick: (MovieWatchProgress) -> Unit
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = title,
+                color = Tone.text,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = "Xem tất cả ›",
+                color = Tone.accent,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.clickable(onClick = onViewAll)
+            )
+        }
+
+        Spacer(Modifier.height(6.dp))
+
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            items(records, key = { it.slug }) { record ->
+                Box(modifier = Modifier.width(135.dp)) {
+                    MovieContinueCard(record = record, onClick = { onRecordClick(record) })
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MovieContinueCard(
+    record: MovieWatchProgress,
+    onClick: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(16f / 10f)
+                .clip(RoundedCornerShape(10.dp))
+                .background(Tone.surfaceHigh)
+        ) {
+            AsyncMovieImage(
+                url = record.posterUrl.ifBlank { record.thumbUrl },
+                modifier = Modifier.fillMaxSize()
+            )
+
+            // Play icon overlay in center
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .align(Alignment.Center)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.65f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = TmIcons.PlaySolid,
+                    contentDescription = null,
+                    tint = Tone.accent,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+
+            // Episode Badge
+            if (record.episodeName.isNotBlank()) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(4.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color.Black.copy(alpha = 0.75f))
+                        .padding(horizontal = 5.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = record.episodeName,
+                        color = Color.White,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+
+            // Progress bar at bottom
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .height(3.dp)
+                    .background(Color.White.copy(alpha = 0.3f))
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(record.progressFraction)
+                        .fillMaxHeight()
+                        .background(Tone.accent)
+                )
+            }
+        }
+
+        Spacer(Modifier.height(4.dp))
+
+        Text(
+            text = record.name,
+            color = Tone.text,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+
+        val progressPercent = (record.progressFraction * 100).toInt()
+        Text(
+            text = if (record.isFinished) "Đã hoàn thành" else "Còn lại • $progressPercent%",
+            color = Tone.accent,
+            fontSize = 10.sp
+        )
+    }
+}
+
+@Composable
 private fun MovieShelfRow(
     title: String,
     movies: List<MovieItem>,
@@ -1414,6 +1650,10 @@ private fun MovieDetailContent(
     var isCloudMode by remember { mutableStateOf(false) }
     var customRangeInput by remember { mutableStateOf("") }
 
+    val savedProgress = remember(detail.movie.slug) { MovieStore.getProgress(detail.movie.slug) }
+    val watchlist by MovieStore.watchlistFlow.collectAsState()
+    val isFollowed = watchlist.any { it.slug == detail.movie.slug }
+
     val activeServer = detail.servers.getOrNull(selectedServerIdx) ?: detail.servers.firstOrNull()
     val epList = activeServer?.episodes ?: emptyList()
 
@@ -1519,19 +1759,15 @@ private fun MovieDetailContent(
 
         Spacer(Modifier.height(14.dp))
 
-        // PRIMARY ACTION BUTTONS (Xem phim ngay + Kéo về Cloud)
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            // Xem phim ngay
+        // CONTINUE WATCHING BUTTON (If progress exists)
+        if (savedProgress != null && !savedProgress.isFinished && savedProgress.positionMs > 5000L) {
             Box(
                 modifier = Modifier
-                    .weight(1f)
+                    .fillMaxWidth()
                     .clip(RoundedCornerShape(10.dp))
                     .background(Tone.accent)
-                    .clickable { onPlayEpisode(selectedServerIdx, 0) }
-                    .padding(vertical = 12.dp),
+                    .clickable { onPlayEpisode(savedProgress.serverIndex, savedProgress.episodeIndex) }
+                    .padding(vertical = 12.dp, horizontal = 16.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1541,11 +1777,77 @@ private fun MovieDetailContent(
                         tint = Color.Black,
                         modifier = Modifier.size(18.dp)
                     )
-                    Spacer(Modifier.width(6.dp))
+                    Spacer(Modifier.width(8.dp))
+                    val epText = if (savedProgress.episodeName.isNotBlank()) savedProgress.episodeName else "Tập ${savedProgress.episodeIndex + 1}"
+                    val percent = (savedProgress.progressFraction * 100).toInt()
                     Text(
-                        text = "Xem phim ngay",
+                        text = "Tiếp tục xem: $epText ($percent%)",
                         color = Color.Black,
                         fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+        }
+
+        // PRIMARY ACTION BUTTONS (Xem phim ngay + Theo dõi + Kéo về Cloud)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            // Xem tập đầu / Xem ngay
+            val hasResume = savedProgress != null && !savedProgress.isFinished && savedProgress.positionMs > 5000L
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(if (hasResume) Tone.surfaceHigh else Tone.accent)
+                    .border(0.5.dp, if (hasResume) Tone.outline.copy(alpha = 0.5f) else Color.Transparent, RoundedCornerShape(10.dp))
+                    .clickable { onPlayEpisode(selectedServerIdx, 0) }
+                    .padding(vertical = 12.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = TmIcons.PlaySolid,
+                        contentDescription = null,
+                        tint = if (hasResume) Tone.text else Color.Black,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        text = if (hasResume) "Xem từ đầu" else "Xem ngay",
+                        color = if (hasResume) Tone.text else Color.Black,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            // Theo dõi / Yêu thích
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(if (isFollowed) Tone.accent.copy(alpha = 0.18f) else Tone.surfaceHigh)
+                    .border(0.5.dp, if (isFollowed) Tone.accent else Tone.outline.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+                    .clickable { MovieStore.toggleWatchlist(context, detail.movie) }
+                    .padding(vertical = 12.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = if (isFollowed) TmIcons.Star else TmIcons.StarOutline,
+                        contentDescription = null,
+                        tint = if (isFollowed) Tone.accent else Tone.text,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        text = if (isFollowed) "Đã theo dõi" else "Theo dõi",
+                        color = if (isFollowed) Tone.accent else Tone.text,
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.Bold
                     )
                 }
@@ -1567,13 +1869,13 @@ private fun MovieDetailContent(
                         imageVector = TmIcons.Download,
                         contentDescription = null,
                         tint = Tone.accent,
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(16.dp)
                     )
-                    Spacer(Modifier.width(6.dp))
+                    Spacer(Modifier.width(4.dp))
                     Text(
-                        text = "Kéo về Cloud",
+                        text = "Về Cloud",
                         color = Tone.text,
-                        fontSize = 13.sp,
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.Bold
                     )
                 }

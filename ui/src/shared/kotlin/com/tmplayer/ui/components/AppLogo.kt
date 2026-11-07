@@ -93,6 +93,11 @@ fun BrandBadge(modifier: Modifier = Modifier) {
     )
 }
 
+/**
+ * Custom brand mark renderer provided by the app (e.g. Android resource painter).
+ */
+val LocalBrandMark = staticCompositionLocalOf<(@Composable (Dp) -> Unit)?> { null }
+
 /** The app's name beside its mark. A brand, never translated. */
 const val BRAND_NAME = "MWPlayer"
 
@@ -135,8 +140,9 @@ fun BrandLockup(
     Layout(
         contents = listOf(
             {
-                if (mark != null) {
-                    mark(size.mark)
+                val customMark = mark ?: LocalBrandMark.current
+                if (customMark != null) {
+                    customMark(size.mark)
                 } else {
                     Image(
                         AppLogo.Mark,

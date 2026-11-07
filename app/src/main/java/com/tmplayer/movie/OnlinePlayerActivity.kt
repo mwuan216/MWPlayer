@@ -222,6 +222,10 @@ fun OnlinePlayerScreen(
     val subtitleStyle by settings.subtitleStyle.collectAsState(initial = SubtitleStyle())
     val scope = rememberCoroutineScope()
 
+    val watchlist by MovieStore.watchlistFlow.collectAsState()
+    val isFollowed = watchlist.any { it.slug == detail.movie.slug }
+    var initialSeekDone by remember { mutableStateOf(false) }
+
     var serverIdx by remember { mutableIntStateOf(OnlinePlayerSession.serverIndex) }
     var epIdx by remember { mutableIntStateOf(OnlinePlayerSession.episodeIndex) }
 
@@ -368,6 +372,7 @@ fun OnlinePlayerScreen(
         if (stream != null && stream.streamUrl.isNotBlank()) {
             isLoading = true
             isEnded = false
+            initialSeekDone = false
             errorMessage = null
             try {
                 val subConfigs = stream.subtitles.map { sub ->
@@ -420,6 +425,13 @@ fun OnlinePlayerScreen(
                     isLoading = false
                     errorMessage = null
                     duration = exoPlayer.duration.coerceAtLeast(0L)
+                    if (!initialSeekDone) {
+                        initialSeekDone = true
+                        val saved = MovieStore.getProgress(detail.movie.slug)
+                        if (saved != null && saved.serverIndex == serverIdx && saved.episodeIndex == epIdx && !saved.isFinished && saved.positionMs > 5000L) {
+                            exoPlayer.seekTo(saved.positionMs)
+                        }
+                    }
                 }
             }
 
@@ -434,17 +446,42 @@ fun OnlinePlayerScreen(
         }
         exoPlayer.addListener(listener)
         onDispose {
+            if (currentPosition > 3000L && duration > 0L) {
+                MovieStore.saveProgress(
+                    context = context,
+                    detail = detail,
+                    serverIndex = serverIdx,
+                    episodeIndex = epIdx,
+                    episodeName = currentEp?.name ?: "",
+                    positionMs = currentPosition,
+                    durationMs = duration
+                )
+            }
             exoPlayer.removeListener(listener)
             exoPlayer.release()
         }
     }
 
-    // Position tracker loop
+    // Position tracker loop and auto-progress persistence
     LaunchedEffect(isPlaying) {
+        var lastSavedSec = 0L
         while (true) {
             if (exoPlayer.playbackState == Player.STATE_READY || exoPlayer.isPlaying) {
                 currentPosition = exoPlayer.currentPosition.coerceAtLeast(0L)
                 duration = exoPlayer.duration.coerceAtLeast(0L)
+                val curSec = currentPosition / 1000L
+                if (currentPosition > 3000L && duration > 0L && Math.abs(curSec - lastSavedSec) >= 5L) {
+                    lastSavedSec = curSec
+                    MovieStore.saveProgress(
+                        context = context,
+                        detail = detail,
+                        serverIndex = serverIdx,
+                        episodeIndex = epIdx,
+                        episodeName = currentEp?.name ?: "",
+                        positionMs = currentPosition,
+                        durationMs = duration
+                    )
+                }
             }
             delay(500)
         }
@@ -918,6 +955,17 @@ fun OnlinePlayerScreen(
                         )
                     }
 
+                    // Watchlist / Bookmark button
+                    ControlButton(
+                        icon = if (isFollowed) TmIcons.Star else TmIcons.StarOutline,
+                        tint = if (isFollowed) Tone.accent else Color.White,
+                        onClick = {
+                            MovieStore.toggleWatchlist(context, detail.movie)
+                            lastInteraction = System.currentTimeMillis()
+                        }
+                    )
+                    Spacer(Modifier.width(8.dp))
+
                     // Screen Lock button
                     ControlButton(
                         icon = TmIcons.Lock,
@@ -1054,7 +1102,25 @@ fun OnlinePlayerScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            // Tua lùi -10m & -1m
+                            ControlPill(
+                                text = "10m",
+                                drawableRes = com.tmplayer.R.drawable.ic_player_replay_10m,
+                                onClick = {
+                                    exoPlayer.seekTo((exoPlayer.currentPosition - 600_000L).coerceAtLeast(0L))
+                                    lastInteraction = System.currentTimeMillis()
+                                }
+                            )
+                            ControlPill(
+                                text = "1m",
+                                drawableRes = com.tmplayer.R.drawable.ic_player_replay_1m,
+                                onClick = {
+                                    exoPlayer.seekTo((exoPlayer.currentPosition - 60_000L).coerceAtLeast(0L))
+                                    lastInteraction = System.currentTimeMillis()
+                                }
+                            )
+
                             // Prev episode
                             if (epIdx > 0) {
                                 ControlPill(
@@ -1082,7 +1148,28 @@ fun OnlinePlayerScreen(
                             }
                         }
 
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            // Tua tới +1m & +10m
+                            ControlPill(
+                                text = "1m",
+                                drawableRes = com.tmplayer.R.drawable.ic_player_forward_1m,
+                                onClick = {
+                                    val dur = exoPlayer.duration
+                                    val target = exoPlayer.currentPosition + 60_000L
+                                    exoPlayer.seekTo(if (dur > 0) target.coerceAtMost(dur) else target)
+                                    lastInteraction = System.currentTimeMillis()
+                                }
+                            )
+                            ControlPill(
+                                text = "10m",
+                                drawableRes = com.tmplayer.R.drawable.ic_player_forward_10m,
+                                onClick = {
+                                    val dur = exoPlayer.duration
+                                    val target = exoPlayer.currentPosition + 600_000L
+                                    exoPlayer.seekTo(if (dur > 0) target.coerceAtMost(dur) else target)
+                                    lastInteraction = System.currentTimeMillis()
+                                }
+                            )
                             // Playback speed toggle
                             ControlPill(
                                 text = "${playbackSpeed}x",
@@ -1514,7 +1601,9 @@ private fun LevelIndicatorHud(
 
 @Composable
 private fun ControlButton(
-    icon: ImageVector,
+    icon: ImageVector? = null,
+    drawableRes: Int? = null,
+    tint: Color = Color.White,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     size: androidx.compose.ui.unit.Dp = 40.dp
@@ -1527,7 +1616,21 @@ private fun ControlButton(
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
-        Icon(imageVector = icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(size * 0.55f))
+        if (drawableRes != null) {
+            Icon(
+                painter = androidx.compose.ui.res.painterResource(drawableRes),
+                contentDescription = null,
+                tint = tint,
+                modifier = Modifier.size(size * 0.55f)
+            )
+        } else if (icon != null) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = tint,
+                modifier = Modifier.size(size * 0.55f)
+            )
+        }
     }
 }
 
@@ -1535,6 +1638,7 @@ private fun ControlButton(
 private fun ControlPill(
     text: String,
     icon: ImageVector? = null,
+    drawableRes: Int? = null,
     onClick: () -> Unit
 ) {
     Row(
@@ -1546,7 +1650,14 @@ private fun ControlPill(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        if (icon != null) {
+        if (drawableRes != null) {
+            Icon(
+                painter = androidx.compose.ui.res.painterResource(drawableRes),
+                contentDescription = null,
+                tint = Color.White,
+                modifier = Modifier.size(16.dp)
+            )
+        } else if (icon != null) {
             Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
         }
         Text(

@@ -13,6 +13,7 @@ import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.isImeVisible
@@ -354,9 +355,21 @@ class MainActivity : ComponentActivity() {
         noteRequestedScreen(intent)
         setContent {
             TMPlayerTheme {
+                var splashShowing by remember { mutableStateOf(true) }
+                LaunchedEffect(Unit) {
+                    kotlinx.coroutines.delay(1200)
+                    splashShowing = false
+                }
                 // Shared screens (a video's copies) open their sheets as the phone's own sheet.
                 androidx.compose.runtime.CompositionLocalProvider(
                     com.tmplayer.ui.components.LocalSheetHost provides com.tmplayer.ui.components.PhoneSheetHost,
+                    com.tmplayer.ui.components.LocalBrandMark provides { sizeDp ->
+                        androidx.compose.foundation.Image(
+                            painter = androidx.compose.ui.res.painterResource(R.drawable.mwplayer_logo_mark),
+                            contentDescription = null,
+                            modifier = androidx.compose.ui.Modifier.size(sizeDp)
+                        )
+                    }
                 ) {
                     // Where each tap lands, for a page it opens to grow out of (see PageMotion).
                     // On a TV, banners and lines with buttons are reached from the screen's edge (HX22).
@@ -369,6 +382,30 @@ class MainActivity : ComponentActivity() {
                         }
                         // Messages at the top, clear of the floating bar and the buttons at the foot.
                         TopMessageHost()
+
+                        // MWPlayer Splash Screen overlay
+                        androidx.compose.animation.AnimatedVisibility(
+                            visible = splashShowing,
+                            enter = androidx.compose.animation.fadeIn(),
+                            exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(500)),
+                            modifier = androidx.compose.ui.Modifier.fillMaxSize().zIndex(100f)
+                        ) {
+                            val dark = com.tmplayer.ui.theme.LocalDarkTheme.current
+                            val splashRes = if (dark) R.drawable.mwplayer_splash_dark else R.drawable.mwplayer_splash_light
+                            androidx.compose.foundation.layout.Box(
+                                modifier = androidx.compose.ui.Modifier
+                                    .fillMaxSize()
+                                    .background(androidx.compose.ui.graphics.Color.Black),
+                                contentAlignment = androidx.compose.ui.Alignment.Center
+                            ) {
+                                androidx.compose.foundation.Image(
+                                    painter = androidx.compose.ui.res.painterResource(splashRes),
+                                    contentDescription = "MWPlayer Splash",
+                                    modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                                    contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                                )
+                            }
+                        }
                     }
                 }
             }

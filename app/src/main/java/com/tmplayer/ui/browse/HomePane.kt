@@ -1542,12 +1542,19 @@ private const val BRAND_KEY = "brand"
 /** The name's distance below the status bar on a phone's Home. */
 internal val BRAND_TOP = 12.dp
 
-/** The mark and "TMPlayer" at the top of a phone's Home, in the colours for art over the carousel. */
+/** The MWPlayer brand logo at the top of a phone's Home. */
 @Composable
 internal fun PhoneHomeBrand(modifier: Modifier, onArt: Boolean) {
-    com.tmplayer.ui.components.BrandLockup(
-        modifier,
-        layout = com.tmplayer.ui.components.BrandLayout.Row,
-        color = if (onArt) Tone.onArt else Tone.text,
+    val dark = com.tmplayer.ui.theme.LocalDarkTheme.current
+    val logoRes = if (onArt || dark) {
+        com.tmplayer.R.drawable.mwplayer_horizontal_logo
+    } else {
+        com.tmplayer.R.drawable.mwplayer_horizontal_logo_light
+    }
+    androidx.compose.foundation.Image(
+        painter = androidx.compose.ui.res.painterResource(logoRes),
+        contentDescription = "MWPlayer",
+        modifier = modifier.height(30.dp),
+        contentScale = androidx.compose.ui.layout.ContentScale.FillHeight,
     )
 }

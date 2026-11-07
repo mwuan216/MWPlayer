@@ -48,6 +48,7 @@ class App : Application() {
         super.onCreate()
         // First of all, so a crash anywhere below is written down for the next start to offer.
         CrashReports.watch(this)
+        com.tmplayer.movie.MovieStore.init(this)
         // Before anything reads them: a television trades looks for speed (see [Motion.television]).
         com.tmplayer.ui.theme.Motion.television = com.tmplayer.data.FormFactor.isTv(this)
         com.tmplayer.data.SettingsDefaults.evenVolume = !com.tmplayer.data.FormFactor.isTv(this)
