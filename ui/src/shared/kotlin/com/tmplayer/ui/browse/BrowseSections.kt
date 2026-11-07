@@ -25,6 +25,8 @@ enum class BrowseTab(val icon: ImageVector) {
     Home(TmIcons.Home),
     /** Online movies and series from KKPhim & VSMov */
     Movie(TmIcons.Trailer),
+    /** 18+ AV / JAV movies from AVDB, XXVN & MissAV */
+    Av(TmIcons.Favorite),
     /** Continue watching and Previously watched, as two tabs: both are videos already played. */
     History(TmIcons.History),
     Favorites(TmIcons.StarOutline),
@@ -38,6 +40,7 @@ enum class BrowseTab(val icon: ImageVector) {
     val label: String get() = when (this) {
         Home -> L.browseTabHome
         Movie -> "Movie"
+        Av -> "AV 18+"
         History -> L.browseTabHistory
         Favorites -> "Yêu thích"
         Chats -> L.browseTabChats
@@ -48,6 +51,7 @@ enum class BrowseTab(val icon: ImageVector) {
     val heading: String get() = when (this) {
         Home -> L.browseTabHomeHeading
         Movie -> "Kho Phim Online"
+        Av -> "Kho Phim AV 18+"
         History -> L.browseTabHistoryHeading
         Favorites -> "Video Yêu Thích"
         Chats -> L.browseTabChatsHeading
@@ -58,6 +62,7 @@ enum class BrowseTab(val icon: ImageVector) {
     val blurb: String get() = when (this) {
         Home -> L.browseTabHomeBlurb
         Movie -> "Xem phim trực tuyến miễn phí KKPhim & VSMov"
+        Av -> "Xem phim JAV 18+ từ AVDB, XXVN Vietsub & MissAV"
         History -> L.browseTabHistoryBlurb
         Favorites -> "Các video và tập phim bạn đã gắn dấu sao ⭐"
         Chats -> L.browseTabChatsBlurb
@@ -211,6 +216,9 @@ sealed interface BrowseSection {
     /** Online movies tab */
     val isMovie: Boolean get() = this is Tab && tab == BrowseTab.Movie
 
+    /** 18+ AV movies tab */
+    val isAv: Boolean get() = this is Tab && tab == BrowseTab.Av
+
     /** Favorite videos tab */
     val isFavorites: Boolean get() = this is Tab && tab == BrowseTab.Favorites
 
@@ -266,6 +274,7 @@ sealed interface BrowseSection {
 fun browseSections(folders: List<ChatFolderSummary>): List<BrowseSection> = buildList {
     add(BrowseSection.of(BrowseTab.Home))
     add(BrowseSection.of(BrowseTab.Movie))
+    add(BrowseSection.of(BrowseTab.Av))
     add(BrowseSection.of(BrowseTab.History))
     add(BrowseSection.of(BrowseTab.Favorites))
     add(BrowseSection.of(BrowseTab.Chats))
@@ -414,7 +423,7 @@ fun filterChats(
                 ChatFilter.People -> listed.filter { it.kind == ChatKind.Direct || it.kind == ChatKind.Saved }
             }
             // History is a list of videos, not chats, and Home is rows; neither reaches this filter.
-            BrowseTab.Home, BrowseTab.Movie, BrowseTab.History -> listed
+            BrowseTab.Home, BrowseTab.Movie, BrowseTab.Av, BrowseTab.History -> listed
         }
     }
     val ordered = if (section.isChats && sort == ChatSort.Name) {

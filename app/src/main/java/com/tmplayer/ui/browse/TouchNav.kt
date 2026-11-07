@@ -17,7 +17,10 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -132,7 +135,7 @@ import com.tmplayer.ui.theme.rememberReducedMotion
  * a button that opens the search over the page rather than a page of its own, and the profile
  * picture last, which opens [ProfilePopover] with the viewer's own lists and Settings.
  */
-internal enum class TouchDestination { Home, Movie, Chats }
+internal enum class TouchDestination { Home, Movie, Av, Chats }
 
 /** The profile picture's place on the bar: after every [TouchDestination] and Search. */
 internal val PROFILE_SLOT = TouchDestination.entries.size + 1
@@ -141,8 +144,24 @@ internal val PROFILE_SLOT = TouchDestination.entries.size + 1
  * Which of the bar's slots carries the sliding highlight: [current]'s button, or the picture on a
  * page behind it ([inProfile]: Favourites, History, Watch later, Downloads), or none.
  */
-internal fun barHighlightIndex(current: TouchDestination?, inProfile: Boolean = false): Int? =
-    current?.ordinal ?: if (inProfile) PROFILE_SLOT else null
+internal fun barHighlightIndex(
+    current: TouchDestination?,
+    inProfile: Boolean = false,
+    avVisible: Boolean = true,
+): Int? {
+    if (current != null) {
+        return when (current) {
+            TouchDestination.Home -> 0
+            TouchDestination.Movie -> 1
+            TouchDestination.Av -> if (avVisible) 2 else null
+            TouchDestination.Chats -> if (avVisible) 3 else 2
+        }
+    }
+    if (inProfile) {
+        return if (avVisible) 5 else 4
+    }
+    return null
+}
 
 /**
  * What the floating bar and the popover behind the picture show and do, the same on every page
@@ -160,6 +179,7 @@ internal class TouchNav(
     val updateVersion: String?,
     val onHome: () -> Unit,
     val onMovie: () -> Unit = {},
+    val onAv: () -> Unit = {},
     val onChats: () -> Unit,
     val onSearch: () -> Unit,
     /** Settings, from the picture's popover (the phone, the television's account menu). */
@@ -369,6 +389,7 @@ internal fun TouchNavHost(
                             badged = nav.downloadCount > 0 || nav.updateVersion != null,
                             onHome = retap(TouchDestination.Home, nav.onHome),
                             onMovie = retap(TouchDestination.Movie, nav.onMovie),
+                            onAv = retap(TouchDestination.Av, nav.onAv),
                             onChats = retap(TouchDestination.Chats, nav.onChats),
                             onSearch = nav.onSearch,
                             onProfile = { profileOpen = true },
@@ -424,6 +445,7 @@ internal fun TouchNavHost(
                     onDownloads = { profileOpen = false; nav.onDownloads() },
                     onHistory = { profileOpen = false; nav.onHistory(HistoryTab.Continue) },
                     onWatchLater = { profileOpen = false; nav.onHistory(HistoryTab.WatchLater) },
+                    onAv = { profileOpen = false; nav.onAv() },
                     onSettings = { profileOpen = false; nav.onSettings() },
                     onUpdate = { profileOpen = false; nav.onUpdate() },
                 )
@@ -529,10 +551,11 @@ internal fun TouchBrowseShell(
             current = when {
                 selected.isHome -> TouchDestination.Home
                 selected.isMovie -> TouchDestination.Movie
+                selected.isAv -> TouchDestination.Av
                 selected.onChatsPage -> TouchDestination.Chats
                 else -> null
             },
-            inProfile = !selected.isHome && !selected.isMovie && !selected.onChatsPage,
+            inProfile = !selected.isHome && !selected.isMovie && !selected.isAv && !selected.onChatsPage,
             hidden = searchOpen,
             actions = actions,
             position = barPosition,
@@ -659,6 +682,7 @@ private fun FloatingBar(
     badged: Boolean,
     onHome: () -> Unit,
     onMovie: () -> Unit = {},
+    onAv: () -> Unit = {},
     onChats: () -> Unit,
     onSearch: () -> Unit,
     onProfile: () -> Unit,
@@ -666,6 +690,10 @@ private fun FloatingBar(
     vertical: Boolean = false,
 ) {
     val s = LocalStrings.current
+    val context = LocalContext.current
+    LaunchedEffect(context) { com.tmplayer.av.AvStore.init(context) }
+    val avVisible by com.tmplayer.av.AvStore.isTabVisibleFlow.collectAsState()
+    val btnWidth = if (avVisible && !vertical) 52.dp else BUTTON_WIDTH
     val reduced = rememberReducedMotion() || Motion.reduced
     val outer = if (vertical) {
         Modifier
@@ -698,8 +726,8 @@ private fun FloatingBar(
           Box(contentAlignment = if (vertical) Alignment.TopCenter else Alignment.CenterStart) {
             // One highlight under the chosen page, sliding to the next one rather than blinking
             // off under one button and on under another, so the bar shows where the page went.
-            val index = barHighlightIndex(current, inProfile)
-            val step = with(LocalDensity.current) { ((if (vertical) BUTTON_HEIGHT else BUTTON_WIDTH) + BAR_SPACING).toPx() }
+            val index = barHighlightIndex(current, inProfile, avVisible)
+            val step = with(LocalDensity.current) { ((if (vertical) BUTTON_HEIGHT else btnWidth) + BAR_SPACING).toPx() }
             // Where the highlight stands, in buttons from the start: sprung to the chosen one, or,
             // while Home and Chats are on screen, following the pager (sprung only the first time,
             // coming in from another page, then held to the finger).
@@ -730,7 +758,7 @@ private fun FloatingBar(
                         val along = (slot.value * step).roundToInt()
                         if (vertical) IntOffset(0, along) else IntOffset(along, 0)
                     }
-                    .size(BUTTON_WIDTH, BUTTON_HEIGHT)
+                    .size(btnWidth, BUTTON_HEIGHT)
                     .graphicsLayer {
                         alpha = shown
                         // Stretched a little along the way while it springs to another button and
@@ -750,11 +778,14 @@ private fun FloatingBar(
                     .background(Tone.accent.copy(alpha = 0.16f)),
             )
             val buttons: @Composable () -> Unit = {
-                BarButton(TmIcons.Home, s.browseTabHome, current == TouchDestination.Home, onHome)
-                BarButton(TmIcons.Trailer, "Movie", current == TouchDestination.Movie, onMovie)
-                BarButton(TmIcons.Chats, s.browseTabChats, current == TouchDestination.Chats, onChats)
-                BarButton(TmIcons.Search, s.commonSearch, false, onSearch, role = Role.Button, modifier = searchShared)
-                ProfileButton(account, inProfile, badged, onProfile)
+                BarButton(TmIcons.Home, s.browseTabHome, current == TouchDestination.Home, onHome, buttonWidth = btnWidth)
+                BarButton(TmIcons.Trailer, "Movie", current == TouchDestination.Movie, onMovie, onLongClick = onAv, buttonWidth = btnWidth)
+                if (avVisible) {
+                    BarButton(TmIcons.Favorite, "AV 18+", current == TouchDestination.Av, onAv, buttonWidth = btnWidth)
+                }
+                BarButton(TmIcons.Chats, s.browseTabChats, current == TouchDestination.Chats, onChats, buttonWidth = btnWidth)
+                BarButton(TmIcons.Search, s.commonSearch, false, onSearch, role = Role.Button, modifier = searchShared, buttonWidth = btnWidth)
+                ProfileButton(account, inProfile, badged, onProfile, buttonWidth = btnWidth)
             }
             if (vertical) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(BAR_SPACING)) { buttons() }
@@ -768,7 +799,7 @@ private fun FloatingBar(
 
 /** The viewer's picture on the bar, which opens the popover of their own lists. */
 @Composable
-private fun ProfileButton(account: Account?, inProfile: Boolean, badged: Boolean, onProfile: () -> Unit) {
+private fun ProfileButton(account: Account?, inProfile: Boolean, badged: Boolean, onProfile: () -> Unit, buttonWidth: Dp = BUTTON_WIDTH) {
     val s = LocalStrings.current
     val reduced = rememberReducedMotion() || Motion.reduced
     val profilePress = remember { MutableInteractionSource() }
@@ -776,7 +807,7 @@ private fun ProfileButton(account: Account?, inProfile: Boolean, badged: Boolean
     com.tmplayer.ui.components.IconTip(s.navProfile) {
         Column(
             Modifier
-                .size(BUTTON_WIDTH, BUTTON_HEIGHT)
+                .size(buttonWidth, BUTTON_HEIGHT)
                 .pressScale(profilePress)
                 .clip(HIGHLIGHT_SHAPE)
                 .clickable(interactionSource = profilePress, indication = ripple(), role = Role.Button, onClick = onProfile)
@@ -834,22 +865,31 @@ private fun BarCaption(text: String, chosen: Boolean) {
     )
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun BarButton(
     icon: ImageVector,
     label: String,
     chosen: Boolean,
     onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
     role: Role = Role.Tab,
     modifier: Modifier = Modifier,
+    buttonWidth: Dp = BUTTON_WIDTH,
 ) {
     val press = remember { MutableInteractionSource() }
     Column(
         modifier
-            .size(BUTTON_WIDTH, BUTTON_HEIGHT)
+            .size(buttonWidth, BUTTON_HEIGHT)
             .pressScale(press)
             .clip(HIGHLIGHT_SHAPE)
-            .clickable(interactionSource = press, indication = ripple(), role = role, onClick = onClick)
+            .combinedClickable(
+                interactionSource = press,
+                indication = ripple(),
+                role = role,
+                onClick = onClick,
+                onLongClick = onLongClick,
+            )
             .semantics {
                 contentDescription = label
                 if (role == Role.Tab) selected = chosen
@@ -906,6 +946,7 @@ private fun ProfilePopover(
     onDownloads: () -> Unit,
     onHistory: () -> Unit,
     onWatchLater: () -> Unit,
+    onAv: () -> Unit = {},
     onSettings: () -> Unit,
     onUpdate: () -> Unit,
 ) {
@@ -983,6 +1024,7 @@ private fun ProfilePopover(
                     add { m -> PopoverRow(TmIcons.Download, s.navDownloads, downloadCount.takeIf { it > 0 }?.toString(), modifier = m, onClick = onDownloads) }
                     add { m -> PopoverRow(TmIcons.History, s.browseTabHistory, null, modifier = m, onClick = onHistory) }
                     add { m -> PopoverRow(TmIcons.Clock, s.browseTabWatchLater, null, modifier = m, onClick = onWatchLater) }
+                    add { m -> PopoverRow(TmIcons.Favorite, "Kho Phim AV 18+", null, modifier = m, onClick = onAv) }
                     add { m -> PopoverRow(TmIcons.Settings, s.navSettings, null, modifier = m, onClick = onSettings) }
                     if (updateVersion != null) {
                         // Amber, as on the television's rail and the desktop's side bar: the one row that is news.
@@ -1097,7 +1139,7 @@ private val POPOVER_WIDTH = 208.dp
 private val POPOVER_ROW = 44.dp
 
 /** The popover's rows before the divider: the four lists; Settings and Update come after it. */
-private const val POPOVER_LISTS = 4
+private const val POPOVER_LISTS = 5
 private val POPOVER_SHAPE = RoundedCornerShape(20.dp)
 
 /** The bar coming back: quick, with a little give as it lands. */

@@ -69,9 +69,10 @@ object MovieRepository {
     // =========================================================================
 
     suspend fun getLatestMovies(source: MovieSource, page: Int = 1): List<MovieItem> {
+        if (source.isAv) return com.tmplayer.av.AvRepository.getLatest(source, page)
         val url = when (source) {
             MovieSource.KKPhim -> "https://phimapi.com/danh-sach/phim-moi-cap-nhat?page=$page"
-            MovieSource.VSMov -> "https://vsmov.com/api/danh-sach/phim-moi-cap-nhat?page=$page"
+            else -> "https://vsmov.com/api/danh-sach/phim-moi-cap-nhat?page=$page"
         }
         val referer = if (source == MovieSource.VSMov) "https://vsmov.com/" else "https://phimapi.com/"
         val jsonStr = fetchJson(url, referer) ?: return emptyList()
@@ -83,9 +84,10 @@ object MovieRepository {
     // =========================================================================
 
     suspend fun getCategoryMovies(source: MovieSource, categorySlug: String, page: Int = 1): List<MovieItem> {
+        if (source.isAv) return com.tmplayer.av.AvRepository.getCategory(source, categorySlug, page)
         val url = when (source) {
             MovieSource.KKPhim -> "https://phimapi.com/v1/api/danh-sach/$categorySlug?page=$page&limit=18"
-            MovieSource.VSMov -> {
+            else -> {
                 // VSMov routes genres/anime under /the-loai/ instead of /danh-sach/
                 val path = when (categorySlug) {
                     "hoat-hinh", "co-trang", "hanh-dong", "tinh-cam", "hai-huoc", "tam-ly",
@@ -104,7 +106,7 @@ object MovieRepository {
     suspend fun getGenreMovies(source: MovieSource, genreSlug: String, page: Int = 1): List<MovieItem> {
         val url = when (source) {
             MovieSource.KKPhim -> "https://phimapi.com/v1/api/the-loai/$genreSlug?page=$page&limit=18"
-            MovieSource.VSMov -> "https://vsmov.com/api/the-loai/$genreSlug?page=$page"
+            else -> "https://vsmov.com/api/the-loai/$genreSlug?page=$page"
         }
         val referer = if (source == MovieSource.VSMov) "https://vsmov.com/" else "https://phimapi.com/"
         val jsonStr = fetchJson(url, referer) ?: return emptyList()
@@ -114,7 +116,7 @@ object MovieRepository {
     suspend fun getCountryMovies(source: MovieSource, countrySlug: String, page: Int = 1): List<MovieItem> {
         val url = when (source) {
             MovieSource.KKPhim -> "https://phimapi.com/v1/api/quoc-gia/$countrySlug?page=$page&limit=18"
-            MovieSource.VSMov -> "https://vsmov.com/api/quoc-gia/$countrySlug?page=$page"
+            else -> "https://vsmov.com/api/quoc-gia/$countrySlug?page=$page"
         }
         val referer = if (source == MovieSource.VSMov) "https://vsmov.com/" else "https://phimapi.com/"
         val jsonStr = fetchJson(url, referer) ?: return emptyList()
@@ -134,6 +136,7 @@ object MovieRepository {
         keyword: String = "",
         page: Int = 1
     ): Pair<List<MovieItem>, Int> {
+        if (source.isAv) return com.tmplayer.av.AvRepository.filterAv(source, category, keyword, page)
         val referer = if (source == MovieSource.VSMov) "https://vsmov.com/" else "https://phimapi.com/"
 
         val url = when (source) {
@@ -156,7 +159,7 @@ object MovieRepository {
                     }
                 }
             }
-            MovieSource.VSMov -> {
+            else -> {
                 val baseUrl = "https://vsmov.com/api"
                 buildString {
                     if (keyword.isNotBlank()) {
@@ -197,10 +200,11 @@ object MovieRepository {
     // =========================================================================
 
     suspend fun searchMovies(source: MovieSource, keyword: String, page: Int = 1): List<MovieItem> {
+        if (source.isAv) return com.tmplayer.av.AvRepository.filterAv(source, "", keyword, page).first
         val enc = URLEncoder.encode(keyword.trim(), "UTF-8")
         val url = when (source) {
             MovieSource.KKPhim -> "https://phimapi.com/v1/api/tim-kiem?keyword=$enc&page=$page&limit=24"
-            MovieSource.VSMov -> "https://vsmov.com/api/tim-kiem?keyword=$enc&page=$page"
+            else -> "https://vsmov.com/api/tim-kiem?keyword=$enc&page=$page"
         }
         val referer = if (source == MovieSource.VSMov) "https://vsmov.com/" else "https://phimapi.com/"
         val jsonStr = fetchJson(url, referer) ?: return emptyList()
@@ -212,9 +216,10 @@ object MovieRepository {
     // =========================================================================
 
     suspend fun getMovieDetail(source: MovieSource, slug: String): MovieDetail? {
+        if (source.isAv) return com.tmplayer.av.AvRepository.getDetail(source, slug)
         val url = when (source) {
             MovieSource.KKPhim -> "https://phimapi.com/phim/$slug"
-            MovieSource.VSMov -> "https://vsmov.com/api/phim/$slug"
+            else -> "https://vsmov.com/api/phim/$slug"
         }
         val referer = if (source == MovieSource.VSMov) "https://vsmov.com/" else "https://phimapi.com/"
         val jsonStr = fetchJson(url, referer) ?: return null
@@ -347,6 +352,9 @@ object MovieRepository {
         server: MovieServer,
         episode: MovieEpisode
     ): MovieStream = withContext(Dispatchers.IO) {
+        if (source.isAv) {
+            return@withContext com.tmplayer.av.AvRepository.resolveAvStream(source, movieTitle, server, episode)
+        }
         val baseStream = resolveStream(source, movieTitle, server, episode)
         if (source != MovieSource.VSMov || episode.linkEmbed.isBlank()) {
             return@withContext baseStream

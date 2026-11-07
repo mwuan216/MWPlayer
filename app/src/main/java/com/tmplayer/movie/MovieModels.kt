@@ -3,14 +3,20 @@ package com.tmplayer.movie
 import androidx.compose.runtime.Immutable
 
 /** Nguồn phim hỗ trợ */
-enum class MovieSource(val displayName: String, val badge: String) {
-    VSMov("VSMov (Đa chất lượng)", "VSMov"),
-    KKPhim("KKPhim (Khuyên dùng)", "KKPhim");
+enum class MovieSource(val displayName: String, val badge: String, val isAv: Boolean = false) {
+    VSMov("VSMov (Đa chất lượng)", "VSMov", false),
+    KKPhim("KKPhim (Khuyên dùng)", "KKPhim", false),
+    AVDB("AVDB (530K+ JAV)", "AVDB", true),
+    XXVN("XXVN (JAV Vietsub)", "XXVN", true),
+    MissAV("MissAV (HD Stream)", "MissAV", true);
 
     companion object {
         fun fromString(value: String?): MovieSource {
             return when (value?.lowercase()) {
                 "kkphim" -> KKPhim
+                "avdb" -> AVDB
+                "xxvn" -> XXVN
+                "missav" -> MissAV
                 else -> VSMov
             }
         }

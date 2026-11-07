@@ -21,7 +21,7 @@ Tải trực tiếp bản APK mới nhất đã được build sẵn từ reposi
 
 | Phiên bản | Kiến trúc CPU | Dung lượng | Tải xuống trực tiếp |
 | :--- | :--- | :--- | :--- |
-| **MWPlayer arm64-v8a** (Khuyên dùng) | `arm64-v8a` (Hầu hết điện thoại/TV mới) | ~49.4 MB | 🔗 [**Tải file APK (arm64-v8a)**](releases/MWPlayer-arm64-v8a.apk?raw=true) |
+| **MWPlayer arm64-v8a** (Khuyên dùng) | `arm64-v8a` (Hầu hết điện thoại/TV mới) | ~43.6 MB | 🔗 [**Tải file APK (arm64-v8a)**](releases/MWPlayer-arm64-v8a.apk?raw=true) |
 | **MWPlayer armeabi-v7a** | `armeabi-v7a` (Máy đời cũ, 32-bit) | ~48.1 MB | 🔗 [**Tải file APK (armeabi-v7a)**](releases/MWPlayer-armeabi-v7a.apk?raw=true) |
 
 > 💡 **Mẹo:** Nếu bạn không rõ kiến trúc máy của mình, hãy tải bản **`arm64-v8a`**. Các thiết bị Android sản xuất từ năm 2017 đến nay đều hỗ trợ `arm64-v8a`.
@@ -40,7 +40,18 @@ Tải trực tiếp bản APK mới nhất đã được build sẵn từ reposi
   - Tự động đánh dấu các bộ phim đã kéo về kho Telegram Cloud (`MovieBox #43264`), hiển thị tiến độ tập đã kéo (`☁️ Đã kéo X/Y`) ngay trên thẻ phim và trang chi tiết.
   - Tự động kiểm tra tập mới phát hành từ nguồn online, gửi **thông báo đẩy (Android Notification + Telegram)** và hỗ trợ **tự động kéo tập mới** về Tele Cloud.
 
-### 2. ✈️ Nguồn Video Telegram Đỉnh cao
+### 2. 🔥 Tab AV 18+ Chuyên Biệt & Bảo Mật Riêng Tư
+- **Tích hợp 3 nguồn JAV / 18+ lớn nhất:**
+  - **AVDB OpenAPI (`avdbapi.com`):** Kho hơn **530.000+ phim JAV** đầy đủ thông tin mã phim (`SONE`, `IPZZ`, `FC2-PPV`...), diễn viên, phân loại Không che (Uncensored), Uncensored Leak, Có che, Amateur/FC2, Chinese AV, Hentai.
+  - **XXVN OpenAPI (`xxvnapi.com`):** Kho phim **JAV Vietsub**, JAV HD, Không che, Clip Việt Nam, Hàn Quốc 18+, Châu Âu tốc độ cao trên CDN TikTok.
+  - **MissAV (`missav.ws` / `missav.ai`):** Tích hợp bộ giải mã luồng `eval(p,a,c,k,e,d)` trực tiếp kèm cơ chế **Smart Fallback** tự động chuyển đổi sang OpenAPI khi nhà mạng chặn SNI/DNS.
+- **Giao diện Thumbnail Ngang 16:9 & Tìm kiếm theo Diễn viên:** Hiển thị trọn vẹn ảnh bìa JAV chuẩn 16:9, hỗ trợ tìm nhanh theo mã phim hoặc bấm trực tiếp vào thẻ tên diễn viên (`👩 Actress`) để lọc toàn bộ phim của diễn viên đó.
+- **🔒 Bảo mật Khóa PIN 4 số & Ẩn Tab AV:**
+  - **Khóa mã PIN 4 số:** Đặt/Đổi/Xóa mã PIN 4 số và nút **Khóa ngay lập tức (`🔒`)** bảo vệ quyền riêng tư tuyệt đối.
+  - **Ẩn / Hiện Tab AV trên thanh điều hướng:** Tùy chọn ẩn hoàn toàn nút `AV 18+` khỏi thanh điều hướng dưới cùng; khi ẩn vẫn có thể mở nhanh bằng cách **nhấn giữ nút `Movie`** ở thanh dưới cùng hoặc mở từ menu **Hồ sơ (Profile)**.
+  - **Tách biệt hoàn toàn Lịch sử & Theo dõi:** Danh sách `⭐ AV Đang Theo Dõi` và `🎬 AV Xem Gần Đây` được lưu trữ độc lập trong `AvStore`, tuyệt đối không hiển thị trộn lẫn sang màn hình `Movie` hay `Home`.
+
+### 3. ✈️ Nguồn Video Telegram Đỉnh cao
 - Đồng bộ mượt mà với tài nguyên video từ Telegram (Saved Messages, channels, groups, supergroups, topics).
 - **Bộ lọc & Sắp xếp linh hoạt:**
   - Gộp nút *Mới nhất / Cũ nhất* thành 1 nút toggle chuyển đổi nhanh.
@@ -50,14 +61,14 @@ Tải trực tiếp bản APK mới nhất đã được build sẵn từ reposi
   - Tích hợp nút ⭐ trên thanh điều khiển của trình phát.
   - **Tự động Forward thông minh:** Tùy chọn cấu hình tự động forward video yêu thích về một kho tin nhắn / group / channel / topic riêng biệt (hỗ trợ `drop_author = true` giữ trọn sự riêng tư).
 
-### 3. 🎥 Trình phát Video Hiện đại (Advanced Video Player)
+### 4. 🎥 Trình phát Video Hiện đại (Advanced Video Player)
 - **Chuyển tập trực tiếp ở cụm điều khiển trung tâm (Online Movie Player):** Tích hợp nút **Tập trước / Tập tiếp** ngay hai bên nút Play/Pause chính giữa màn hình giúp chuyển tập tức thì, lược bỏ các nút phụ rườm rà ở thanh dưới.
 - **Vuốt ngang tua thông minh theo thời lượng & tốc độ vuốt (Dynamic Swipe-to-Seek):** Tự động tăng tốc độ tua khi vuốt ngang tỷ lệ thuận với độ dài video (30% tổng thời lượng, lên tới 45 phút cho một lượt vuốt trên phim dài 1–2 giờ) kết hợp nhân gia tốc theo tốc độ lướt ngón tay — áp dụng đồng bộ cho cả trình phát Online Movie và trình phát Telegram.
 - **Tua nhanh thông minh:** Bổ sung cụm phím tua nhanh chuyên dụng **-10m, -1m** (bên trái) và **+1m, +10m** (bên phải) với icon tùy biến sang trọng, cùng chạm đúp hai bên màn hình để tua nhanh 10 giây.
 - **Đa âm thanh & Phụ đề:** Tích hợp bộ chọn kênh âm thanh (Audio tracks) và phụ đề ngoài (Subtitles) đa ngôn ngữ.
 - **Chế độ phát:** Hỗ trợ Picture-in-Picture (PiP), phát nền khi tắt màn hình (Background playback), xoay ngang/dọc nhanh, khóa màn hình cảm ứng chống chạm nhầm.
 
-### 4. 🎨 Thiết kế Thương hiệu MWPlayer Đồng bộ
+### 5. 🎨 Thiết kế Thương hiệu MWPlayer Đồng bộ
 - **Giao diện:** Thiết kế giao diện Dark / Light Mode hiện đại, tối ưu độ tương phản và bảo vệ mắt.
 - **Màn hình khởi động (Splash Screen):** Áp dụng giao diện Splash Screen 1080x1920 sắc nét với hiệu ứng mờ dần (fade-out) mượt mà khi mở ứng dụng.
 - **Icon thích ứng (Adaptive Icon):** Căn giữa và co giãn chuẩn xác theo tỷ lệ an toàn của Android (Safe Zone Circle), không bị méo hình hay cắt góc trên bất kỳ giao diện launcher nào (Samsung OneUI, Google Pixel, Xiaomi HyperOS/MIUI...).

@@ -222,8 +222,14 @@ fun OnlinePlayerScreen(
     val subtitleStyle by settings.subtitleStyle.collectAsState(initial = SubtitleStyle())
     val scope = rememberCoroutineScope()
 
-    val watchlist by MovieStore.watchlistFlow.collectAsState()
-    val isFollowed = watchlist.any { it.slug == detail.movie.slug }
+    val isAv = detail.movie.source.isAv
+    val movieWatchlist by MovieStore.watchlistFlow.collectAsState()
+    val avWatchlist by com.tmplayer.av.AvStore.watchlistFlow.collectAsState()
+    val isFollowed = if (isAv) {
+        avWatchlist.any { it.slug == detail.movie.slug }
+    } else {
+        movieWatchlist.any { it.slug == detail.movie.slug }
+    }
     var initialSeekDone by remember { mutableStateOf(false) }
 
     var serverIdx by remember { mutableIntStateOf(OnlinePlayerSession.serverIndex) }
@@ -326,19 +332,26 @@ fun OnlinePlayerScreen(
         }
     }
 
-    val exoPlayer = remember {
-        val httpSourceFactory = DefaultHttpDataSource.Factory()
-            .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+    val httpSourceFactory = remember {
+        DefaultHttpDataSource.Factory()
+            .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
             .setConnectTimeoutMs(15_000)
             .setReadTimeoutMs(20_000)
             .setAllowCrossProtocolRedirects(true)
             .setDefaultRequestProperties(
                 mapOf(
                     "Referer" to (streamInfo?.referer ?: "https://phimapi.com/"),
-                    "Origin" to (streamInfo?.referer ?: "https://phimapi.com/").trimEnd('/')
+                    "Origin" to (streamInfo?.referer ?: "https://phimapi.com/").trimEnd('/'),
+                    "Accept" to "*/*",
+                    "Accept-Language" to "en-US,en;q=0.9",
+                    "Sec-Fetch-Dest" to "empty",
+                    "Sec-Fetch-Mode" to "cors",
+                    "Sec-Fetch-Site" to "cross-site"
                 )
             )
+    }
 
+    val exoPlayer = remember {
         val defaultDataSourceFactory = DefaultDataSource.Factory(context, httpSourceFactory)
         val mediaSourceFactory = DefaultMediaSourceFactory(defaultDataSourceFactory)
 
@@ -375,6 +388,19 @@ fun OnlinePlayerScreen(
             initialSeekDone = false
             errorMessage = null
             try {
+                val ref = stream.referer.ifBlank { "https://phimapi.com/" }
+                httpSourceFactory.setDefaultRequestProperties(
+                    mapOf(
+                        "Referer" to ref,
+                        "Origin" to ref.trimEnd('/'),
+                        "Accept" to "*/*",
+                        "Accept-Language" to "en-US,en;q=0.9",
+                        "Sec-Fetch-Dest" to "empty",
+                        "Sec-Fetch-Mode" to "cors",
+                        "Sec-Fetch-Site" to "cross-site"
+                    )
+                )
+
                 val subConfigs = stream.subtitles.map { sub ->
                     val finalUri = MovieRepository.getNormalizedSubtitleUri(context, sub.url)
                     MediaItem.SubtitleConfiguration.Builder(finalUri)
@@ -388,7 +414,7 @@ fun OnlinePlayerScreen(
                 val mediaItem = MediaItem.Builder()
                     .setUri(stream.streamUrl)
                     .apply {
-                        if (stream.streamUrl.contains(".m3u8") || stream.streamUrl.contains("/stream/")) {
+                        if (stream.streamUrl.contains(".m3u8") || stream.streamUrl.contains("/stream/") || stream.streamUrl.contains("/m/")) {
                             setMimeType(MimeTypes.APPLICATION_M3U8)
                         }
                         if (subConfigs.isNotEmpty()) {
@@ -427,7 +453,7 @@ fun OnlinePlayerScreen(
                     duration = exoPlayer.duration.coerceAtLeast(0L)
                     if (!initialSeekDone) {
                         initialSeekDone = true
-                        val saved = MovieStore.getProgress(detail.movie.slug)
+                        val saved = if (isAv) com.tmplayer.av.AvStore.getProgress(detail.movie.slug) else MovieStore.getProgress(detail.movie.slug)
                         if (saved != null && saved.serverIndex == serverIdx && saved.episodeIndex == epIdx && !saved.isFinished && saved.positionMs > 5000L) {
                             exoPlayer.seekTo(saved.positionMs)
                         }
@@ -447,15 +473,27 @@ fun OnlinePlayerScreen(
         exoPlayer.addListener(listener)
         onDispose {
             if (currentPosition > 3000L && duration > 0L) {
-                MovieStore.saveProgress(
-                    context = context,
-                    detail = detail,
-                    serverIndex = serverIdx,
-                    episodeIndex = epIdx,
-                    episodeName = currentEp?.name ?: "",
-                    positionMs = currentPosition,
-                    durationMs = duration
-                )
+                if (isAv) {
+                    com.tmplayer.av.AvStore.saveProgress(
+                        context = context,
+                        detail = detail,
+                        serverIndex = serverIdx,
+                        episodeIndex = epIdx,
+                        episodeName = currentEp?.name ?: "",
+                        positionMs = currentPosition,
+                        durationMs = duration
+                    )
+                } else {
+                    MovieStore.saveProgress(
+                        context = context,
+                        detail = detail,
+                        serverIndex = serverIdx,
+                        episodeIndex = epIdx,
+                        episodeName = currentEp?.name ?: "",
+                        positionMs = currentPosition,
+                        durationMs = duration
+                    )
+                }
             }
             exoPlayer.removeListener(listener)
             exoPlayer.release()
@@ -472,15 +510,27 @@ fun OnlinePlayerScreen(
                 val curSec = currentPosition / 1000L
                 if (currentPosition > 3000L && duration > 0L && Math.abs(curSec - lastSavedSec) >= 5L) {
                     lastSavedSec = curSec
-                    MovieStore.saveProgress(
-                        context = context,
-                        detail = detail,
-                        serverIndex = serverIdx,
-                        episodeIndex = epIdx,
-                        episodeName = currentEp?.name ?: "",
-                        positionMs = currentPosition,
-                        durationMs = duration
-                    )
+                    if (isAv) {
+                        com.tmplayer.av.AvStore.saveProgress(
+                            context = context,
+                            detail = detail,
+                            serverIndex = serverIdx,
+                            episodeIndex = epIdx,
+                            episodeName = currentEp?.name ?: "",
+                            positionMs = currentPosition,
+                            durationMs = duration
+                        )
+                    } else {
+                        MovieStore.saveProgress(
+                            context = context,
+                            detail = detail,
+                            serverIndex = serverIdx,
+                            episodeIndex = epIdx,
+                            episodeName = currentEp?.name ?: "",
+                            positionMs = currentPosition,
+                            durationMs = duration
+                        )
+                    }
                 }
             }
             delay(500)
@@ -961,7 +1011,11 @@ fun OnlinePlayerScreen(
                         icon = if (isFollowed) TmIcons.Star else TmIcons.StarOutline,
                         tint = if (isFollowed) Tone.accent else Color.White,
                         onClick = {
-                            MovieStore.toggleWatchlist(context, detail.movie)
+                            if (isAv) {
+                                com.tmplayer.av.AvStore.toggleWatchlist(context, detail.movie)
+                            } else {
+                                MovieStore.toggleWatchlist(context, detail.movie)
+                            }
                             lastInteraction = System.currentTimeMillis()
                         }
                     )

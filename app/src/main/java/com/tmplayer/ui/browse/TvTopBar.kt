@@ -89,7 +89,7 @@ internal val TV_BAR_END: Dp = Tv.SafeH + Tv.FocusClearance
 
 
 /** The phone's two tabs, which the television's bar carries in the same order. */
-internal enum class TvBarTab { Home, Movie, Chats }
+internal enum class TvBarTab { Home, Movie, Av, Chats }
 
 /** Asks from the bar that a page outside the browser (Downloads) cannot answer itself. */
 internal object TvBarSignals {
@@ -125,6 +125,7 @@ internal fun TvTopBar(
     searchOpen: Boolean,
     onHome: () -> Unit,
     onMovie: () -> Unit = {},
+    onAv: () -> Unit = {},
     onChats: () -> Unit,
     onSearch: () -> Unit,
     /** Called before any item of the account's menu goes anywhere (closes the search, say). */
@@ -149,6 +150,7 @@ internal fun TvTopBar(
     val ground = Tone.background
     val homeFocus = remember { FocusRequester() }
     val movieFocus = remember { FocusRequester() }
+    val avFocus = remember { FocusRequester() }
     val chatsFocus = remember { FocusRequester() }
     val searchFocus = remember { FocusRequester() }
     val profileFocus = remember { FocusRequester() }
@@ -211,6 +213,7 @@ internal fun TvTopBar(
                 BarTab(s.commonSearch, TmIcons.Search, searchOpen, onSearch, Modifier.focusRequester(searchRequester).tvReturnPoint(searchRequester))
                 BarTab(s.browseTabHome, TmIcons.Home, current == TvBarTab.Home && !searchOpen, onHome, Modifier.focusRequester(focusOf(TvBarTab.Home, homeFocus)).tvReturnPoint(focusOf(TvBarTab.Home, homeFocus)))
                 BarTab("Movie", TmIcons.Trailer, current == TvBarTab.Movie && !searchOpen, onMovie, Modifier.focusRequester(focusOf(TvBarTab.Movie, movieFocus)).tvReturnPoint(focusOf(TvBarTab.Movie, movieFocus)))
+                BarTab("AV 18+", TmIcons.Favorite, current == TvBarTab.Av && !searchOpen, onAv, Modifier.focusRequester(focusOf(TvBarTab.Av, avFocus)).tvReturnPoint(focusOf(TvBarTab.Av, avFocus)))
                 BarTab(s.browseTabChats, TmIcons.Chats, current == TvBarTab.Chats && !searchOpen, onChats, Modifier.focusRequester(focusOf(TvBarTab.Chats, chatsFocus)).tvReturnPoint(focusOf(TvBarTab.Chats, chatsFocus)))
             }
             Spacer(Modifier.width(18.dp))

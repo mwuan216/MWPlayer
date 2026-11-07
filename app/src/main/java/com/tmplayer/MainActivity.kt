@@ -1916,6 +1916,7 @@ private fun Root() {
             updateVersion = offeredUpdate,
             onHome = { browseTo(BrowseSection.of(BrowseTab.Home)) },
             onMovie = { browseTo(BrowseSection.of(BrowseTab.Movie)) },
+            onAv = { browseTo(BrowseSection.of(BrowseTab.Av)) },
             onChats = {
                 val back = BrowseSection.decode(lastChatsKey)
                 browseTo(back ?: BrowseSection.of(BrowseTab.Chats))
@@ -2237,6 +2238,7 @@ private fun Root() {
                         searchOpen = false,
                         onHome = { stayOnBar(); touchNav.onHome() },
                         onMovie = { stayOnBar(); touchNav.onMovie() },
+                        onAv = { stayOnBar(); touchNav.onAv() },
                         onChats = { stayOnBar(); touchNav.onChats() },
                         onSearch = {
                             com.tmplayer.ui.browse.TvBarSignals.searchAsked.value = true

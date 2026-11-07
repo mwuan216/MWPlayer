@@ -193,12 +193,15 @@ internal fun PhoneBrowse(
     // The Chats half of the Home and Chats pager: the page itself, or the chip it was left on.
     val chatsSection = if (tab.onChatsPage) tab else chatsPageOf(lastChats, sections)
     // The pager while it is on screen, for the bar's highlight to follow a swipe.
+    LaunchedEffect(context) { com.tmplayer.av.AvStore.init(context) }
+    val avVisible by com.tmplayer.av.AvStore.isTabVisibleFlow.collectAsState()
     val pagerRef = remember { mutableStateOf<PagerState?>(null) }
     val barPosition: (() -> Float)? = if (swipePage(tab) != null) {
-        remember(pagerRef, swipePage(tab)) {
+        remember(pagerRef, swipePage(tab), avVisible) {
             {
                 val pager = pagerRef.value
-                if (pager == null) (swipePage(tab) ?: 0).toFloat() else pager.currentPage + pager.currentPageOffsetFraction
+                val raw = if (pager == null) (swipePage(tab) ?: 0).toFloat() else pager.currentPage + pager.currentPageOffsetFraction
+                if (avVisible && raw > 1f) 1f + (raw - 1f) * 2f else raw
             }
         }
     } else {
@@ -220,6 +223,7 @@ internal fun PhoneBrowse(
             updateVersion = updateVersion,
             onHome = { onPickTab(BrowseSection.of(BrowseTab.Home)) },
             onMovie = { onPickTab(BrowseSection.of(BrowseTab.Movie)) },
+            onAv = { onPickTab(BrowseSection.of(BrowseTab.Av)) },
             onChats = { onPickTab(chatsPageOf(lastChats, sections)) },
             onSearch = openSearch,
             onSettings = onOpenSettings,
@@ -450,9 +454,9 @@ private fun PhonePageFrame(
     Scaffold(
         // Home has no top bar to collapse: the behaviour's limit is never measured there, so it
         // would take every drag for itself and the page would not scroll.
-        modifier = if (pinned || section.isHome || section.isMovie) Modifier else Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
+        modifier = if (pinned || section.isHome || section.isMovie || section.isAv) Modifier else Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         topBar = {
-            if (section.isHome || section.isMovie) {
+            if (section.isHome || section.isMovie || section.isAv) {
                 // No title: Home's featured carousel is the top of the page, Movie has its own header.
             } else if (pinned) {
                 // From the start, in the same bar and type as Settings' title.
