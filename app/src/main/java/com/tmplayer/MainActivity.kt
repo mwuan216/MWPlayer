@@ -27,6 +27,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -649,6 +657,14 @@ private fun Root() {
     val networkStatus by NetworkMonitor.status.collectAsStateWithLifecycle()
     val telegramConnected by Td.connected.collectAsStateWithLifecycle()
     val settings = remember { SettingsStore(context) }
+    val onlinePrefs = remember { context.getSharedPreferences("tm_online_pref", android.content.Context.MODE_PRIVATE) }
+    var bypassLoginForOnline by rememberSaveable { mutableStateOf(onlinePrefs.getBoolean("bypass_login_online", false)) }
+    LaunchedEffect(auth) {
+        if (auth is AuthState.Ready) {
+            bypassLoginForOnline = false
+            onlinePrefs.edit().putBoolean("bypass_login_online", false).apply()
+        }
+    }
     // Resume across devices, when turned on: the other devices' places in, this one's out, once
     // Telegram is reachable (ResumeSync).
     LaunchedEffect(telegramConnected) { if (telegramConnected) com.tmplayer.data.ResumeSync.syncSoon(settings) }
@@ -1483,8 +1499,10 @@ private fun Root() {
         }
         val holdForHome = reached && !setupPending && !gateUp && !(appLock?.onOpen == true && !appUnlocked) && !homeHoldOver && !com.tmplayer.ui.browse.HomeFirstPaint.ready
         com.tmplayer.ui.components.BrandLoaderHandOff(
-            label = com.tmplayer.ui.auth.loaderLabel(shownAuth, LocalStrings.current)
-                ?: if (holdForHome) LocalStrings.current.loginGettingReady else null,
+            label = if (bypassLoginForOnline && !reached) null else (
+                com.tmplayer.ui.auth.loaderLabel(shownAuth, LocalStrings.current)
+                    ?: if (holdForHome) LocalStrings.current.loginGettingReady else null
+            ),
             modifier = Modifier.zIndex(1f),
         ) {
             // What it is doing now, and past the long wait, why it may be stuck with Retry, a
@@ -1494,7 +1512,7 @@ private fun Root() {
                 sendLogs = { com.tmplayer.ui.settings.SendLogsButton(Modifier.padding(top = 8.dp)) },
             )
         }
-        if (shownAuth !is AuthState.Ready) {
+        if (shownAuth !is AuthState.Ready && !bypassLoginForOnline) {
             // Signing out drops straight back to the login screen, so forget where we were.
             LaunchedEffect(Unit) {
                 screen = Screen.Chats
@@ -1563,6 +1581,53 @@ private fun Root() {
                     )
                 }
                 if (!keyboard) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 24.dp, vertical = 6.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Tone.accent.copy(alpha = 0.16f))
+                            .border(1.dp, Tone.accent.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
+                            .clickable {
+                                bypassLoginForOnline = true
+                                onlinePrefs.edit().putBoolean("bypass_login_online", true).apply()
+                                pickedTabKey = BrowseSection.encode(BrowseSection.of(BrowseTab.Movie))
+                                screen = Screen.Chats
+                            }
+                            .padding(horizontal = 16.dp, vertical = 11.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                androidx.compose.material3.Text("🎬", fontSize = 18.sp)
+                                Spacer(Modifier.width(10.dp))
+                                androidx.compose.foundation.layout.Column {
+                                    androidx.compose.material3.Text(
+                                        text = "Xem Movie & AV Online",
+                                        color = Tone.text,
+                                        fontSize = 13.sp,
+                                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                                    )
+                                    androidx.compose.material3.Text(
+                                        text = "Không cần đăng nhập Telegram • Bỏ qua",
+                                        color = Tone.accent,
+                                        fontSize = 11.sp
+                                    )
+                                }
+                            }
+                            androidx.compose.material3.Text(
+                                text = "Bắt đầu ›",
+                                color = Tone.accent,
+                                fontSize = 12.sp,
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                            )
+                        }
+                    }
+
                     // Under every sign in screen: the line Telegram's terms ask for, the proxy
                     // settings, for a network where Telegram is only reached through one, and Send
                     // logs, for a sign in that is stuck with no error state to Try again from (HX
@@ -1668,7 +1733,7 @@ private fun Root() {
 
         // The setup after sign in (CP67), in place of the shell until it is done or skipped. It no
         // longer waits for the chat list: only the mandatory chat choice after it needs that.
-        if (setupPending) {
+        if (reached && setupPending) {
             // What this device is short of, and which settings would help (CP68): the Device step.
             val fit = com.tmplayer.ui.onboarding.rememberDeviceFit()
             val light by settings.lightSettings.collectAsStateWithLifecycle(initialValue = null)
@@ -1709,7 +1774,7 @@ private fun Root() {
         }
 
         // The quick tour on its own (CP69): taken from the offer below, or opened from Settings.
-        if (tourState == SettingsStore.TourState.Pending) {
+        if (reached && tourState == SettingsStore.TourState.Pending) {
             TourOnly(onDone = { scope.launch { runCatching { settings.markTourDone() } } })
             return@Box
         }
@@ -1737,11 +1802,11 @@ private fun Root() {
         // before any chat name is shown. In place of the app, not over it, so a remote cannot walk
         // out of it; it goes by itself once Done writes the choice. Back leaves the app. The view
         // model is kept under a fixed key, so a rotation keeps the ticks.
-        if (chatsGate == com.tmplayer.data.ChatsGate.Move.Wait) {
+        if (reached && chatsGate == com.tmplayer.data.ChatsGate.Move.Wait) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { androidx.compose.material3.CircularProgressIndicator(color = Tone.accent) }
             return@Box
         }
-        if (chatsGate == com.tmplayer.data.ChatsGate.Move.Show) {
+        if (reached && chatsGate == com.tmplayer.data.ChatsGate.Move.Show) {
             val activity = LocalActivity.current
             com.tmplayer.ui.browse.AddChatsPage(
                 settings = settings,
@@ -1907,6 +1972,12 @@ private fun Root() {
             }
             if (section == savedSection) openSavedMessages(show) else show()
         }
+        LaunchedEffect(bypassLoginForOnline, reached) {
+            if (!reached && bypassLoginForOnline && pickedTabKey.isBlank()) {
+                pickedTabKey = BrowseSection.encode(BrowseSection.of(BrowseTab.Movie))
+            }
+        }
+
         val touchNav = TouchNav(
             account = accountHeader,
             favoriteCount = favoriteVideos.size,
@@ -1933,6 +2004,12 @@ private fun Root() {
                 browseTo(BrowseSection.of(BrowseTab.History))
             },
             onUpdate = { showUpdate = true },
+            onSignInTelegram = if (!reached) {
+                {
+                    bypassLoginForOnline = false
+                    onlinePrefs.edit().putBoolean("bypass_login_online", false).apply()
+                }
+            } else null,
         )
 
         // The television's top bar over Downloads, as it is over the browser's pages. Settings has
@@ -1976,6 +2053,10 @@ private fun Root() {
                     downloadCount = activeDownloadCount,
                     updateVersion = offeredUpdate,
                     onUpdate = { showUpdate = true },
+                    onSignInTelegram = {
+                        bypassLoginForOnline = false
+                        onlinePrefs.edit().putBoolean("bypass_login_online", false).apply()
+                    },
                     onToggleFavorite = { chat ->
                         scope.launch {
                             // Not said either way: the star fills or empties, and in the

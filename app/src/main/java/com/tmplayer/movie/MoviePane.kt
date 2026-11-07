@@ -2075,6 +2075,8 @@ private fun MovieDetailContent(
 
     val activeServer = detail.servers.getOrNull(selectedServerIdx) ?: detail.servers.firstOrNull()
     val epList = activeServer?.episodes ?: emptyList()
+    val hasUnpulledNewEps = cloudSync != null && epList.size > cloudSync.pulledUpToEpisode && cloudSync.pulledUpToEpisode > 0
+    val newEpCount = if (hasUnpulledNewEps) epList.size - cloudSync!!.pulledUpToEpisode else 0
 
     LaunchedEffect(detail.movie.slug, epList.size) {
         if (epList.isNotEmpty() && cloudSync != null && epList.size > cloudSync.latestKnownEpisodes) {
@@ -2279,8 +2281,6 @@ private fun MovieDetailContent(
             }
 
             // Kéo về Cloud (MovieBox)
-            val hasUnpulledNewEps = cloudSync != null && epList.size > cloudSync.pulledUpToEpisode && cloudSync.pulledUpToEpisode > 0
-            val newEpCount = if (hasUnpulledNewEps) epList.size - cloudSync!!.pulledUpToEpisode else 0
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -2311,8 +2311,8 @@ private fun MovieDetailContent(
                     Spacer(Modifier.width(4.dp))
                     Text(
                         text = when {
-                            hasUnpulledNewEps -> "🔔 +$newEpCount tập mới"
-                            cloudSync != null -> "Đã kéo (${cloudSync.pulledUpToEpisode}/${epList.size.coerceAtLeast(cloudSync.pulledUpToEpisode)})"
+                            hasUnpulledNewEps -> "⚡ +$newEpCount tập mới"
+                            cloudSync != null -> "✓ Đã kéo (${cloudSync.pulledUpToEpisode}/${epList.size.coerceAtLeast(cloudSync.pulledUpToEpisode)})"
                             else -> "Về Cloud"
                         },
                         color = when {
@@ -2447,6 +2447,51 @@ private fun MovieDetailContent(
                 Spacer(Modifier.height(10.dp))
             }
 
+            // Cloud Sync status banner above episode grid
+            if (cloudSync != null && epList.isNotEmpty()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (hasUnpulledNewEps) Tone.accent.copy(alpha = 0.16f) else Tone.surfaceHigh)
+                        .border(
+                            0.5.dp,
+                            if (hasUnpulledNewEps) Tone.accent else Tone.outline.copy(alpha = 0.35f),
+                            RoundedCornerShape(8.dp)
+                        )
+                        .clickable { showCloudSheet = true }
+                        .padding(horizontal = 12.dp, vertical = 7.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = if (hasUnpulledNewEps) "⚡" else "✓",
+                            color = Tone.accent,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = if (hasUnpulledNewEps)
+                                "Có ${epList.size - cloudSync.pulledUpToEpisode} tập mới chưa kéo về Tele"
+                            else
+                                "Đã kéo ${cloudSync.pulledUpToEpisode}/${epList.size} tập về Tele Cloud",
+                            color = if (hasUnpulledNewEps) Tone.accent else Tone.text,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    Text(
+                        text = "Kéo về Cloud ›",
+                        color = Tone.accent,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+            }
+
             // EPISODES GRID
             if (epList.isNotEmpty()) {
                 val chunked = epList.chunked(4)
@@ -2459,8 +2504,8 @@ private fun MovieDetailContent(
                             rowEps.forEach { ep ->
                                 val eIdx = epList.indexOf(ep)
                                 val epNumber = eIdx + 1
-                                val isPulledToCloud = cloudSync != null && epNumber <= cloudSync.pulledUpToEpisode
-                                val isNewUnpulledEp = cloudSync != null && cloudSync.pulledUpToEpisode > 0 && epNumber > cloudSync.pulledUpToEpisode
+                                val isPulledToCloud = cloudSync != null && cloudSync.isEpisodePulled(epNumber)
+                                val isNewUnpulledEp = cloudSync != null && cloudSync.isEpisodeNew(epNumber, epList.size)
                                 Box(
                                     modifier = Modifier
                                         .weight(1f)
@@ -2474,7 +2519,7 @@ private fun MovieDetailContent(
                                             }
                                         )
                                         .border(
-                                            0.5.dp,
+                                            if (isNewUnpulledEp) 1.5.dp else 0.5.dp,
                                             when {
                                                 isCloudMode || isNewUnpulledEp -> Tone.accent
                                                 isPulledToCloud -> Tone.accent.copy(alpha = 0.45f)
@@ -2514,14 +2559,18 @@ private fun MovieDetailContent(
                                             Spacer(Modifier.width(3.dp))
                                         } else if (isPulledToCloud) {
                                             Text(
-                                                text = "☁️",
-                                                fontSize = 10.sp
+                                                text = "✓",
+                                                color = Tone.accent,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.ExtraBold
                                             )
                                             Spacer(Modifier.width(3.dp))
                                         } else if (isNewUnpulledEp) {
                                             Text(
-                                                text = "🔔",
-                                                fontSize = 10.sp
+                                                text = "⚡",
+                                                color = Tone.accent,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold
                                             )
                                             Spacer(Modifier.width(3.dp))
                                         }
@@ -2529,7 +2578,7 @@ private fun MovieDetailContent(
                                             text = ep.name,
                                             color = if (isCloudMode || isNewUnpulledEp) Tone.accent else Tone.text,
                                             fontSize = 12.sp,
-                                            fontWeight = FontWeight.SemiBold,
+                                            fontWeight = if (isPulledToCloud || isNewUnpulledEp) FontWeight.Bold else FontWeight.SemiBold,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
                                         )
@@ -2564,7 +2613,6 @@ private fun MovieDetailContent(
 
     // CLOUD PULL OPTIONS SHEET / DIALOG
     if (showCloudSheet) {
-        val hasUnpulledNewEps = cloudSync != null && epList.size > cloudSync.pulledUpToEpisode && cloudSync.pulledUpToEpisode > 0
         val currentDest by MovieStore.cloudDestinationFlow.collectAsState()
         var selectedBot by remember { mutableStateOf(MovieStore.selectedBotFlow.value) }
         ModalBottomSheet(
@@ -2707,7 +2755,181 @@ private fun MovieDetailContent(
                         }
                     }
                 }
-                Spacer(Modifier.height(12.dp))
+                // DANH SÁCH TẬP PHIM & TRẠNG THÁI KÉO CLOUD
+                if (epList.isNotEmpty()) {
+                    Spacer(Modifier.height(14.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "📋 Trạng thái các tập phim",
+                                color = Tone.text,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = "(${epList.size} tập)",
+                                color = Tone.muted,
+                                fontSize = 12.sp
+                            )
+                        }
+                        if (cloudSync != null) {
+                            val pulledCount = cloudSync.pulledUpToEpisode.coerceAtMost(epList.size)
+                            Text(
+                                text = "✓ Đã kéo: $pulledCount/${epList.size}",
+                                color = Tone.accent,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+
+                    Spacer(Modifier.height(6.dp))
+
+                    // Chú thích phân biệt rõ ràng: V. Đã kéo vs ⚡ Tập mới
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Tone.surfaceHigh.copy(alpha = 0.5f))
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("✓", color = Tone.accent, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold)
+                            Spacer(Modifier.width(4.dp))
+                            Text("V. Đã kéo về Tele", color = Tone.text.copy(alpha = 0.8f), fontSize = 11.sp)
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("⚡", color = Tone.accent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            Spacer(Modifier.width(4.dp))
+                            Text("Tập mới (Chưa kéo)", color = Tone.accent, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+
+                    Spacer(Modifier.height(8.dp))
+
+                    var showAllSheetEps by remember { mutableStateOf(epList.size <= 24) }
+                    val epChunked = epList.chunked(4)
+                    val displayedChunks = if (showAllSheetEps) epChunked else epChunked.take(4)
+
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        displayedChunks.forEach { rowEps ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                rowEps.forEach { ep ->
+                                    val eIdx = epList.indexOf(ep)
+                                    val epNumber = eIdx + 1
+                                    val isPulled = cloudSync != null && cloudSync.isEpisodePulled(epNumber)
+                                    val isNew = cloudSync != null && cloudSync.isEpisodeNew(epNumber, epList.size)
+
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(
+                                                when {
+                                                    isNew -> Tone.accent.copy(alpha = 0.22f)
+                                                    isPulled -> Tone.surfaceHigh
+                                                    else -> Tone.surfaceHigh.copy(alpha = 0.6f)
+                                                }
+                                            )
+                                            .border(
+                                                width = if (isNew) 1.5.dp else 0.5.dp,
+                                                color = when {
+                                                    isNew -> Tone.accent
+                                                    isPulled -> Tone.accent.copy(alpha = 0.45f)
+                                                    else -> Tone.outline.copy(alpha = 0.3f)
+                                                },
+                                                shape = RoundedCornerShape(8.dp)
+                                            )
+                                            .clickable {
+                                                showCloudSheet = false
+                                                scope.launch {
+                                                    MovieCloudDownloader.pullToCloud(
+                                                        context = context,
+                                                        slug = detail.movie.slug,
+                                                        movieTitle = detail.movie.name,
+                                                        source = detail.movie.source,
+                                                        epRange = "$epNumber",
+                                                        totalEpisodes = epList.size,
+                                                        movie = detail.movie,
+                                                        targetBot = selectedBot
+                                                    )
+                                                }
+                                            }
+                                            .padding(vertical = 8.dp, horizontal = 4.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.Center
+                                        ) {
+                                            if (isPulled) {
+                                                Text(
+                                                    text = "✓",
+                                                    color = Tone.accent,
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.ExtraBold
+                                                )
+                                                Spacer(Modifier.width(3.dp))
+                                            } else if (isNew) {
+                                                Text(
+                                                    text = "⚡",
+                                                    color = Tone.accent,
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                                Spacer(Modifier.width(2.dp))
+                                            }
+                                            Text(
+                                                text = ep.name,
+                                                color = if (isNew) Tone.accent else Tone.text,
+                                                fontSize = 11.sp,
+                                                fontWeight = if (isNew || isPulled) FontWeight.Bold else FontWeight.Normal,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                }
+                                if (rowEps.size < 4) {
+                                    repeat(4 - rowEps.size) {
+                                        Spacer(Modifier.weight(1f))
+                                    }
+                                }
+                            }
+                        }
+
+                        if (epList.size > 24 && !showAllSheetEps) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(Tone.surfaceHigh)
+                                    .clickable { showAllSheetEps = true }
+                                    .padding(vertical = 7.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "Xem tất cả ${epList.size} tập (còn ${epList.size - 16} tập)...",
+                                    color = Tone.accent,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(14.dp))
 
                 // Nếu có tập mới chưa kéo: Nút kéo nhanh các tập mới
                 if (hasUnpulledNewEps && cloudSync != null) {

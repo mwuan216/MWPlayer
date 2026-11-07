@@ -98,6 +98,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
@@ -288,6 +289,7 @@ internal fun BrowseScreen(
     /** The newer version on GitHub, if there is one. Shown on the rail, in amber. */
     updateVersion: String? = null,
     onUpdate: () -> Unit = {},
+    onSignInTelegram: () -> Unit = {},
     /** Home's rows, built by [com.tmplayer.data.HomeRows] from what has loaded so far. */
     homeRows: List<HomeRow> = emptyList(),
     homeRowsReady: Boolean = true,
@@ -662,6 +664,120 @@ internal fun BrowseScreen(
         query = ""
     }
     val paneOf: @Composable (BrowseSection) -> Unit = { tab ->
+        if (tab.isChats && account == null) {
+            Box(
+                modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                    modifier = Modifier.fillMaxWidth().widthIn(max = 400.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(64.dp)
+                            .clip(CircleShape)
+                            .background(Tone.accent.copy(alpha = 0.15f))
+                            .border(1.dp, Tone.accent.copy(alpha = 0.4f), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        M3Text("💬", fontSize = 28.sp)
+                    }
+                    Spacer(Modifier.height(16.dp))
+                    M3Text(
+                        text = "Mở khóa toàn bộ tính năng",
+                        style = M3MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = Tone.text,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    M3Text(
+                        text = "Bạn đang ở chế độ xem phim Online. Hãy đăng nhập Telegram để mở khóa Trò chuyện, kênh phim riêng, tải phim về máy và lưu trữ đám mây không giới hạn.",
+                        style = M3MaterialTheme.typography.bodyMedium,
+                        color = Tone.text.copy(alpha = 0.65f),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        lineHeight = 18.sp
+                    )
+                    Spacer(Modifier.height(20.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Tone.accent)
+                            .clickable { onSignInTelegram() },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        M3Text(
+                            text = "🔑 Đăng nhập Telegram ngay",
+                            color = Color.Black,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        } else if (tab.isHome && account == null && homeRows.isEmpty()) {
+            Box(
+                modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                    modifier = Modifier.fillMaxWidth().widthIn(max = 420.dp)
+                ) {
+                    M3Text("🎬", fontSize = 48.sp)
+                    Spacer(Modifier.height(14.dp))
+                    M3Text(
+                        text = "Chào mừng bạn đến với TMPlayer",
+                        style = M3MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = Tone.text,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    M3Text(
+                        text = "Xem kho phim điện ảnh, phim bộ, anime và AV online chất lượng cao không giới hạn. Đăng nhập Telegram khi bạn muốn lưu trữ đám mây hoặc trò chuyện.",
+                        style = M3MaterialTheme.typography.bodyMedium,
+                        color = Tone.text.copy(alpha = 0.7f),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        lineHeight = 19.sp
+                    )
+                    Spacer(Modifier.height(22.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(44.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Tone.accent)
+                                .clickable { onPickTab(BrowseSection.of(BrowseTab.Movie)) },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            M3Text("🎬 Xem Phim ngay", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(44.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Tone.surfaceHigh)
+                                .border(1.dp, Tone.accent.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+                                .clickable { onSignInTelegram() },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            M3Text("🔑 Đăng nhập Tele", color = Tone.accent, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
+                    }
+                }
+            }
+        } else {
         val showsContinue = tab.listsVideos && historyTab == HistoryTab.Continue
         val showsWatched = tab.listsVideos && historyTab == HistoryTab.Watched
         val showsWatchLater = tab.listsVideos && historyTab == HistoryTab.WatchLater
@@ -958,6 +1074,7 @@ internal fun BrowseScreen(
                     }
                 }
         }
+    }
     }
     }
 

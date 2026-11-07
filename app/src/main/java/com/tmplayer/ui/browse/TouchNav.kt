@@ -199,6 +199,7 @@ internal class TouchNav(
     val onDownloads: () -> Unit,
     val onHistory: (HistoryTab) -> Unit,
     val onUpdate: () -> Unit,
+    val onSignInTelegram: (() -> Unit)? = null,
 )
 
 /**
@@ -459,6 +460,7 @@ internal fun TouchNavHost(
                     onAv = { profileOpen = false; nav.onAv() },
                     onSettings = { profileOpen = false; nav.onSettings() },
                     onUpdate = { profileOpen = false; nav.onUpdate() },
+                    onSignInTelegram = if (nav.account == null) { { profileOpen = false; nav.onSignInTelegram?.invoke() } } else null,
                 )
             }
         }
@@ -1007,6 +1009,7 @@ private fun ProfilePopover(
     onAv: () -> Unit = {},
     onSettings: () -> Unit,
     onUpdate: () -> Unit,
+    onSignInTelegram: (() -> Unit)? = null,
 ) {
     val s = LocalStrings.current
     AnimatedVisibility(
@@ -1078,6 +1081,9 @@ private fun ProfilePopover(
                 )
                 HorizontalDivider(Modifier.padding(horizontal = 14.dp, vertical = 2.dp))
                 val rows = buildList<@Composable (Modifier) -> Unit> {
+                    if (onSignInTelegram != null) {
+                        add { m -> PopoverRow(TmIcons.Chats, "🔑 Đăng nhập Telegram", null, ink = Tone.accent, modifier = m, onClick = onSignInTelegram) }
+                    }
                     add { m -> PopoverRow(TmIcons.StarOutline, s.browseTabFavourites, favoriteCount.takeIf { it > 0 }?.toString(), modifier = m, onClick = onFavourites) }
                     add { m -> PopoverRow(TmIcons.Download, s.navDownloads, downloadCount.takeIf { it > 0 }?.toString(), modifier = m, onClick = onDownloads) }
                     add { m -> PopoverRow(TmIcons.History, s.browseTabHistory, null, modifier = m, onClick = onHistory) }

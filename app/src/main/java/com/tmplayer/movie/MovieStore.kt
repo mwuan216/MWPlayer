@@ -114,6 +114,30 @@ data class CloudSyncedMovie(
     val newEpisodeRange: String
         get() = if (latestKnownEpisodes <= pulledUpToEpisode + 1) "$latestKnownEpisodes" else "${pulledUpToEpisode + 1}-$latestKnownEpisodes"
 
+    fun isEpisodePulled(episodeNumber: Int): Boolean {
+        if (episodeNumber <= 0) return false
+        if (pulledUpToEpisode > 0 && episodeNumber <= pulledUpToEpisode) return true
+        if (pulledEpisodesText.isBlank()) return false
+        val parts = pulledEpisodesText.split(",", ";", " ").map { it.trim() }.filter { it.isNotEmpty() }
+        for (part in parts) {
+            if (part.contains("-")) {
+                val sub = part.split("-")
+                val start = sub.getOrNull(0)?.toIntOrNull()
+                val end = sub.getOrNull(1)?.toIntOrNull()
+                if (start != null && end != null && episodeNumber in start..end) return true
+            } else {
+                val num = part.toIntOrNull()
+                if (num != null && num == episodeNumber) return true
+            }
+        }
+        return false
+    }
+
+    fun isEpisodeNew(episodeNumber: Int, totalEpisodes: Int): Boolean {
+        if (episodeNumber <= 0) return false
+        return pulledUpToEpisode > 0 && episodeNumber > pulledUpToEpisode && episodeNumber <= totalEpisodes
+    }
+
     fun toMovieItem(): MovieItem = MovieItem(
         name = name,
         originName = originName,
