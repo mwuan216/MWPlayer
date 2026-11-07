@@ -158,7 +158,7 @@ internal fun barHighlightIndex(
         }
     }
     if (inProfile) {
-        return if (avVisible) 5 else 4
+        return if (avVisible) 4 else 3
     }
     return null
 }
@@ -693,7 +693,7 @@ private fun FloatingBar(
     val context = LocalContext.current
     LaunchedEffect(context) { com.tmplayer.av.AvStore.init(context) }
     val avVisible by com.tmplayer.av.AvStore.isTabVisibleFlow.collectAsState()
-    val btnWidth = if (avVisible && !vertical) 52.dp else BUTTON_WIDTH
+    val btnWidth = BUTTON_WIDTH
     val reduced = rememberReducedMotion() || Motion.reduced
     val outer = if (vertical) {
         Modifier
@@ -784,7 +784,6 @@ private fun FloatingBar(
                     BarButton(TmIcons.Favorite, "AV 18+", current == TouchDestination.Av, onAv, buttonWidth = btnWidth)
                 }
                 BarButton(TmIcons.Chats, s.browseTabChats, current == TouchDestination.Chats, onChats, buttonWidth = btnWidth)
-                BarButton(TmIcons.Search, s.commonSearch, false, onSearch, role = Role.Button, modifier = searchShared, buttonWidth = btnWidth)
                 ProfileButton(account, inProfile, badged, onProfile, buttonWidth = btnWidth)
             }
             if (vertical) {

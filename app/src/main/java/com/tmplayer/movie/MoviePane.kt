@@ -2563,14 +2563,16 @@ private fun MovieDetailContent(
     // CLOUD PULL OPTIONS SHEET / DIALOG
     if (showCloudSheet) {
         val hasUnpulledNewEps = cloudSync != null && epList.size > cloudSync.pulledUpToEpisode && cloudSync.pulledUpToEpisode > 0
+        val currentDest by MovieStore.cloudDestinationFlow.collectAsState()
         ModalBottomSheet(
             onDismissRequest = { showCloudSheet = false },
-            sheetState = rememberModalBottomSheetState(),
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
             containerColor = Tone.surface
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
                     .padding(horizontal = 20.dp, vertical = 12.dp)
             ) {
                 Row(
@@ -2585,7 +2587,7 @@ private fun MovieDetailContent(
                         fontWeight = FontWeight.Bold
                     )
                     BadgePill(
-                        text = "MovieBox #43264",
+                        text = currentDest.displayLabel,
                         bg = Tone.surfaceHigh,
                         textColor = Tone.accent
                     )
@@ -2607,7 +2609,10 @@ private fun MovieDetailContent(
                     )
                 }
 
-                Spacer(Modifier.height(14.dp))
+                Spacer(Modifier.height(10.dp))
+                CloudDestinationSelectorCard()
+
+                Spacer(Modifier.height(12.dp))
 
                 // Nếu có tập mới chưa kéo: Nút kéo nhanh các tập mới
                 if (hasUnpulledNewEps && cloudSync != null) {
@@ -2714,7 +2719,7 @@ private fun MovieDetailContent(
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = "Tải toàn bộ ${epList.size} tập về Topic MovieBox",
+                                text = "Tải toàn bộ ${epList.size} tập về ${currentDest.displayLabel}",
                                 color = Tone.text.copy(alpha = 0.6f),
                                 fontSize = 12.sp
                             )
@@ -2992,6 +2997,598 @@ private fun AsyncMovieImage(
                 tint = Tone.text.copy(alpha = 0.15f),
                 modifier = Modifier.size(24.dp)
             )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CloudDestinationSelectorCard(
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    LaunchedEffect(Unit) { MovieStore.init(context) }
+    val currentDest by MovieStore.cloudDestinationFlow.collectAsState()
+    var showPicker by remember { mutableStateOf(false) }
+
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(Tone.surfaceHigh)
+            .border(0.5.dp, Tone.outline.copy(alpha = 0.4f), RoundedCornerShape(12.dp))
+            .clickable { showPicker = true }
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.weight(1f)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .background(Tone.accent.copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = TmIcons.Folder,
+                    contentDescription = null,
+                    tint = Tone.accent,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+            Spacer(Modifier.width(10.dp))
+            Column {
+                Text(
+                    text = "Đích đến: ${currentDest.displayLabel}",
+                    color = Tone.text,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = "Nhấn để chọn Nhóm / Topic hoặc Tin nhắn đã lưu",
+                    color = Tone.text.copy(alpha = 0.55f),
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = "Đổi đích ›",
+            color = Tone.accent,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold
+        )
+    }
+
+    if (showPicker) {
+        CloudDestinationPickerModal(onDismiss = { showPicker = false })
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CloudDestinationPickerModal(
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val currentDest by MovieStore.cloudDestinationFlow.collectAsState()
+
+    var chats by remember { mutableStateOf<List<com.tmplayer.data.ChatSummary>>(emptyList()) }
+    var loadingChats by remember { mutableStateOf(true) }
+    var filterQuery by remember { mutableStateOf("") }
+    var selectedChatForTopics by remember { mutableStateOf<com.tmplayer.data.ChatSummary?>(null) }
+    var forumTopics by remember { mutableStateOf<List<dev.g000sha256.tdl.dto.ForumTopic>>(emptyList()) }
+    var loadingTopics by remember { mutableStateOf(false) }
+
+    var showManualInput by remember { mutableStateOf(false) }
+    var manualChatId by remember { mutableStateOf(currentDest.chatId.toString()) }
+    var manualTopicId by remember { mutableStateOf(if (currentDest.topicId > 0) currentDest.topicId.toString() else "") }
+    var manualTitle by remember { mutableStateOf(currentDest.chatTitle) }
+
+    LaunchedEffect(Unit) {
+        loadingChats = true
+        chats = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                com.tmplayer.data.ChatRepository(com.tmplayer.data.Td.client).cachedChats(limit = 60).chats
+            }.getOrDefault(emptyList())
+        }
+        loadingChats = false
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = Tone.surface
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = if (selectedChatForTopics != null) "Chọn Topic: ${selectedChatForTopics!!.title}"
+                    else "Chọn đích đến trên Telegram",
+                    color = Tone.text,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                if (selectedChatForTopics != null) {
+                    Text(
+                        text = "← Quay lại",
+                        color = Tone.accent,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { selectedChatForTopics = null }
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+            }
+
+            if (selectedChatForTopics != null) {
+                val chat = selectedChatForTopics!!
+                if (loadingTopics) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(140.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(color = Tone.accent, modifier = Modifier.size(26.dp))
+                    }
+                } else {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(340.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        // General / No specific topic
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Tone.surfaceHigh)
+                                .clickable {
+                                    MovieStore.setCloudDestination(
+                                        context,
+                                        CloudDestination(
+                                            chatId = chat.id,
+                                            topicId = 0,
+                                            chatTitle = chat.title,
+                                            topicTitle = ""
+                                        )
+                                    )
+                                    onDismiss()
+                                }
+                                .padding(12.dp)
+                        ) {
+                            Text(
+                                text = "💬 Luồng chung (${chat.title})",
+                                color = Tone.text,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+
+                        forumTopics.forEach { topic ->
+                            val tId = topic.info.forumTopicId
+                            val tName = topic.info.name.ifBlank { "Topic #$tId" }
+                            val isChosen = currentDest.chatId == chat.id && currentDest.topicId == tId
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(if (isChosen) Tone.accent.copy(alpha = 0.16f) else Tone.surfaceHigh)
+                                    .border(
+                                        0.5.dp,
+                                        if (isChosen) Tone.accent else Color.Transparent,
+                                        RoundedCornerShape(10.dp)
+                                    )
+                                    .clickable {
+                                        MovieStore.setCloudDestination(
+                                            context,
+                                            CloudDestination(
+                                                chatId = chat.id,
+                                                topicId = tId,
+                                                chatTitle = chat.title,
+                                                topicTitle = tName
+                                            )
+                                        )
+                                        onDismiss()
+                                    }
+                                    .padding(12.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "# $tName",
+                                    color = if (isChosen) Tone.accent else Tone.text,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = "ID: $tId",
+                                    color = Tone.text.copy(alpha = 0.5f),
+                                    fontSize = 11.sp
+                                )
+                            }
+                        }
+                    }
+                }
+            } else {
+                // 1. Default MovieBox #43264
+                val isDefaultSelected = currentDest.isDefault
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(if (isDefaultSelected) Tone.accent.copy(alpha = 0.16f) else Tone.surfaceHigh)
+                        .border(
+                            0.5.dp,
+                            if (isDefaultSelected) Tone.accent else Tone.outline.copy(alpha = 0.3f),
+                            RoundedCornerShape(12.dp)
+                        )
+                        .clickable {
+                            MovieStore.resetCloudDestination(context)
+                            onDismiss()
+                        }
+                        .padding(12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "☁️ MovieBox Cloud › MovieBox (#43264)",
+                            color = if (isDefaultSelected) Tone.accent else Tone.text,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Kho lưu trữ đám mây mặc định (Hỗ trợ Dual Bot tốc độ cao)",
+                            color = Tone.text.copy(alpha = 0.6f),
+                            fontSize = 11.sp
+                        )
+                    }
+                    if (isDefaultSelected) {
+                        Text("✓", color = Tone.accent, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    }
+                }
+
+                // 2. Saved Messages
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Tone.surfaceHigh)
+                        .clickable {
+                            scope.launch {
+                                val savedChat = chats.firstOrNull { it.kind == com.tmplayer.data.ChatKind.Saved }
+                                val myId = savedChat?.id ?: kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                    runCatching { com.tmplayer.data.Td.myId() }.getOrDefault(0L)
+                                }
+                                if (myId != 0L) {
+                                    MovieStore.setCloudDestination(
+                                        context,
+                                        CloudDestination(
+                                            chatId = myId,
+                                            topicId = 0,
+                                            chatTitle = "Tin nhắn đã lưu",
+                                            topicTitle = ""
+                                        )
+                                    )
+                                    onDismiss()
+                                }
+                            }
+                        }
+                        .padding(12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "🔖 Tin nhắn đã lưu (Saved Messages)",
+                            color = Tone.text,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Gửi lệnh & link trực tiếp vào kho tin nhắn cá nhân của bạn",
+                            color = Tone.text.copy(alpha = 0.6f),
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+
+                // 3. Manual ID input toggle
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Nhóm & Kênh Telegram của bạn:",
+                        color = Tone.text.copy(alpha = 0.7f),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = if (showManualInput) "Ẩn nhập ID" else "⚙ Nhập ID thủ công",
+                        color = Tone.accent,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable { showManualInput = !showManualInput }
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
+
+                if (showManualInput) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Tone.surfaceHigh)
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Box(
+                                modifier = Modifier
+                                    .weight(1.2f)
+                                    .height(38.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Tone.surface)
+                                    .padding(horizontal = 10.dp),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                BasicTextField(
+                                    value = manualChatId,
+                                    onValueChange = { manualChatId = it },
+                                    textStyle = TextStyle(color = Tone.text, fontSize = 12.sp),
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    decorationBox = { inner ->
+                                        if (manualChatId.isEmpty()) {
+                                            Text("Chat ID (VD: -100...)", color = Tone.text.copy(alpha = 0.4f), fontSize = 12.sp)
+                                        }
+                                        inner()
+                                    }
+                                )
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .weight(0.8f)
+                                    .height(38.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Tone.surface)
+                                    .padding(horizontal = 10.dp),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                BasicTextField(
+                                    value = manualTopicId,
+                                    onValueChange = { manualTopicId = it },
+                                    textStyle = TextStyle(color = Tone.text, fontSize = 12.sp),
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    decorationBox = { inner ->
+                                        if (manualTopicId.isEmpty()) {
+                                            Text("Topic ID (Tùy chọn)", color = Tone.text.copy(alpha = 0.4f), fontSize = 12.sp)
+                                        }
+                                        inner()
+                                    }
+                                )
+                            }
+                        }
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(38.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Tone.surface)
+                                    .padding(horizontal = 10.dp),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                BasicTextField(
+                                    value = manualTitle,
+                                    onValueChange = { manualTitle = it },
+                                    textStyle = TextStyle(color = Tone.text, fontSize = 12.sp),
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    decorationBox = { inner ->
+                                        if (manualTitle.isEmpty()) {
+                                            Text("Tên gợi nhớ", color = Tone.text.copy(alpha = 0.4f), fontSize = 12.sp)
+                                        }
+                                        inner()
+                                    }
+                                )
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .height(38.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Tone.accent)
+                                    .clickable {
+                                        val cId = manualChatId.trim().toLongOrNull()
+                                        val tId = manualTopicId.trim().toIntOrNull() ?: 0
+                                        if (cId != null && cId != 0L) {
+                                            MovieStore.setCloudDestination(
+                                                context,
+                                                CloudDestination(
+                                                    chatId = cId,
+                                                    topicId = tId,
+                                                    chatTitle = manualTitle.trim().ifBlank { "Chat $cId" },
+                                                    topicTitle = if (tId > 0) "Topic #$tId" else ""
+                                                )
+                                            )
+                                            onDismiss()
+                                        }
+                                    }
+                                    .padding(horizontal = 14.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("Lưu", color = Color.Black, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+
+                // Filter chats input
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(38.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Tone.surfaceHigh)
+                        .padding(horizontal = 12.dp),
+                    contentAlignment = Alignment.CenterStart
+                ) {
+                    BasicTextField(
+                        value = filterQuery,
+                        onValueChange = { filterQuery = it },
+                        textStyle = TextStyle(color = Tone.text, fontSize = 13.sp),
+                        singleLine = true,
+                        cursorBrush = SolidColor(Tone.accent),
+                        modifier = Modifier.fillMaxWidth(),
+                        decorationBox = { inner ->
+                            if (filterQuery.isEmpty()) {
+                                Text("Tìm tên nhóm / kênh...", color = Tone.text.copy(alpha = 0.4f), fontSize = 12.sp)
+                            }
+                            inner()
+                        }
+                    )
+                }
+
+                // Chat list
+                if (loadingChats) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(140.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(color = Tone.accent, modifier = Modifier.size(24.dp))
+                    }
+                } else {
+                    val filtered = remember(chats, filterQuery) {
+                        chats.filter {
+                            it.kind != com.tmplayer.data.ChatKind.Saved &&
+                                (filterQuery.isBlank() || it.title.contains(filterQuery, ignoreCase = true))
+                        }
+                    }
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(230.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        if (filtered.isEmpty()) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 24.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("Không tìm thấy nhóm/kênh phù hợp", color = Tone.text.copy(alpha = 0.5f), fontSize = 12.sp)
+                            }
+                        } else {
+                            filtered.take(35).forEach { chat ->
+                                val isChosen = currentDest.chatId == chat.id
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(if (isChosen) Tone.accent.copy(alpha = 0.14f) else Tone.surfaceHigh)
+                                        .clickable {
+                                            scope.launch {
+                                                loadingTopics = true
+                                                val topics = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                                    runCatching {
+                                                        com.tmplayer.data.Td.client
+                                                            .getForumTopics(chat.id, "", 0, 0L, 0, 100)
+                                                            .let { res ->
+                                                                if (res is dev.g000sha256.tdl.TdlResult.Success) {
+                                                                    res.result.topics.toList()
+                                                                } else emptyList()
+                                                            }
+                                                    }.getOrDefault(emptyList())
+                                                }
+                                                loadingTopics = false
+                                                if (topics.isNotEmpty()) {
+                                                    forumTopics = topics
+                                                    selectedChatForTopics = chat
+                                                } else {
+                                                    MovieStore.setCloudDestination(
+                                                        context,
+                                                        CloudDestination(
+                                                            chatId = chat.id,
+                                                            topicId = 0,
+                                                            chatTitle = chat.title,
+                                                            topicTitle = ""
+                                                        )
+                                                    )
+                                                    onDismiss()
+                                                }
+                                            }
+                                        }
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = chat.title,
+                                            color = if (isChosen) Tone.accent else Tone.text,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = "${chat.kind.label} • ID: ${chat.id}",
+                                            color = Tone.text.copy(alpha = 0.5f),
+                                            fontSize = 11.sp
+                                        )
+                                    }
+                                    Text(
+                                        text = "Chọn ›",
+                                        color = Tone.accent,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

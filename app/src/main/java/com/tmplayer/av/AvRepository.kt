@@ -7,24 +7,26 @@ import com.tmplayer.movie.MovieItem
 import com.tmplayer.movie.MovieServer
 import com.tmplayer.movie.MovieSource
 import com.tmplayer.movie.MovieStream
+import com.tmplayer.movie.MovieWatchProgress
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URLEncoder
+import java.text.Normalizer
 import java.util.concurrent.ConcurrentHashMap
 
 object AvFilterData {
     fun categoriesFor(source: MovieSource): List<FilterOption> = when (source) {
         MovieSource.XXVN -> listOf(
             FilterOption("", "Tất cả"),
+            FilterOption("for-you", "✨ Đề xuất cho bạn"),
             FilterOption("history", "Xem gần đây"),
             FilterOption("watchlist", "Theo dõi"),
             FilterOption("vietsub", "JAV Vietsub"),
@@ -41,6 +43,7 @@ object AvFilterData {
         )
         MovieSource.MissAV -> listOf(
             FilterOption("", "Tất cả"),
+            FilterOption("for-you", "✨ Đề xuất cho bạn"),
             FilterOption("history", "Xem gần đây"),
             FilterOption("watchlist", "Theo dõi"),
             FilterOption("new", "Mới phát hành"),
@@ -54,6 +57,7 @@ object AvFilterData {
         )
         else -> listOf(
             FilterOption("", "Tất cả"),
+            FilterOption("for-you", "✨ Đề xuất cho bạn"),
             FilterOption("history", "Xem gần đây"),
             FilterOption("watchlist", "Theo dõi"),
             FilterOption("2", "Không che (Uncensored)"),
@@ -73,7 +77,17 @@ object AvRepository {
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
     private val detailCache = ConcurrentHashMap<String, MovieDetail>()
+    private val allDetailsBySlug = ConcurrentHashMap<String, MovieDetail>()
     private val resolvedStreamCache = ConcurrentHashMap<String, Pair<Long, MovieStream>>()
+
+    private fun cacheDetail(source: MovieSource, detail: MovieDetail) {
+        detailCache["${source.name}:${detail.movie.slug}"] = detail
+        allDetailsBySlug[detail.movie.slug.lowercase()] = detail
+    }
+
+    fun getCachedDetail(slug: String): MovieDetail? {
+        return allDetailsBySlug[slug.lowercase()]
+    }
 
     private suspend fun fetchUrl(
         url: String,
@@ -119,8 +133,101 @@ object AvRepository {
         return out.toString(Charsets.UTF_8.name())
     }
 
+    private fun normalizeSearchText(input: String): String {
+        if (input.isBlank()) return ""
+        val nfd = Normalizer.normalize(input.lowercase(), Normalizer.Form.NFD)
+        return nfd
+            .replace(Regex("\\p{InCombiningDiacriticalMarks}+"), "")
+            .replace('đ', 'd')
+            .replace('[', ' ')
+            .replace(']', ' ')
+            .replace('_', ' ')
+            .replace('-', ' ')
+            .replace(Regex("\\s+"), " ")
+            .trim()
+    }
+
+    private fun extractJavCode(query: String): String? {
+        val clean = query.uppercase().replace('_', '-')
+        val fc2Match = Regex("""FC2-PPV-\d{5,8}""").find(clean)
+        if (fc2Match != null) return fc2Match.value
+        val stdMatch = Regex("""\b[A-Z]{2,7}-\d{2,6}\b""").find(clean)
+        return stdMatch?.value
+    }
+
+    /**
+     * Tìm kiếm tức thì trong toàn bộ danh sách phim đã tải về bộ nhớ đệm (kể cả các kệ trên màn hình chính,
+     * danh mục, MissAV, AVDB, XXVN) theo tên phim, mã JAV, tên diễn viên, thể loại hoặc nội dung mô tả.
+     */
+    private fun searchLocalCache(targetSource: MovieSource, rawQuery: String): List<MovieItem> {
+        val qNorm = normalizeSearchText(rawQuery)
+        if (qNorm.isBlank()) return emptyList()
+        val qCompact = qNorm.replace(" ", "")
+        val qTokens = qNorm.split(' ').filter { it.isNotBlank() }
+        val codeToken = extractJavCode(rawQuery)?.lowercase()
+
+        val scored = mutableListOf<Pair<Int, MovieItem>>()
+        val seenSlugs = HashSet<String>()
+
+        val candidates = (detailCache.values + allDetailsBySlug.values)
+        for (detail in candidates) {
+            val slugKey = detail.movie.slug.lowercase()
+            if (!seenSlugs.add(slugKey)) continue
+
+            val nameNorm = normalizeSearchText(detail.movie.name)
+            val originNorm = normalizeSearchText(detail.movie.originName)
+            val slugNorm = normalizeSearchText(detail.movie.slug)
+            val slugCompact = slugNorm.replace(" ", "")
+            val actorsNorm = detail.actor.map { normalizeSearchText(it) }
+            val catsNorm = detail.categories.map { normalizeSearchText(it) }
+            val contentNorm = normalizeSearchText(detail.content)
+
+            var score = 0
+            if (codeToken != null && (detail.movie.slug.lowercase().contains(codeToken) || detail.movie.name.lowercase().contains(codeToken))) {
+                score = maxOf(score, 100)
+            }
+            if (slugCompact == qCompact || slugNorm.contains(qNorm) || slugCompact.contains(qCompact)) {
+                score = maxOf(score, 95)
+            }
+            if (nameNorm.contains(qNorm) || originNorm.contains(qNorm)) {
+                score = maxOf(score, 88)
+            }
+            if (actorsNorm.any { it.contains(qNorm) || qNorm.contains(it) && it.length >= 3 }) {
+                score = maxOf(score, 85)
+            }
+            if (catsNorm.any { it.contains(qNorm) }) {
+                score = maxOf(score, 70)
+            }
+            if (score == 0 && qTokens.size > 1) {
+                val combined = "$nameNorm $originNorm $slugNorm ${actorsNorm.joinToString(" ")} ${catsNorm.joinToString(" ")} $contentNorm"
+                if (qTokens.all { token -> combined.contains(token) }) {
+                    score = 65
+                }
+            }
+            if (score == 0 && contentNorm.contains(qNorm)) {
+                score = 50
+            }
+
+            if (score > 0) {
+                val sourceBonus = if (detail.movie.source == targetSource) 5 else 0
+                val adaptedItem = if (detail.movie.source == targetSource) {
+                    detail.movie
+                } else {
+                    detail.movie.copy(source = targetSource).also {
+                        detailCache["${targetSource.name}:${it.slug}"] = detail.copy(movie = it)
+                    }
+                }
+                scored.add((score + sourceBonus) to adaptedItem)
+            }
+        }
+
+        return scored
+            .sortedByDescending { it.first }
+            .map { it.second }
+    }
+
     // =========================================================================
-    // 1. LATEST & CATEGORY FETCHING
+    // 1. LATEST, CATEGORY, SEARCH, RELATED & RECOMMENDATIONS
     // =========================================================================
 
     suspend fun getLatest(source: MovieSource, page: Int = 1): List<MovieItem> {
@@ -136,17 +243,231 @@ object AvRepository {
         category: String = "",
         keyword: String = "",
         page: Int = 1
-    ): Pair<List<MovieItem>, Int> {
-        return when (source) {
-            MovieSource.XXVN -> fetchXxvnList(category = category, keyword = keyword, page = page)
-            MovieSource.MissAV -> fetchMissAvList(category = category, keyword = keyword, page = page)
-            else -> fetchAvdbList(source = MovieSource.AVDB, typeId = category, keyword = keyword, page = page)
+    ): Pair<List<MovieItem>, Int> = coroutineScope {
+        if (keyword.isNotBlank()) {
+            return@coroutineScope searchAvComprehensive(source, keyword.trim(), page)
+        }
+        when (source) {
+            MovieSource.XXVN -> fetchXxvnList(category = category, keyword = "", page = page)
+            MovieSource.MissAV -> fetchMissAvList(category = category, keyword = "", page = page)
+            else -> fetchAvdbList(source = MovieSource.AVDB, typeId = category, keyword = "", page = page)
+        }
+    }
+
+    /**
+     * Tìm kiếm đa tầng ổn định cho cả 3 nguồn (AVDB, MissAV, XXVN):
+     * 1. Tìm ngay trong bộ nhớ đệm cục bộ (đảm bảo mọi phim đang hiển thị trong danh sách phát đều khớp 100%).
+     * 2. Tìm song song theo Mã phim / Tên phim (`wd`), Diễn viên (`actor`), và fallback sang `ac=list` nếu `ac=detail` bị quá tải.
+     * 3. Hỗ trợ tìm chéo tiếng Việt / tiếng Anh / Romaji để luôn trả về kết quả chính xác nhất.
+     */
+    private suspend fun searchAvComprehensive(
+        source: MovieSource,
+        rawKeyword: String,
+        page: Int
+    ): Pair<List<MovieItem>, Int> = coroutineScope {
+        val localMatches = if (page == 1) searchLocalCache(source, rawKeyword) else emptyList()
+
+        val cleanedKeyword = rawKeyword
+            .replace('[', ' ')
+            .replace(']', ' ')
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        val extractedCode = extractJavCode(rawKeyword)
+
+        val jobs = mutableListOf<kotlinx.coroutines.Deferred<List<MovieItem>>>()
+
+        // Job 1: Nguồn hiện tại
+        jobs.add(async {
+            when (source) {
+                MovieSource.XXVN -> fetchXxvnList(category = "", keyword = cleanedKeyword, page = page).first
+                MovieSource.MissAV -> fetchMissAvList(category = "", keyword = cleanedKeyword, page = page).first
+                else -> fetchAvdbList(source = MovieSource.AVDB, typeId = "", keyword = cleanedKeyword, page = page).first
+            }
+        })
+
+        // Job 2: Nếu người dùng copy cả tên dài kèm mã JAV (VD: "[FC2-PPV-4834713] 12 năm..."), tìm thêm theo riêng mã JAV
+        if (extractedCode != null && !extractedCode.equals(cleanedKeyword, ignoreCase = true)) {
+            jobs.add(async {
+                fetchAvdbList(source = source, typeId = "", keyword = extractedCode, page = page).first
+            })
+        }
+
+        // Job 3: Tìm theo tên diễn viên (Actor) trên AVDB OpenAPI (vì tham số `wd` của AVDB không tìm trong cột `actor`)
+        if (extractedCode == null && cleanedKeyword.none { it.isDigit() }) {
+            jobs.add(async {
+                fetchAvdbByActor(source = source, actorName = cleanedKeyword, page = page)
+            })
+        }
+
+        // Job 4: Tìm bổ sung từ AVDB (nếu đang ở XXVN) hoặc từ XXVN (nếu từ khóa có dấu tiếng Việt)
+        if (source == MovieSource.XXVN) {
+            jobs.add(async {
+                fetchAvdbList(source = MovieSource.XXVN, typeId = "", keyword = cleanedKeyword, page = page).first
+            })
+        } else if (cleanedKeyword.any { it.code > 127 } || page == 1) {
+            jobs.add(async {
+                fetchXxvnList(category = "", keyword = cleanedKeyword, page = page).first.map { item ->
+                    item.copy(source = source).also { adapted ->
+                        allDetailsBySlug[item.slug.lowercase()]?.let { d ->
+                            detailCache["${source.name}:${adapted.slug}"] = d.copy(movie = adapted)
+                        }
+                    }
+                }
+            })
+        }
+
+        val remoteLists = jobs.awaitAll().flatten()
+
+        // Nếu vẫn ít kết quả ở trang 1, kiểm tra lại bộ nhớ đệm sau khi các job mạng đã nạp thêm dữ liệu
+        val postFetchLocal = if (page == 1) searchLocalCache(source, rawKeyword) else emptyList()
+
+        val merged = (localMatches + remoteLists + postFetchLocal)
+            .distinctBy { it.slug.lowercase() }
+
+        merged to (if (merged.size >= 16) page + 1 else page)
+    }
+
+    /**
+     * Đề xuất các phim tương tự (Related Movies) giống giao diện MissAV:
+     * Kết hợp phim cùng diễn viên, cùng hãng/nhãn (FC2, SONE, IPZZ...), và cùng thể loại.
+     */
+    suspend fun getRelatedMovies(detail: MovieDetail): List<MovieItem> = coroutineScope {
+        val source = detail.movie.source
+        val currentSlug = detail.movie.slug.lowercase()
+        val primaryActress = detail.actor.firstOrNull { it.isNotBlank() && !it.equals("Updating", ignoreCase = true) }
+        val codePrefix = AvStore.extractCodePrefix(detail.movie.slug, detail.movie.name)
+
+        // 1. Tìm nhanh các phim tương đồng đã có trong cache
+        val cachedRelated = allDetailsBySlug.values
+            .asSequence()
+            .filter { it.movie.slug.lowercase() != currentSlug }
+            .mapNotNull { cand ->
+                var score = 0
+                if (primaryActress != null && cand.actor.any { it.equals(primaryActress, ignoreCase = true) }) {
+                    score += 50
+                }
+                if (codePrefix.isNotBlank() &&
+                    AvStore.extractCodePrefix(cand.movie.slug, cand.movie.name).equals(codePrefix, ignoreCase = true)
+                ) {
+                    score += 35
+                }
+                val sharedCats = cand.categories.count { c -> detail.categories.any { it.equals(c, ignoreCase = true) } }
+                score += sharedCats * 10
+                if (score > 0) score to cand.movie else null
+            }
+            .sortedByDescending { it.first }
+            .map { it.second }
+            .take(16)
+            .toList()
+
+        // 2. Gọi song song API theo Diễn viên và theo Nhãn/Prefix (VD: FC2-PPV, SONE, IPZZ...)
+        val actressDef = async {
+            if (!primaryActress.isNullOrBlank()) {
+                fetchAvdbByActor(source, primaryActress, 1)
+            } else emptyList()
+        }
+        val prefixDef = async {
+            if (codePrefix.isNotBlank()) {
+                fetchAvdbList(source, typeId = "", keyword = codePrefix, page = 1).first
+            } else emptyList()
+        }
+
+        val remoteActress = actressDef.await()
+        val remotePrefix = prefixDef.await()
+
+        val combined = (remoteActress + remotePrefix + cachedRelated)
+            .filter { !it.slug.equals(detail.movie.slug, ignoreCase = true) }
+            .distinctBy { it.slug.lowercase() }
+            .take(24)
+
+        if (combined.size >= 6) {
+            combined
+        } else {
+            val fallback = getLatest(source, 1)
+                .filter { !it.slug.equals(detail.movie.slug, ignoreCase = true) }
+            (combined + fallback).distinctBy { it.slug.lowercase() }.take(20)
+        }
+    }
+
+    /**
+     * "✨ Đề xuất cho bạn" (Personalized Recommendations dựa trên các phim đã từng xem & theo dõi):
+     * Phân tích diễn viên, nhãn hãng phim (FC2, SONE, IPZZ, MIDV...) và thể loại từ lịch sử xem để gợi ý phim tương đồng.
+     */
+    suspend fun getRecommendationsForYou(
+        source: MovieSource,
+        history: List<MovieWatchProgress>,
+        watchlist: List<MovieItem>,
+        preferredActresses: List<String>,
+        preferredPrefixes: List<String>
+    ): List<MovieItem> = coroutineScope {
+        val watchedSlugs = history.map { it.slug.lowercase() }.toSet()
+
+        // Trích xuất thêm diễn viên & prefix từ lịch sử xem và danh sách theo dõi
+        val historyPrefixes = (history.map { AvStore.extractCodePrefix(it.slug, it.name) } +
+            watchlist.map { AvStore.extractCodePrefix(it.slug, it.name) })
+            .filter { it.isNotBlank() }
+
+        val historyActresses = (history.mapNotNull { allDetailsBySlug[it.slug.lowercase()]?.actor } +
+            watchlist.mapNotNull { allDetailsBySlug[it.slug.lowercase()]?.actor })
+            .flatten()
+            .filter { it.isNotBlank() && !it.equals("Updating", ignoreCase = true) }
+
+        val topActresses = (preferredActresses + historyActresses).distinct().take(2)
+        val topPrefixes = (preferredPrefixes + historyPrefixes).distinct().take(3)
+
+        val jobs = mutableListOf<kotlinx.coroutines.Deferred<List<MovieItem>>>()
+
+        for (actress in topActresses) {
+            jobs.add(async { fetchAvdbByActor(source, actress, 1) })
+        }
+        for (prefix in topPrefixes) {
+            jobs.add(async { fetchAvdbList(source, typeId = "", keyword = prefix, page = 1).first })
+        }
+
+        // Nếu người dùng mới mở chưa có lịch sử, gợi ý các dòng phim hot nhất trên MissAV / AVDB
+        if (jobs.isEmpty()) {
+            jobs.add(async { fetchAvdbList(source, typeId = "2", keyword = "", page = 1).first })
+            jobs.add(async { fetchAvdbList(source, typeId = "1", keyword = "", page = 1).first })
+        }
+
+        val fetchedLists = jobs.awaitAll()
+        // Đan xen (interleave) kết quả từ các sở thích khác nhau để kệ đề xuất đa dạng
+        val interleaved = mutableListOf<MovieItem>()
+        val maxLen = fetchedLists.maxOfOrNull { it.size } ?: 0
+        for (i in 0 until maxLen) {
+            for (list in fetchedLists) {
+                if (i < list.size) {
+                    interleaved.add(list[i])
+                }
+            }
+        }
+
+        val unwatched = interleaved
+            .filter { it.slug.lowercase() !in watchedSlugs }
+            .distinctBy { it.slug.lowercase() }
+
+        if (unwatched.size >= 8) {
+            unwatched.take(24)
+        } else {
+            val extra = getLatest(source, 1).filter { it.slug.lowercase() !in watchedSlugs }
+            (unwatched + extra).distinctBy { it.slug.lowercase() }.take(24)
         }
     }
 
     // =========================================================================
-    // 2. AVDB OPENAPI (https://avdbapi.com/api.php/provide/vod/)
+    // 2. AVDB OPENAPI (https://avdbapi.com/api.php/provide/vod)
     // =========================================================================
+
+    private suspend fun fetchAvdbByActor(
+        source: MovieSource,
+        actorName: String,
+        page: Int = 1
+    ): List<MovieItem> {
+        val enc = URLEncoder.encode(actorName.trim(), "UTF-8")
+        val url = "https://avdbapi.com/api.php/provide/vod?ac=detail&pg=$page&actor=$enc"
+        val raw = fetchUrl(url, referer = "https://avdbapi.com/") ?: return emptyList()
+        return parseAvdbResponse(raw, source).first
+    }
 
     private suspend fun fetchAvdbList(
         source: MovieSource,
@@ -155,7 +476,7 @@ object AvRepository {
         page: Int = 1
     ): Pair<List<MovieItem>, Int> {
         val url = buildString {
-            append("https://avdbapi.com/api.php/provide/vod/?ac=detail&pg=$page")
+            append("https://avdbapi.com/api.php/provide/vod?ac=detail&pg=$page")
             if (typeId.isNotBlank() && typeId.all { it.isDigit() }) {
                 append("&t=$typeId")
             }
@@ -164,8 +485,40 @@ object AvRepository {
                 append("&wd=$enc")
             }
         }
-        val raw = fetchUrl(url, referer = "https://avdbapi.com/") ?: return emptyList<MovieItem>() to 1
-        return parseAvdbResponse(raw, source)
+        val raw = fetchUrl(url, referer = "https://avdbapi.com/")
+        if (!raw.isNullOrBlank()) {
+            val parsed = parseAvdbResponse(raw, source)
+            if (parsed.first.isNotEmpty()) return parsed
+        }
+
+        // Fallback nhẹ qua ac=list -> ac=detail&ids=... nếu truy vấn ac=detail&wd=... bị Cloudflare 521 timeout
+        if (keyword.isNotBlank()) {
+            val enc = URLEncoder.encode(keyword.trim(), "UTF-8")
+            val listUrl = "https://avdbapi.com/api.php/provide/vod?ac=list&pg=$page&wd=$enc"
+            val listRaw = fetchUrl(listUrl, referer = "https://avdbapi.com/")
+            if (!listRaw.isNullOrBlank()) {
+                try {
+                    val root = JSONObject(listRaw)
+                    val arr = root.optJSONArray("list")
+                    if (arr != null && arr.length() > 0) {
+                        val ids = mutableListOf<String>()
+                        for (i in 0 until minOf(arr.length(), 20)) {
+                            val id = arr.optJSONObject(i)?.optString("id", "").orEmpty()
+                            if (id.isNotBlank()) ids.add(id)
+                        }
+                        if (ids.isNotEmpty()) {
+                            val detailByIdsUrl = "https://avdbapi.com/api.php/provide/vod?ac=detail&ids=${ids.joinToString(",")}"
+                            val detailRaw = fetchUrl(detailByIdsUrl, referer = "https://avdbapi.com/")
+                            if (!detailRaw.isNullOrBlank()) {
+                                return parseAvdbResponse(detailRaw, source)
+                            }
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+        }
+
+        return emptyList<MovieItem>() to 1
     }
 
     private fun parseAvdbResponse(jsonStr: String, source: MovieSource): Pair<List<MovieItem>, Int> {
@@ -178,7 +531,7 @@ object AvRepository {
             for (i in 0 until arr.length()) {
                 val obj = arr.optJSONObject(i) ?: continue
                 val detail = parseAvdbDetailObject(obj, source) ?: continue
-                detailCache["${source.name}:${detail.movie.slug}"] = detail
+                cacheDetail(source, detail)
                 items.add(detail.movie)
             }
             items to totalPages
@@ -192,16 +545,17 @@ object AvRepository {
         val rawName = decodeHtmlEntities(obj.optString("name", slug))
         val movieCode = obj.optString("movie_code", "").trim().ifBlank { slug.uppercase() }
         val poster = obj.optString("poster_url", "").ifBlank { obj.optString("thumb_url", "") }
-        val thumb = obj.optString("thumb_url", "").ifBlank { poster }
         val typeName = obj.optString("type_name", "JAV")
         val time = obj.optString("time", "").trim()
         val year = obj.optString("year", "").trim()
         val quality = obj.optString("quality", "HD").ifBlank { "HD" }
 
-        val displayTitle = if (rawName.startsWith(movieCode, ignoreCase = true)) {
+        val displayTitle = if (rawName.startsWith(movieCode, ignoreCase = true) ||
+            rawName.startsWith("[$movieCode]", ignoreCase = true)
+        ) {
             rawName
         } else {
-            "[$movieCode] $rawName"
+            "$movieCode $rawName"
         }
 
         val actors = mutableListOf<String>()
@@ -266,14 +620,14 @@ object AvRepository {
             name = displayTitle,
             originName = actors.firstOrNull() ?: movieCode,
             slug = slug,
-            thumbUrl = poster, // Trong AVDB poster_url là ảnh ngang 16:9 cực nét, thumb_url là ảnh dọc crop
+            thumbUrl = poster, // Trong AVDB poster_url là ảnh ngang 16:9 cực nét
             posterUrl = poster,
             year = year,
             quality = quality,
             lang = typeName,
             type = "single",
             episodeCurrent = time.ifBlank { movieCode },
-            rating = "",
+            rating = movieCode,
             source = source
         )
 
@@ -309,7 +663,7 @@ object AvRepository {
             val searchUrl = "https://xxvnapi.com/tim-kiem?k=$enc&page=$page"
             val html = fetchUrl(searchUrl, referer = "https://xxvnapi.com/")
             if (!html.isNullOrBlank()) {
-                val slugs = Regex("""https://xxvnapi\.com/phim/([a-zA-Z0-9_-]+)""")
+                val slugs = Regex("""(?:https://xxvnapi\.com)?/phim/([a-zA-Z0-9_-]+)""")
                     .findAll(html)
                     .map { it.groupValues[1] }
                     .distinct()
@@ -343,7 +697,7 @@ object AvRepository {
             for (i in 0 until moviesArr.length()) {
                 val obj = moviesArr.optJSONObject(i) ?: continue
                 val detail = parseXxvnDetailObject(obj) ?: continue
-                detailCache["${MovieSource.XXVN.name}:${detail.movie.slug}"] = detail
+                cacheDetail(MovieSource.XXVN, detail)
                 items.add(detail.movie)
             }
             items to lastPage
@@ -424,7 +778,7 @@ object AvRepository {
             lang = lang,
             type = "single",
             episodeCurrent = time.ifBlank { lang },
-            rating = "",
+            rating = codePrefix,
             source = MovieSource.XXVN
         )
 
@@ -449,8 +803,6 @@ object AvRepository {
     private fun convertDfPlayerToM3u8(link: String): String {
         if (link.isBlank()) return ""
         if (link.contains(".m3u8")) return link
-        // https://a.dfplayer.cc/bf.html?id=597 -> https://a.dfplayer.cc/v1/s/597.m3u8
-        // https://a.dfplayer.cc/bf.html?did=597 -> https://a.dfplayer.cc/v2/s/597.m3u8
         val host = try {
             val u = URI(link)
             "${u.scheme}://${u.host}"
@@ -483,7 +835,6 @@ object AvRepository {
         keyword: String = "",
         page: Int = 1
     ): Pair<List<MovieItem>, Int> {
-        // 1. Try direct MissAV HTML scraping first (works when user has 1.1.1.1 / VPN or unblocked ISP)
         val path = when {
             keyword.isNotBlank() -> {
                 val enc = URLEncoder.encode(keyword.trim(), "UTF-8")
@@ -494,23 +845,22 @@ object AvRepository {
         }
 
         for (domain in MISSAV_DOMAINS) {
-            val html = fetchUrl("$domain$path", referer = "$domain/vi", timeoutMs = 3_500)
+            val html = fetchUrl("$domain$path", referer = "$domain/vi", timeoutMs = 3_000)
             if (!html.isNullOrBlank() && ("thumbnail" in html || "missav" in html.lowercase())) {
-                val parsed = parseMissAvHtmlList(html, domain)
+                val parsed = parseMissAvHtmlList(html)
                 if (parsed.isNotEmpty()) {
                     return parsed to 50
                 }
             }
         }
 
-        // 2. Smart Fallback via OpenAPI mapped to MissAV categories so it works 100% in VN without VPN
         val mappedTypeId = when (category) {
             "uncensored-leak" -> "3"
             "uncensored" -> "2"
             "censored" -> "1"
-            "siro" -> "4"
+            "siro", "fc2" -> "4"
             "chinese-subtitle" -> "7"
-            "chinese-av" -> "5"
+            "chinese-av", "madou" -> "5"
             "hentai" -> "6"
             else -> ""
         }
@@ -522,17 +872,26 @@ object AvRepository {
         )
     }
 
-    private fun parseMissAvHtmlList(html: String, baseUrl: String): List<MovieItem> {
+    private fun parseMissAvHtmlList(html: String): List<MovieItem> {
         val list = mutableListOf<MovieItem>()
         val cardRegex = Regex(
-            """<div class="thumbnail group"[^>]*>.*?<a href="([^"]+)"[^>]*>.*?<img[^>]+data-src="([^"]+)"[^>]+alt="([^"]*)"[^>]*>""",
+            """<div class="thumbnail group"[^>]*>(.*?)</div>\s*</div>""",
             setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)
         )
-        for (match in cardRegex.findAll(html)) {
+        val linkImgRegex = Regex(
+            """<a href="([^"]+)"[^>]*>.*?<img[^>]+data-src="([^"]+)"[^>]+alt="([^"]*)"[^>]*>""",
+            setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)
+        )
+        val durationRegex = Regex("""\b(\d{1,2}:\d{2}:\d{2}|\d{1,3}:\d{2})\b""")
+
+        for (cardMatch in cardRegex.findAll(html)) {
+            val block = cardMatch.groupValues[1]
+            val match = linkImgRegex.find(block) ?: continue
             val href = match.groupValues[1].trim()
             val img = match.groupValues[2].trim()
             val title = decodeHtmlEntities(match.groupValues[3].trim())
             val slug = href.trimEnd('/').substringAfterLast('/')
+            val dur = durationRegex.find(block)?.groupValues?.get(1).orEmpty()
             if (slug.isNotBlank() && title.isNotBlank()) {
                 val item = MovieItem(
                     name = title,
@@ -542,9 +901,10 @@ object AvRepository {
                     posterUrl = img,
                     year = "2026",
                     quality = "FHD",
-                    lang = "MissAV",
+                    lang = if ("uncensored" in slug.lowercase() || "fc2" in slug.lowercase()) "Không kiểm duyệt" else "MissAV",
                     type = "single",
-                    episodeCurrent = slug.uppercase(),
+                    episodeCurrent = dur.ifBlank { slug.uppercase() },
+                    rating = slug.uppercase(),
                     source = MovieSource.MissAV
                 )
                 list.add(item)
@@ -558,11 +918,9 @@ object AvRepository {
      * để trích xuất trực tiếp link HLS https://surrit.com/{uuid}/playlist.m3u8 từ trang MissAV.
      */
     fun unpackDeanEdwards(html: String): String? {
-        // Cách 1: Tìm trực tiếp UUID của surrit.com hoặc m3u8 trong HTML nếu có
         val directSurrit = Regex("""https?://surrit\.com/[0-9a-fA-F-]{36}/playlist\.m3u8""").find(html)
         if (directSurrit != null) return directSurrit.value
 
-        // Cách 2: Tìm khối eval(function(p,a,c,k,e,d)...
         val packerRegex = Regex(
             """eval\(function\(p,a,c,k,e,[dr]\)\{.*?\}\(\s*'((?:\\.|[^'])*)'\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*'((?:\\.|[^'])*)'\.split\('\|'\)""",
             RegexOption.DOT_MATCHES_ALL
@@ -598,27 +956,31 @@ object AvRepository {
 
     suspend fun getDetail(source: MovieSource, slug: String): MovieDetail? {
         detailCache["${source.name}:$slug"]?.let { return it }
+        allDetailsBySlug[slug.lowercase()]?.let { cached ->
+            val adapted = cached.copy(movie = cached.movie.copy(source = source))
+            detailCache["${source.name}:$slug"] = adapted
+            return adapted
+        }
 
         return when (source) {
             MovieSource.XXVN -> {
                 val url = "https://xxvnapi.com/api/phim/$slug"
-                val raw = fetchUrl(url, referer = "https://xxvnapi.com/") ?: return null
+                val raw = fetchUrl(url, referer = "https://xxvnapi.com/") ?: return fetchAvdbDetailBySlug(source, slug)
                 try {
                     val root = JSONObject(raw)
-                    val mvObj = root.optJSONObject("movie") ?: return null
+                    val mvObj = root.optJSONObject("movie") ?: return fetchAvdbDetailBySlug(source, slug)
                     val detail = parseXxvnDetailObject(mvObj)
                     if (detail != null) {
-                        detailCache["${source.name}:$slug"] = detail
+                        cacheDetail(source, detail)
                     }
                     detail
                 } catch (_: Exception) {
-                    null
+                    fetchAvdbDetailBySlug(source, slug)
                 }
             }
             MovieSource.MissAV -> {
-                // Try direct MissAV detail page first
                 for (domain in MISSAV_DOMAINS) {
-                    val html = fetchUrl("$domain/vi/$slug", referer = "$domain/vi", timeoutMs = 3_500)
+                    val html = fetchUrl("$domain/vi/$slug", referer = "$domain/vi", timeoutMs = 3_000)
                     if (!html.isNullOrBlank()) {
                         val m3u8 = unpackDeanEdwards(html)
                         if (!m3u8.isNullOrBlank()) {
@@ -638,12 +1000,13 @@ object AvRepository {
                                 quality = "FHD",
                                 lang = "MissAV",
                                 episodeCurrent = slug.uppercase(),
+                                rating = slug.uppercase(),
                                 source = MovieSource.MissAV
                             )
                             val detail = MovieDetail(
                                 movie = item,
                                 content = desc,
-                                time = "HD",
+                                time = "FHD",
                                 episodeTotal = "Full",
                                 countries = listOf("Nhật Bản"),
                                 servers = listOf(
@@ -660,12 +1023,11 @@ object AvRepository {
                                     )
                                 )
                             )
-                            detailCache["${source.name}:$slug"] = detail
+                            cacheDetail(source, detail)
                             return detail
                         }
                     }
                 }
-                // Fallback to AVDB lookup
                 fetchAvdbDetailBySlug(source, slug)
             }
             else -> fetchAvdbDetailBySlug(source, slug)
@@ -673,26 +1035,28 @@ object AvRepository {
     }
 
     private suspend fun fetchAvdbDetailBySlug(source: MovieSource, slug: String): MovieDetail? {
-        val enc = URLEncoder.encode(slug.replace('-', ' '), "UTF-8")
-        val url = "https://avdbapi.com/api.php/provide/vod/?ac=detail&wd=$enc"
-        val raw = fetchUrl(url, referer = "https://avdbapi.com/") ?: return null
-        return try {
-            val root = JSONObject(raw)
-            val arr = root.optJSONArray("list") ?: return null
-            for (i in 0 until arr.length()) {
-                val obj = arr.optJSONObject(i) ?: continue
-                val detail = parseAvdbDetailObject(obj, source) ?: continue
-                detailCache["${source.name}:${detail.movie.slug}"] = detail
-                if (detail.movie.slug.equals(slug, ignoreCase = true)) {
-                    return detail
+        val queries = listOf(slug, slug.replace('-', ' ')).distinct()
+        for (q in queries) {
+            val enc = URLEncoder.encode(q, "UTF-8")
+            val url = "https://avdbapi.com/api.php/provide/vod?ac=detail&wd=$enc"
+            val raw = fetchUrl(url, referer = "https://avdbapi.com/") ?: continue
+            try {
+                val root = JSONObject(raw)
+                val arr = root.optJSONArray("list") ?: continue
+                var firstDetail: MovieDetail? = null
+                for (i in 0 until arr.length()) {
+                    val obj = arr.optJSONObject(i) ?: continue
+                    val detail = parseAvdbDetailObject(obj, source) ?: continue
+                    cacheDetail(source, detail)
+                    if (firstDetail == null) firstDetail = detail
+                    if (detail.movie.slug.equals(slug, ignoreCase = true)) {
+                        return detail
+                    }
                 }
-            }
-            if (arr.length() > 0) {
-                parseAvdbDetailObject(arr.getJSONObject(0), source)
-            } else null
-        } catch (_: Exception) {
-            null
+                if (firstDetail != null) return firstDetail
+            } catch (_: Exception) {}
         }
+        return null
     }
 
     // =========================================================================
@@ -708,14 +1072,13 @@ object AvRepository {
         val cacheKey = "${source.name}:${episode.linkM3u8}:${episode.linkEmbed}"
         val now = System.currentTimeMillis()
         resolvedStreamCache[cacheKey]?.let { (ts, cached) ->
-            // Cache signed stream URLs for 15 minutes
             if (now - ts < 15 * 60 * 1000L && cached.streamUrl.isNotBlank()) {
                 return@withContext cached
             }
         }
 
         // 1. XXVN dfplayer links
-        if (source == MovieSource.XXVN) {
+        if (source == MovieSource.XXVN && (episode.linkM3u8.contains("dfplayer") || episode.linkEmbed.contains("dfplayer"))) {
             val m3u8 = episode.linkM3u8.ifBlank { convertDfPlayerToM3u8(episode.linkEmbed) }
             val stream = MovieStream(
                 streamUrl = m3u8,
@@ -734,6 +1097,7 @@ object AvRepository {
             val ref = when {
                 "surrit.com" in episode.linkM3u8 -> "https://missav.ws/"
                 "helvid.com" in episode.linkM3u8 -> "https://upload18.org/"
+                "dfplayer.cc" in episode.linkM3u8 -> "https://a.dfplayer.cc/"
                 else -> "https://avdbapi.com/"
             }
             val stream = MovieStream(
@@ -751,6 +1115,22 @@ object AvRepository {
         // 3. Extract from upload18.org embed player (window.PLAYER_CONFIG = {...})
         val embed = episode.linkEmbed.trim()
         if (embed.isNotBlank()) {
+            if ("dfplayer.cc" in embed) {
+                val m3u8 = convertDfPlayerToM3u8(embed)
+                if (m3u8.isNotBlank()) {
+                    val stream = MovieStream(
+                        streamUrl = m3u8,
+                        referer = "https://a.dfplayer.cc/",
+                        movieTitle = movieTitle,
+                        episodeName = episode.name,
+                        serverName = server.serverName,
+                        source = source
+                    )
+                    resolvedStreamCache[cacheKey] = now to stream
+                    return@withContext stream
+                }
+            }
+
             if ("upload18." in embed) {
                 val html = fetchUrl(embed, referer = "https://avdbapi.com/")
                 if (!html.isNullOrBlank()) {

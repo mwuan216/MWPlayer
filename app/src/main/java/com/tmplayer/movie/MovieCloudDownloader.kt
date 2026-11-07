@@ -119,25 +119,58 @@ object MovieCloudDownloader {
         epRange: String = "all",
         totalEpisodes: Int = 0,
         movie: MovieItem? = null,
+        detail: MovieDetail? = null,
+        destination: CloudDestination? = null,
         silentToast: Boolean = false,
         onStatus: ((Boolean, String) -> Unit)? = null
     ) = withContext(Dispatchers.IO) {
-        val srcName = if (source == MovieSource.VSMov) "vsmov" else "kkphim"
-        val (part1, part2) = splitRange(epRange, totalEpisodes)
+        MovieStore.init(context)
+        val dest = destination ?: MovieStore.cloudDestinationFlow.value
+        val targetChatId = dest.chatId
+        val targetTopicId = dest.topicId
+
+        val srcName = when (source) {
+            MovieSource.VSMov -> "vsmov"
+            MovieSource.KKPhim -> "kkphim"
+            else -> source.name.lowercase()
+        }
+
+        val resolvedAvStream = if (source.isAv) {
+            try {
+                val d = detail ?: com.tmplayer.av.AvRepository.getDetail(source, slug)
+                val srv = d?.servers?.firstOrNull()
+                val ep = srv?.episodes?.firstOrNull()
+                if (d != null && srv != null && ep != null) {
+                    com.tmplayer.av.AvRepository.resolveAvStream(source, movieTitle, srv, ep).streamUrl
+                } else ""
+            } catch (_: Exception) {
+                ""
+            }
+        } else ""
+
+        val (part1, part2) = if (source.isAv) {
+            Pair("full", null)
+        } else {
+            splitRange(epRange, totalEpisodes)
+        }
 
         val commands = mutableListOf<String>()
-        commands.add("/dl@$BOT_1 $slug $part1 seq $srcName")
-        if (part2 != null) {
-            commands.add("/dl@$BOT_2 $slug $part2 seq $srcName")
+        if (source.isAv && resolvedAvStream.isNotBlank()) {
+            commands.add("/dl@$BOT_1 $slug full seq $srcName $resolvedAvStream")
+        } else {
+            commands.add("/dl@$BOT_1 $slug $part1 seq $srcName")
+            if (part2 != null) {
+                commands.add("/dl@$BOT_2 $slug $part2 seq $srcName")
+            }
         }
 
         var sentViaTdlib = false
         var sentViaBotApi = false
 
-        // 1. Gửi lệnh qua TDLib (nếu người dùng đã đăng nhập và client sẵn sàng)
+        // 1. Gửi lệnh qua TDLib tới đích đến đã chọn (nếu người dùng đã đăng nhập và client sẵn sàng)
         try {
             val td = Td.client
-            td.getChat(CLOUD_CHAT_ID)
+            td.getChat(targetChatId)
             for (cmd in commands) {
                 val content = InputMessageText(
                     FormattedText(cmd, emptyArray()),
@@ -145,10 +178,37 @@ object MovieCloudDownloader {
                     false
                 )
                 val options = MessageSendOptions(null, false, false, false, false, 0L, false, null, 0L, 0, false)
-                var res = td.sendMessage(CLOUD_CHAT_ID, MessageTopicForum(CLOUD_TOPIC_ID), null, options, null, content)
-                if (res.valueOrNull == null) {
-                    res = td.sendMessage(CLOUD_CHAT_ID, null, null, options, null, content)
+                val topicForum = if (targetTopicId > 0) MessageTopicForum(targetTopicId) else null
+                var res = td.sendMessage(targetChatId, topicForum, null, options, null, content)
+                if (res.valueOrNull == null && topicForum != null) {
+                    res = td.sendMessage(targetChatId, null, null, options, null, content)
                 }
+                if (res.valueOrNull != null) {
+                    sentViaTdlib = true
+                }
+            }
+            if (source.isAv && resolvedAvStream.isNotBlank()) {
+                val infoMsg = buildString {
+                    append("🔞 [MWPlayer AV Cloud]\n")
+                    append("📌 Phim: $movieTitle\n")
+                    append("🏷 Mã: ${slug.uppercase()}\n")
+                    if (!detail?.actor.isNullOrEmpty()) {
+                        append("👩 Diễn viên: ${detail!!.actor.joinToString(", ")}\n")
+                    }
+                    if (!detail?.time.isNullOrBlank()) {
+                        append("⏱ Thời lượng: ${detail!!.time}\n")
+                    }
+                    append("🌐 Nguồn: ${source.displayName}\n")
+                    append("🔗 Direct Stream (HLS m3u8):\n$resolvedAvStream")
+                }
+                val content = InputMessageText(
+                    FormattedText(infoMsg, emptyArray()),
+                    LinkPreviewOptions(false, resolvedAvStream, false, false, false),
+                    false
+                )
+                val options = MessageSendOptions(null, false, false, false, false, 0L, false, null, 0L, 0, false)
+                val topicForum = if (targetTopicId > 0) MessageTopicForum(targetTopicId) else null
+                val res = td.sendMessage(targetChatId, topicForum, null, options, null, content)
                 if (res.valueOrNull != null) {
                     sentViaTdlib = true
                 }
@@ -159,9 +219,10 @@ object MovieCloudDownloader {
 
         // 2. Gửi thông báo thực thi lệnh tới Telegram Bot API
         try {
-            val rangeLabel = when (epRange) {
-                "all" -> "Toàn bộ phim ($totalEpisodes tập)"
-                "remaining" -> "Các tập còn lại"
+            val rangeLabel = when {
+                source.isAv -> "Full HD"
+                epRange == "all" -> "Toàn bộ phim ($totalEpisodes tập)"
+                epRange == "remaining" -> "Các tập còn lại"
                 else -> "Tập $epRange"
             }
             val botExecLines = buildString {
@@ -169,32 +230,50 @@ object MovieCloudDownloader {
                 if (commands.size > 1) {
                     append("🤖 <b>Bot 2:</b> <code>${commands[1]}</code>\n")
                 }
+                if (resolvedAvStream.isNotBlank()) {
+                    append("🔗 <b>Stream M3U8:</b> <code>$resolvedAvStream</code>\n")
+                }
             }
-            val text = "🎬 <b>[MWPlayer] Yêu cầu kéo phim về Tele Cloud (Dual Bot)</b>\n" +
+            val text = "🎬 <b>[MWPlayer] Yêu cầu kéo phim về Tele Cloud</b>\n" +
                 "📌 <b>Phim:</b> $movieTitle (<code>$slug</code>)\n" +
                 "📑 <b>Khoảng tập:</b> $rangeLabel\n" +
+                "📂 <b>Đích đến:</b> ${dest.displayLabel}\n" +
                 "🌐 <b>Nguồn:</b> ${source.displayName}\n" +
                 botExecLines
 
-            val url = URL("https://api.telegram.org/bot$BOT_TOKEN/sendMessage")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.requestMethod = "POST"
-            conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
-            conn.doOutput = true
-            conn.connectTimeout = 8_000
-            conn.readTimeout = 8_000
+            fun sendBotMsg(chatId: Long, topicId: Int): Boolean {
+                return try {
+                    val url = URL("https://api.telegram.org/bot$BOT_TOKEN/sendMessage")
+                    val conn = url.openConnection() as HttpURLConnection
+                    conn.requestMethod = "POST"
+                    conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+                    conn.doOutput = true
+                    conn.connectTimeout = 8_000
+                    conn.readTimeout = 8_000
 
-            val postData = "chat_id=$CLOUD_CHAT_ID" +
-                "&message_thread_id=$CLOUD_TOPIC_ID" +
-                "&parse_mode=HTML" +
-                "&text=" + URLEncoder.encode(text, "UTF-8")
+                    val postData = buildString {
+                        append("chat_id=$chatId")
+                        if (topicId > 0) append("&message_thread_id=$topicId")
+                        append("&parse_mode=HTML")
+                        append("&text=").append(URLEncoder.encode(text, "UTF-8"))
+                    }
 
-            conn.outputStream.use { it.write(postData.toByteArray(Charsets.UTF_8)) }
-            val code = conn.responseCode
-            if (code in 200..299) {
-                sentViaBotApi = true
+                    conn.outputStream.use { it.write(postData.toByteArray(Charsets.UTF_8)) }
+                    val code = conn.responseCode
+                    conn.disconnect()
+                    code in 200..299
+                } catch (_: Exception) {
+                    false
+                }
             }
-            conn.disconnect()
+
+            if (sendBotMsg(targetChatId, targetTopicId)) {
+                sentViaBotApi = true
+            } else if (targetChatId != CLOUD_CHAT_ID) {
+                if (sendBotMsg(CLOUD_CHAT_ID, CLOUD_TOPIC_ID)) {
+                    sentViaBotApi = true
+                }
+            }
         } catch (_: Exception) {
             // Bỏ qua lỗi mạng bot API
         }
@@ -213,6 +292,11 @@ object MovieCloudDownloader {
                 put("slug", slug)
                 put("range", epRange)
                 put("source", srcName)
+                put("chat_id", targetChatId)
+                put("topic_id", targetTopicId)
+                if (resolvedAvStream.isNotBlank()) {
+                    put("stream_url", resolvedAvStream)
+                }
             }
             conn.outputStream.use { it.write(jsonBody.toString().toByteArray(Charsets.UTF_8)) }
             conn.responseCode
@@ -222,7 +306,7 @@ object MovieCloudDownloader {
         }
 
         val success = sentViaTdlib || sentViaBotApi
-        if (success) {
+        if (success && !source.isAv) {
             val itemToTrack = movie ?: MovieItem(
                 name = movieTitle,
                 slug = slug,
@@ -235,16 +319,17 @@ object MovieCloudDownloader {
                 totalEpisodes = totalEpisodes
             )
         }
-        val rangeLabel = when (epRange) {
-            "all" -> "toàn bộ phim"
-            "remaining" -> "các tập còn lại"
+        val rangeLabel = when {
+            source.isAv -> "bản Full HD"
+            epRange == "all" -> "toàn bộ phim"
+            epRange == "remaining" -> "các tập còn lại"
             else -> "tập $epRange"
         }
         val msg = if (success) {
             if (commands.size > 1) {
-                "Đã kích hoạt 2 bot song song (Bot 1: $part1, Bot 2: $part2) kéo '$movieTitle' về Cloud!"
+                "Đã kích hoạt 2 bot song song (Bot 1: $part1, Bot 2: $part2) kéo '$movieTitle' về ${dest.displayLabel}!"
             } else {
-                "Đã gửi yêu cầu kéo $rangeLabel phim '$movieTitle' về MovieBox (Tele Cloud)!"
+                "Đã gửi yêu cầu kéo $rangeLabel phim '$movieTitle' về ${dest.displayLabel}!"
             }
         } else {
             "Không thể kết nối Telegram. Vui lòng kiểm tra lại kết nối mạng!"

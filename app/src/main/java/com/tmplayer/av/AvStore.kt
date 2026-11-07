@@ -23,6 +23,9 @@ object AvStore {
     private const val KEY_PIN_CODE = "av_pin_code"
     private const val KEY_WATCHLIST = "av_watchlist"
     private const val KEY_HISTORY = "av_history"
+    private const val KEY_AFFINITY_ACTRESSES = "av_affinity_actresses"
+    private const val KEY_AFFINITY_PREFIXES = "av_affinity_prefixes"
+    private const val KEY_AFFINITY_CATEGORIES = "av_affinity_categories"
 
     private val _isTabVisibleFlow = MutableStateFlow(true)
     val isTabVisibleFlow: StateFlow<Boolean> = _isTabVisibleFlow.asStateFlow()
@@ -38,6 +41,15 @@ object AvStore {
 
     private val _historyFlow = MutableStateFlow<List<MovieWatchProgress>>(emptyList())
     val historyFlow: StateFlow<List<MovieWatchProgress>> = _historyFlow.asStateFlow()
+
+    private val _preferredActressesFlow = MutableStateFlow<List<String>>(emptyList())
+    val preferredActressesFlow: StateFlow<List<String>> = _preferredActressesFlow.asStateFlow()
+
+    private val _preferredPrefixesFlow = MutableStateFlow<List<String>>(emptyList())
+    val preferredPrefixesFlow: StateFlow<List<String>> = _preferredPrefixesFlow.asStateFlow()
+
+    private val _preferredCategoriesFlow = MutableStateFlow<List<String>>(emptyList())
+    val preferredCategoriesFlow: StateFlow<List<String>> = _preferredCategoriesFlow.asStateFlow()
 
     private var initialized = false
 
@@ -98,6 +110,75 @@ object AvStore {
                 _historyFlow.value = list.sortedByDescending { it.updatedAt }
             }
         } catch (_: Exception) {}
+
+        // 3. Affinity / Preferences for Recommendations
+        _preferredActressesFlow.value = loadStringList(prefs, KEY_AFFINITY_ACTRESSES)
+        _preferredPrefixesFlow.value = loadStringList(prefs, KEY_AFFINITY_PREFIXES)
+        _preferredCategoriesFlow.value = loadStringList(prefs, KEY_AFFINITY_CATEGORIES)
+    }
+
+    private fun loadStringList(prefs: SharedPreferences, key: String): List<String> {
+        return try {
+            val raw = prefs.getString(key, null) ?: return emptyList()
+            val arr = JSONArray(raw)
+            buildList {
+                for (i in 0 until arr.length()) {
+                    val s = arr.optString(i, "").trim()
+                    if (s.isNotBlank()) add(s)
+                }
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun saveStringList(context: Context, key: String, list: List<String>) {
+        try {
+            val arr = JSONArray()
+            list.forEach { arr.put(it) }
+            getPrefs(context).edit().putString(key, arr.toString()).apply()
+        } catch (_: Exception) {}
+    }
+
+    @Synchronized
+    fun recordAffinity(context: Context, detail: MovieDetail) {
+        init(context)
+        // 1. Actresses
+        val newActresses = detail.actor
+            .map { it.trim() }
+            .filter { it.isNotBlank() && !it.equals("Updating", ignoreCase = true) }
+        if (newActresses.isNotEmpty()) {
+            val merged = (newActresses + _preferredActressesFlow.value).distinct().take(25)
+            _preferredActressesFlow.value = merged
+            saveStringList(context, KEY_AFFINITY_ACTRESSES, merged)
+        }
+
+        // 2. Code Prefix (e.g. FC2-PPV, SONE, IPZZ, START, MIDV)
+        val prefix = extractCodePrefix(detail.movie.slug, detail.movie.name)
+        if (prefix.isNotBlank()) {
+            val merged = (listOf(prefix) + _preferredPrefixesFlow.value).distinct().take(20)
+            _preferredPrefixesFlow.value = merged
+            saveStringList(context, KEY_AFFINITY_PREFIXES, merged)
+        }
+
+        // 3. Categories
+        val newCats = detail.categories
+            .map { it.trim() }
+            .filter { it.isNotBlank() && it.length >= 2 }
+        if (newCats.isNotEmpty()) {
+            val merged = (newCats + _preferredCategoriesFlow.value).distinct().take(20)
+            _preferredCategoriesFlow.value = merged
+            saveStringList(context, KEY_AFFINITY_CATEGORIES, merged)
+        }
+    }
+
+    fun extractCodePrefix(slug: String, title: String = ""): String {
+        val upperSlug = slug.uppercase()
+        if (upperSlug.startsWith("FC2-PPV")) return "FC2-PPV"
+        if (upperSlug.startsWith("FC2")) return "FC2"
+        val codeMatch = Regex("""\b([A-Z]{2,7})-\d{2,7}\b""").find(upperSlug)
+            ?: Regex("""\b([A-Z]{2,7})-\d{2,7}\b""").find(title.uppercase())
+        return codeMatch?.groupValues?.get(1).orEmpty()
     }
 
     // =========================================================================
@@ -238,6 +319,7 @@ object AvStore {
         val trimmed = histList.take(100)
         _historyFlow.value = trimmed
         saveHistory(context, trimmed)
+        recordAffinity(context, detail)
     }
 
     @Synchronized

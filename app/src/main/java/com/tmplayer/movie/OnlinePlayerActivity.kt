@@ -454,7 +454,7 @@ fun OnlinePlayerScreen(
                     if (!initialSeekDone) {
                         initialSeekDone = true
                         val saved = if (isAv) com.tmplayer.av.AvStore.getProgress(detail.movie.slug) else MovieStore.getProgress(detail.movie.slug)
-                        if (saved != null && saved.serverIndex == serverIdx && saved.episodeIndex == epIdx && !saved.isFinished && saved.positionMs > 5000L) {
+                        if (saved != null && saved.serverIndex == serverIdx && saved.episodeIndex == epIdx && !saved.isFinished && saved.positionMs > 1000L) {
                             exoPlayer.seekTo(saved.positionMs)
                         }
                     }

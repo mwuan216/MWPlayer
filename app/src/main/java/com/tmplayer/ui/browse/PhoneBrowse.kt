@@ -295,6 +295,7 @@ internal fun PhoneBrowse(
                     count = if (section.onChatsPage) 0 else countOf(section),
                     refresh = refreshOf(section),
                     refreshing = refreshingOf(section),
+                    onOpenSearch = openSearch,
                     pane = pane,
                 )
             }
@@ -446,6 +447,7 @@ private fun PhonePageFrame(
     refresh: (() -> Unit)?,
     /** Whether [refresh] is still fetching. */
     refreshing: Boolean = false,
+    onOpenSearch: (() -> Unit)? = null,
     pane: @Composable (BrowseSection) -> Unit,
 ) {
     val s = LocalStrings.current
@@ -460,7 +462,20 @@ private fun PhonePageFrame(
                 // No title: Home's featured carousel is the top of the page, Movie has its own header.
             } else if (pinned) {
                 // From the start, in the same bar and type as Settings' title.
-                TopAppBar(title = { Text(s.browseTabChats, maxLines = 1, overflow = TextOverflow.Ellipsis) })
+                TopAppBar(
+                    title = { Text(s.browseTabChats, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    actions = {
+                        if (onOpenSearch != null) {
+                            androidx.compose.material3.IconButton(onClick = onOpenSearch) {
+                                androidx.compose.material3.Icon(
+                                    imageVector = com.tmplayer.ui.icons.TmIcons.Search,
+                                    contentDescription = s.commonSearch,
+                                    tint = Tone.text,
+                                )
+                            }
+                        }
+                    },
+                )
             } else {
                 TopAppBar(
                     scrollBehavior = scrollBehavior,

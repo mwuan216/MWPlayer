@@ -168,6 +168,35 @@ data class CloudSyncedMovie(
     }
 }
 
+@Immutable
+data class CloudDestination(
+    val chatId: Long,
+    val topicId: Int = 0,
+    val chatTitle: String,
+    val topicTitle: String = ""
+) {
+    val displayLabel: String
+        get() = if (topicId > 0 && topicTitle.isNotBlank()) {
+            "$chatTitle › $topicTitle"
+        } else if (topicId > 0) {
+            "$chatTitle (#$topicId)"
+        } else {
+            chatTitle
+        }
+
+    val isDefault: Boolean
+        get() = chatId == MovieCloudDownloader.CLOUD_CHAT_ID && topicId == MovieCloudDownloader.CLOUD_TOPIC_ID
+
+    companion object {
+        val DEFAULT = CloudDestination(
+            chatId = MovieCloudDownloader.CLOUD_CHAT_ID,
+            topicId = MovieCloudDownloader.CLOUD_TOPIC_ID,
+            chatTitle = "MovieBox Cloud",
+            topicTitle = "MovieBox (#43264)"
+        )
+    }
+}
+
 /**
  * Trình quản lý danh sách phim (Theo dõi / Yêu thích, Đang xem dở, Lịch sử xem gần đây, Đã kéo về Tele Cloud)
  * Lưu trữ bằng SharedPreferences JSON, tự động đồng bộ StateFlow tức thì
@@ -178,6 +207,10 @@ object MovieStore {
     private const val KEY_CONTINUE = "movie_continue"
     private const val KEY_HISTORY = "movie_history"
     private const val KEY_CLOUD_SYNCED = "movie_cloud_synced"
+    private const val KEY_CLOUD_DEST_CHAT_ID = "movie_cloud_dest_chat_id"
+    private const val KEY_CLOUD_DEST_TOPIC_ID = "movie_cloud_dest_topic_id"
+    private const val KEY_CLOUD_DEST_CHAT_TITLE = "movie_cloud_dest_chat_title"
+    private const val KEY_CLOUD_DEST_TOPIC_TITLE = "movie_cloud_dest_topic_title"
 
     private val _watchlistFlow = MutableStateFlow<List<MovieItem>>(emptyList())
     val watchlistFlow: StateFlow<List<MovieItem>> = _watchlistFlow.asStateFlow()
@@ -190,6 +223,9 @@ object MovieStore {
 
     private val _cloudSyncedFlow = MutableStateFlow<List<CloudSyncedMovie>>(emptyList())
     val cloudSyncedFlow: StateFlow<List<CloudSyncedMovie>> = _cloudSyncedFlow.asStateFlow()
+
+    private val _cloudDestinationFlow = MutableStateFlow(CloudDestination.DEFAULT)
+    val cloudDestinationFlow: StateFlow<CloudDestination> = _cloudDestinationFlow.asStateFlow()
 
     private var initialized = false
 
@@ -272,6 +308,41 @@ object MovieStore {
                 )
             }
         } catch (_: Exception) {}
+
+        // 5. Cloud Destination
+        try {
+            if (prefs.contains(KEY_CLOUD_DEST_CHAT_ID)) {
+                val chatId = prefs.getLong(KEY_CLOUD_DEST_CHAT_ID, MovieCloudDownloader.CLOUD_CHAT_ID)
+                val topicId = prefs.getInt(KEY_CLOUD_DEST_TOPIC_ID, MovieCloudDownloader.CLOUD_TOPIC_ID)
+                val chatTitle = prefs.getString(KEY_CLOUD_DEST_CHAT_TITLE, "MovieBox Cloud").orEmpty().ifBlank { "MovieBox Cloud" }
+                val topicTitle = prefs.getString(KEY_CLOUD_DEST_TOPIC_TITLE, "").orEmpty()
+                _cloudDestinationFlow.value = CloudDestination(
+                    chatId = chatId,
+                    topicId = topicId,
+                    chatTitle = chatTitle,
+                    topicTitle = topicTitle
+                )
+            } else {
+                _cloudDestinationFlow.value = CloudDestination.DEFAULT
+            }
+        } catch (_: Exception) {}
+    }
+
+    @Synchronized
+    fun setCloudDestination(context: Context, destination: CloudDestination) {
+        init(context)
+        _cloudDestinationFlow.value = destination
+        getPrefs(context).edit()
+            .putLong(KEY_CLOUD_DEST_CHAT_ID, destination.chatId)
+            .putInt(KEY_CLOUD_DEST_TOPIC_ID, destination.topicId)
+            .putString(KEY_CLOUD_DEST_CHAT_TITLE, destination.chatTitle)
+            .putString(KEY_CLOUD_DEST_TOPIC_TITLE, destination.topicTitle)
+            .apply()
+    }
+
+    @Synchronized
+    fun resetCloudDestination(context: Context) {
+        setCloudDestination(context, CloudDestination.DEFAULT)
     }
 
     // =========================================================================

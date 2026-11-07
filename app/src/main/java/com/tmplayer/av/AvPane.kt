@@ -1,12 +1,21 @@
 package com.tmplayer.av
 
+import android.app.Activity
+import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.annotation.OptIn
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -23,6 +32,7 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -34,29 +44,46 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.Image
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
 import com.tmplayer.movie.*
 import com.tmplayer.ui.icons.TmIcons
 import com.tmplayer.ui.theme.Tone
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-
-private val AvAccent = Color(0xFFFF2E93)
-private val AvAccentSoft = Color(0xFF9C27B0)
+import kotlin.math.roundToLong
 
 private enum class AvMode {
-    Home, Category, Search, Watchlist, History
+    Home, ForYou, Category, Search, Watchlist, History
 }
 
 private data class AvHomeShelf(
@@ -77,9 +104,9 @@ private class AvCatalogState {
     val gridScrollState = LazyGridState()
 }
 
-private val avSources = listOf(MovieSource.AVDB, MovieSource.XXVN, MovieSource.MissAV)
+private val avSources = listOf(MovieSource.AVDB, MovieSource.MissAV, MovieSource.XXVN)
 
-@OptIn(ExperimentalMaterial3Api::class)
+@kotlin.OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AvPane(modifier: Modifier = Modifier) {
     val context = LocalContext.current
@@ -88,6 +115,7 @@ fun AvPane(modifier: Modifier = Modifier) {
 
     LaunchedEffect(Unit) {
         AvStore.init(context)
+        MovieStore.init(context)
     }
 
     val pinCode by AvStore.pinCodeFlow.collectAsState()
@@ -95,6 +123,8 @@ fun AvPane(modifier: Modifier = Modifier) {
     val isTabVisible by AvStore.isTabVisibleFlow.collectAsState()
     val watchlist by AvStore.watchlistFlow.collectAsState()
     val history by AvStore.historyFlow.collectAsState()
+    val preferredActresses by AvStore.preferredActressesFlow.collectAsState()
+    val preferredPrefixes by AvStore.preferredPrefixesFlow.collectAsState()
 
     // Gate content behind PIN when set and not yet unlocked in this session
     if (pinCode.isNotEmpty() && !isUnlocked) {
@@ -113,7 +143,12 @@ fun AvPane(modifier: Modifier = Modifier) {
 
     var selectedMovie by remember { mutableStateOf<MovieItem?>(null) }
     var movieDetail by remember { mutableStateOf<MovieDetail?>(null) }
+    var relatedMovies by remember { mutableStateOf<List<MovieItem>>(emptyList()) }
     var isLoadingDetail by remember { mutableStateOf(false) }
+    var isLoadingRelated by remember { mutableStateOf(false) }
+
+    var forYouMovies by remember { mutableStateOf<List<MovieItem>>(emptyList()) }
+    var isLoadingForYou by remember { mutableStateOf(false) }
 
     var isHistoryEditMode by remember { mutableStateOf(false) }
     var selectedHistorySlugs by remember { mutableStateOf<Set<String>>(emptySet()) }
@@ -126,8 +161,36 @@ fun AvPane(modifier: Modifier = Modifier) {
     }
     val activeCatalog = catalogCache.getOrPut(activeKey) { AvCatalogState() }
 
+    // Load personalized "Đề xuất cho bạn" whenever source or user history/affinity changes
+    LaunchedEffect(currentSource, history.firstOrNull()?.slug, watchlist.size, preferredActresses.firstOrNull(), preferredPrefixes.firstOrNull()) {
+        isLoadingForYou = true
+        forYouMovies = AvRepository.getRecommendationsForYou(
+            source = currentSource,
+            history = history,
+            watchlist = watchlist,
+            preferredActresses = preferredActresses,
+            preferredPrefixes = preferredPrefixes
+        )
+        isLoadingForYou = false
+    }
+
     fun loadCatalog(forceRefresh: Boolean) {
-        if (mode == AvMode.Watchlist || mode == AvMode.History) return
+        if (mode == AvMode.Watchlist || mode == AvMode.History || mode == AvMode.ForYou) {
+            if (forceRefresh && mode == AvMode.ForYou) {
+                scope.launch {
+                    isPullRefreshing = true
+                    forYouMovies = AvRepository.getRecommendationsForYou(
+                        source = currentSource,
+                        history = history,
+                        watchlist = watchlist,
+                        preferredActresses = preferredActresses,
+                        preferredPrefixes = preferredPrefixes
+                    )
+                    isPullRefreshing = false
+                }
+            }
+            return
+        }
         if (!forceRefresh && activeCatalog.loaded) return
 
         val targetCatalog = activeCatalog
@@ -166,8 +229,8 @@ fun AvPane(modifier: Modifier = Modifier) {
                                 "🔥 Không Che (Uncensored)" to "uncensored",
                                 "💎 Uncensored Leak" to "uncensored-leak",
                                 "🎬 Có Che (Censored)" to "censored",
-                                "📹 Amateur / FC2" to "fc2",
-                                "💃 Chinese AV" to "madou"
+                                "📹 Amateur / FC2" to "siro",
+                                "💃 Chinese AV" to "chinese-av"
                             )
                         }
                         val latestDef = async { AvRepository.getLatest(targetSource, 1) }
@@ -214,7 +277,7 @@ fun AvPane(modifier: Modifier = Modifier) {
     }
 
     fun loadMore() {
-        if (mode == AvMode.Home || mode == AvMode.Watchlist || mode == AvMode.History) return
+        if (mode != AvMode.Category && mode != AvMode.Search) return
         if (activeCatalog.isLoading || activeCatalog.isLoadingMore) return
         val targetCatalog = activeCatalog
         val targetSource = currentSource
@@ -236,7 +299,7 @@ fun AvPane(modifier: Modifier = Modifier) {
             }
             if (more.isNotEmpty()) {
                 targetCatalog.currentPage = nextPage
-                targetCatalog.gridMovies = (targetCatalog.gridMovies + more).distinctBy { it.slug }
+                targetCatalog.gridMovies = (targetCatalog.gridMovies + more).distinctBy { it.slug.lowercase() }
             }
             targetCatalog.isLoadingMore = false
         }
@@ -244,15 +307,25 @@ fun AvPane(modifier: Modifier = Modifier) {
 
     fun openMovie(item: MovieItem) {
         selectedMovie = item
-        isLoadingDetail = true
-        movieDetail = null
+        val cached = AvRepository.getCachedDetail(item.slug)
+        movieDetail = cached
+        isLoadingDetail = cached == null
+        relatedMovies = emptyList()
+        isLoadingRelated = true
+
         scope.launch {
-            movieDetail = AvRepository.getDetail(item.source, item.slug)
+            val detail = AvRepository.getDetail(item.source, item.slug) ?: cached
+            movieDetail = detail
             isLoadingDetail = false
+            if (detail != null) {
+                AvStore.recordAffinity(context, detail)
+                relatedMovies = AvRepository.getRelatedMovies(detail)
+            }
+            isLoadingRelated = false
         }
     }
 
-    fun playMovie(detail: MovieDetail, serverIndex: Int = 0, episodeIndex: Int = 0) {
+    fun playFullscreen(detail: MovieDetail, serverIndex: Int = 0, episodeIndex: Int = 0) {
         OnlinePlayerActivity.launch(context, detail, serverIndex, episodeIndex)
     }
 
@@ -261,6 +334,7 @@ fun AvPane(modifier: Modifier = Modifier) {
             selectedMovie != null -> {
                 selectedMovie = null
                 movieDetail = null
+                relatedMovies = emptyList()
             }
             isHistoryEditMode -> {
                 isHistoryEditMode = false
@@ -281,37 +355,44 @@ fun AvPane(modifier: Modifier = Modifier) {
             .statusBarsPadding()
     ) {
         if (selectedMovie != null) {
-            AvDetailContent(
+            AvDetailWithInlinePlayer(
                 item = selectedMovie!!,
                 detail = movieDetail,
+                relatedMovies = relatedMovies,
                 isLoading = isLoadingDetail,
+                isLoadingRelated = isLoadingRelated,
                 isBookmarked = watchlist.any { it.slug == selectedMovie!!.slug },
                 historyRecord = history.firstOrNull { it.slug == selectedMovie!!.slug },
                 onBack = {
                     selectedMovie = null
                     movieDetail = null
+                    relatedMovies = emptyList()
                 },
-                onPlay = { srvIdx, epIdx ->
-                    movieDetail?.let { playMovie(it, srvIdx, epIdx) }
+                onOpenFullscreen = { srvIdx, epIdx ->
+                    movieDetail?.let { playFullscreen(it, srvIdx, epIdx) }
                 },
                 onToggleWatchlist = {
                     AvStore.toggleWatchlist(context, selectedMovie!!)
                 },
-                onSearchActress = { actress ->
+                onSelectRelatedMovie = { nextItem ->
+                    openMovie(nextItem)
+                },
+                onSearchKeyword = { kw ->
                     selectedMovie = null
                     movieDetail = null
-                    searchQuery = actress
-                    submittedSearch = actress
+                    relatedMovies = emptyList()
+                    searchQuery = kw
+                    submittedSearch = kw
                     mode = AvMode.Search
                 }
             )
         } else {
             Column(Modifier.fillMaxSize()) {
-                // Header Bar: Brand + Source Switcher + Privacy/Lock Button
+                // Header Bar: Brand + Source Switcher + Privacy/Lock Button (Unified Theme with MoviePane)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
@@ -322,14 +403,12 @@ fun AvPane(modifier: Modifier = Modifier) {
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(6.dp))
-                                .background(
-                                    Brush.horizontalGradient(listOf(AvAccent, AvAccentSoft))
-                                )
+                                .background(Tone.accent)
                                 .padding(horizontal = 7.dp, vertical = 3.dp)
                         ) {
                             Text(
                                 text = "18+ AV",
-                                color = Color.White,
+                                color = Color.Black,
                                 fontWeight = FontWeight.ExtraBold,
                                 fontSize = 12.sp
                             )
@@ -337,7 +416,7 @@ fun AvPane(modifier: Modifier = Modifier) {
                         if (mode != AvMode.Home) {
                             Text(
                                 text = "← Trang chủ",
-                                color = AvAccent,
+                                color = Tone.accent,
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 modifier = Modifier
@@ -356,11 +435,12 @@ fun AvPane(modifier: Modifier = Modifier) {
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        // Source Switcher Pills
+                        // Source Switcher Pills (Unified with MoviePane)
                         Row(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(20.dp))
-                                .background(Color.White.copy(alpha = 0.08f))
+                                .background(Tone.surfaceHigh)
+                                .border(0.5.dp, Tone.outline.copy(alpha = 0.4f), RoundedCornerShape(20.dp))
                                 .padding(2.dp),
                             horizontalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
@@ -369,7 +449,7 @@ fun AvPane(modifier: Modifier = Modifier) {
                                 Box(
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(16.dp))
-                                        .background(if (active) AvAccent else Color.Transparent)
+                                        .background(if (active) Tone.accent else Color.Transparent)
                                         .clickable {
                                             if (currentSource != source) {
                                                 currentSource = source
@@ -383,7 +463,7 @@ fun AvPane(modifier: Modifier = Modifier) {
                                 ) {
                                     Text(
                                         text = source.badge,
-                                        color = if (active) Color.White else Tone.muted,
+                                        color = if (active) Color.Black else Tone.text.copy(alpha = 0.7f),
                                         fontSize = 11.sp,
                                         fontWeight = if (active) FontWeight.Bold else FontWeight.Medium
                                     )
@@ -397,12 +477,12 @@ fun AvPane(modifier: Modifier = Modifier) {
                                 .size(34.dp)
                                 .clip(CircleShape)
                                 .background(
-                                    if (pinCode.isNotEmpty()) AvAccent.copy(alpha = 0.2f)
-                                    else Color.White.copy(alpha = 0.08f)
+                                    if (pinCode.isNotEmpty()) Tone.accent.copy(alpha = 0.2f)
+                                    else Tone.surfaceHigh
                                 )
                                 .border(
-                                    1.dp,
-                                    if (pinCode.isNotEmpty()) AvAccent.copy(alpha = 0.6f) else Color.Transparent,
+                                    0.5.dp,
+                                    if (pinCode.isNotEmpty()) Tone.accent else Tone.outline.copy(alpha = 0.4f),
                                     CircleShape
                                 )
                                 .clickable { showPrivacySheet = true },
@@ -416,61 +496,97 @@ fun AvPane(modifier: Modifier = Modifier) {
                     }
                 }
 
-                // Search Bar
-                Row(
+                // Search Bar (Fixed Cutoff using BasicTextField inside 42.dp Box, identical to MoviePane)
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        .padding(horizontal = 16.dp, vertical = 2.dp)
+                        .height(42.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Tone.surfaceHigh)
+                        .border(0.5.dp, Tone.outline.copy(alpha = 0.35f), RoundedCornerShape(12.dp))
+                        .padding(horizontal = 14.dp),
+                    contentAlignment = Alignment.CenterStart
                 ) {
-                    OutlinedTextField(
-                        value = searchQuery,
-                        onValueChange = { searchQuery = it },
-                        placeholder = {
-                            Text(
-                                "Tìm mã JAV (SONE-614, FC2...), diễn viên...",
-                                fontSize = 13.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(
+                            imageVector = TmIcons.Search,
+                            contentDescription = "Search",
+                            tint = Tone.text.copy(alpha = 0.5f),
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Box(modifier = Modifier.weight(1f)) {
+                            if (searchQuery.isEmpty()) {
+                                Text(
+                                    text = "Tìm tên phim, mã JAV (SONE-614, FC2...), diễn viên...",
+                                    color = Tone.text.copy(alpha = 0.45f),
+                                    fontSize = 13.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            BasicTextField(
+                                value = searchQuery,
+                                onValueChange = { searchQuery = it },
+                                textStyle = TextStyle(
+                                    color = Tone.text,
+                                    fontSize = 14.sp
+                                ),
+                                singleLine = true,
+                                cursorBrush = SolidColor(Tone.accent),
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                                keyboardActions = KeyboardActions(
+                                    onSearch = {
+                                        focusManager.clearFocus()
+                                        if (searchQuery.isNotBlank()) {
+                                            submittedSearch = searchQuery.trim()
+                                            mode = AvMode.Search
+                                        }
+                                    }
+                                ),
+                                modifier = Modifier.fillMaxWidth()
                             )
-                        },
-                        leadingIcon = {
-                            Icon(TmIcons.Search, contentDescription = null, modifier = Modifier.size(18.dp))
-                        },
-                        trailingIcon = {
-                            if (searchQuery.isNotEmpty()) {
-                                IconButton(onClick = {
-                                    searchQuery = ""
-                                    submittedSearch = ""
-                                    if (mode == AvMode.Search) mode = AvMode.Home
-                                }) {
-                                    Icon(TmIcons.Close, contentDescription = "Xóa", modifier = Modifier.size(16.dp))
-                                }
+                        }
+                        if (searchQuery.isNotEmpty()) {
+                            Spacer(Modifier.width(6.dp))
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Tone.accent)
+                                    .clickable {
+                                        focusManager.clearFocus()
+                                        submittedSearch = searchQuery.trim()
+                                        mode = AvMode.Search
+                                    }
+                                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    text = "Tìm",
+                                    color = Color.Black,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
                             }
-                        },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                        keyboardActions = KeyboardActions(
-                            onSearch = {
-                                focusManager.clearFocus()
-                                if (searchQuery.isNotBlank()) {
-                                    submittedSearch = searchQuery.trim()
-                                    mode = AvMode.Search
-                                }
-                            }
-                        ),
-                        shape = RoundedCornerShape(24.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = AvAccent,
-                            unfocusedBorderColor = Color.White.copy(alpha = 0.14f),
-                            focusedContainerColor = Color.White.copy(alpha = 0.05f),
-                            unfocusedContainerColor = Color.White.copy(alpha = 0.05f)
-                        ),
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(48.dp)
-                    )
+                            Spacer(Modifier.width(6.dp))
+                            Icon(
+                                imageVector = TmIcons.Close,
+                                contentDescription = "Xóa",
+                                tint = Tone.text.copy(alpha = 0.6f),
+                                modifier = Modifier
+                                    .size(18.dp)
+                                    .clip(CircleShape)
+                                    .clickable {
+                                        searchQuery = ""
+                                        submittedSearch = ""
+                                        if (mode == AvMode.Search) mode = AvMode.Home
+                                    }
+                            )
+                        }
+                    }
                 }
 
                 // Category & Personal Shelf Chips Row
@@ -479,7 +595,7 @@ fun AvPane(modifier: Modifier = Modifier) {
                     modifier = Modifier
                         .fillMaxWidth()
                         .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -487,6 +603,11 @@ fun AvPane(modifier: Modifier = Modifier) {
                         label = "🏠 Trang chủ",
                         selected = mode == AvMode.Home,
                         onClick = { mode = AvMode.Home }
+                    )
+                    AvChip(
+                        label = "✨ Đề xuất cho bạn",
+                        selected = mode == AvMode.ForYou,
+                        onClick = { mode = AvMode.ForYou }
                     )
                     AvChip(
                         label = "⭐ Theo dõi (${watchlist.size})",
@@ -506,7 +627,7 @@ fun AvPane(modifier: Modifier = Modifier) {
                             mode = AvMode.History
                         }
                     )
-                    categories.filter { it.slug.isNotBlank() }.forEach { cat ->
+                    categories.filter { it.slug.isNotBlank() && it.slug !in listOf("for-you", "history", "watchlist") }.forEach { cat ->
                         val selected = mode == AvMode.Category && selectedCategorySlug == cat.slug
                         AvChip(
                             label = cat.label,
@@ -530,7 +651,7 @@ fun AvPane(modifier: Modifier = Modifier) {
                         ) {
                             if (activeCatalog.isLoading && !activeCatalog.loaded) {
                                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                    CircularProgressIndicator(color = AvAccent)
+                                    CircularProgressIndicator(color = Tone.accent)
                                 }
                             } else {
                                 LazyColumn(
@@ -567,9 +688,10 @@ fun AvPane(modifier: Modifier = Modifier) {
                                                         fontSize = 15.sp
                                                     )
                                                     Text(
-                                                        text = "Xem tất cả →",
-                                                        color = AvAccent,
-                                                        fontSize = 12.sp,
+                                                        text = "Xem tất cả ›",
+                                                        color = Tone.accent,
+                                                        fontSize = 13.sp,
+                                                        fontWeight = FontWeight.SemiBold,
                                                         modifier = Modifier.clickable { mode = AvMode.Watchlist }
                                                     )
                                                 }
@@ -609,8 +731,9 @@ fun AvPane(modifier: Modifier = Modifier) {
                                                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                                         Text(
                                                             text = "Chọn xóa",
-                                                            color = Color(0xFFFF6B6B),
+                                                            color = Tone.danger,
                                                             fontSize = 12.sp,
+                                                            fontWeight = FontWeight.SemiBold,
                                                             modifier = Modifier.clickable {
                                                                 isHistoryEditMode = true
                                                                 selectedHistorySlugs = emptySet()
@@ -618,9 +741,10 @@ fun AvPane(modifier: Modifier = Modifier) {
                                                             }
                                                         )
                                                         Text(
-                                                            text = "Xem tất cả →",
-                                                            color = AvAccent,
-                                                            fontSize = 12.sp,
+                                                            text = "Xem tất cả ›",
+                                                            color = Tone.accent,
+                                                            fontSize = 13.sp,
+                                                            fontWeight = FontWeight.SemiBold,
                                                             modifier = Modifier.clickable { mode = AvMode.History }
                                                         )
                                                     }
@@ -636,6 +760,59 @@ fun AvPane(modifier: Modifier = Modifier) {
                                                             onRemove = {
                                                                 AvStore.removeFromHistory(context, rec.slug)
                                                             },
+                                                            modifier = Modifier.width(210.dp)
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Personalized Recommendations ("✨ Đề xuất cho bạn")
+                                    if (forYouMovies.isNotEmpty()) {
+                                        item {
+                                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(horizontal = 16.dp),
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Column(modifier = Modifier.weight(1f)) {
+                                                        Text(
+                                                            text = "✨ Đề Xuất Cho Bạn",
+                                                            color = Tone.text,
+                                                            fontWeight = FontWeight.Bold,
+                                                            fontSize = 15.sp
+                                                        )
+                                                        val reasonParts = (preferredActresses.take(2) + preferredPrefixes.take(2)).distinct()
+                                                        if (reasonParts.isNotEmpty()) {
+                                                            Text(
+                                                                text = "Gợi ý tương đồng theo: ${reasonParts.joinToString(", ")}",
+                                                                color = Tone.text.copy(alpha = 0.55f),
+                                                                fontSize = 11.sp,
+                                                                maxLines = 1,
+                                                                overflow = TextOverflow.Ellipsis
+                                                            )
+                                                        }
+                                                    }
+                                                    Text(
+                                                        text = "Xem thêm ›",
+                                                        color = Tone.accent,
+                                                        fontSize = 13.sp,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        modifier = Modifier.clickable { mode = AvMode.ForYou }
+                                                    )
+                                                }
+                                                LazyRow(
+                                                    contentPadding = PaddingValues(horizontal = 16.dp),
+                                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                                ) {
+                                                    items(forYouMovies.take(16), key = { "foryou:${it.slug}" }) { movie ->
+                                                        AvLandscapeCard(
+                                                            item = movie,
+                                                            onClick = { openMovie(movie) },
                                                             modifier = Modifier.width(210.dp)
                                                         )
                                                     }
@@ -661,9 +838,10 @@ fun AvPane(modifier: Modifier = Modifier) {
                                                     fontSize = 15.sp
                                                 )
                                                 Text(
-                                                    text = "Xem thêm →",
-                                                    color = AvAccent,
-                                                    fontSize = 12.sp,
+                                                    text = "Xem thêm ›",
+                                                    color = Tone.accent,
+                                                    fontSize = 13.sp,
+                                                    fontWeight = FontWeight.SemiBold,
                                                     modifier = Modifier.clickable {
                                                         selectedCategorySlug = shelf.slug
                                                         selectedCategoryTitle = shelf.title
@@ -690,6 +868,56 @@ fun AvPane(modifier: Modifier = Modifier) {
                         }
                     }
 
+                    AvMode.ForYou -> {
+                        PullToRefreshBox(
+                            isRefreshing = isPullRefreshing,
+                            onRefresh = { loadCatalog(forceRefresh = true) },
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            if (isLoadingForYou && forYouMovies.isEmpty()) {
+                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    CircularProgressIndicator(color = Tone.accent)
+                                }
+                            } else if (forYouMovies.isEmpty()) {
+                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    Text("Hãy xem thử vài phim để nhận gợi ý phù hợp nhất với bạn", color = Tone.muted)
+                                }
+                            } else {
+                                LazyVerticalGrid(
+                                    columns = GridCells.Fixed(2),
+                                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 110.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                                    modifier = Modifier.fillMaxSize()
+                                ) {
+                                    item(span = { GridItemSpan(maxLineSpan) }) {
+                                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                            Text(
+                                                text = "✨ Đề xuất cho bạn (${currentSource.badge})",
+                                                color = Tone.text,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 15.sp
+                                            )
+                                            val tags = (preferredActresses.take(3) + preferredPrefixes.take(3)).distinct()
+                                            Text(
+                                                text = if (tags.isNotEmpty()) "Dựa trên các phim đã xem: ${tags.joinToString(", ")}"
+                                                else "Phim xu hướng được đề xuất dành riêng cho bạn",
+                                                color = Tone.text.copy(alpha = 0.6f),
+                                                fontSize = 12.sp
+                                            )
+                                        }
+                                    }
+                                    items(forYouMovies, key = { "fy_grid:${it.slug}" }) { item ->
+                                        AvLandscapeCard(
+                                            item = item,
+                                            onClick = { openMovie(item) }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     AvMode.Watchlist -> {
                         if (watchlist.isEmpty()) {
                             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -697,10 +925,10 @@ fun AvPane(modifier: Modifier = Modifier) {
                             }
                         } else {
                             LazyVerticalGrid(
-                                columns = GridCells.Adaptive(minSize = 165.dp),
+                                columns = GridCells.Fixed(2),
                                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 110.dp),
                                 horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                verticalArrangement = Arrangement.spacedBy(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(14.dp),
                                 modifier = Modifier.fillMaxSize()
                             ) {
                                 items(watchlist, key = { "${it.source.name}:${it.slug}" }) { item ->
@@ -738,7 +966,7 @@ fun AvPane(modifier: Modifier = Modifier) {
                                             }) {
                                                 Text(
                                                     if (selectedHistorySlugs.size == allSlugs.size) "Bỏ chọn" else "Chọn hết",
-                                                    color = AvAccent,
+                                                    color = Tone.accent,
                                                     fontSize = 12.sp
                                                 )
                                             }
@@ -749,7 +977,7 @@ fun AvPane(modifier: Modifier = Modifier) {
                                                         selectedHistorySlugs = emptySet()
                                                         isHistoryEditMode = false
                                                     },
-                                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935)),
+                                                    colors = ButtonDefaults.buttonColors(containerColor = Tone.danger),
                                                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                                                     modifier = Modifier.height(32.dp)
                                                 ) {
@@ -767,10 +995,10 @@ fun AvPane(modifier: Modifier = Modifier) {
                                                 isHistoryEditMode = true
                                                 selectedHistorySlugs = emptySet()
                                             }) {
-                                                Text("Chọn xóa", color = AvAccent, fontSize = 12.sp)
+                                                Text("Chọn xóa", color = Tone.accent, fontSize = 12.sp)
                                             }
                                             TextButton(onClick = { AvStore.clearHistory(context) }) {
-                                                Text("Xóa tất cả", color = Color(0xFFFF6B6B), fontSize = 12.sp)
+                                                Text("Xóa tất cả", color = Tone.danger, fontSize = 12.sp)
                                             }
                                         }
                                     }
@@ -783,10 +1011,10 @@ fun AvPane(modifier: Modifier = Modifier) {
                                 }
                             } else {
                                 LazyVerticalGrid(
-                                    columns = GridCells.Adaptive(minSize = 165.dp),
+                                    columns = GridCells.Fixed(2),
                                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 110.dp),
                                     horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(14.dp),
                                     modifier = Modifier.fillMaxSize()
                                 ) {
                                     items(history, key = { it.slug }) { rec ->
@@ -826,7 +1054,7 @@ fun AvPane(modifier: Modifier = Modifier) {
                         ) {
                             if (activeCatalog.isLoading && activeCatalog.gridMovies.isEmpty()) {
                                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                    CircularProgressIndicator(color = AvAccent)
+                                    CircularProgressIndicator(color = Tone.accent)
                                 }
                             } else if (activeCatalog.gridMovies.isEmpty()) {
                                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -847,15 +1075,15 @@ fun AvPane(modifier: Modifier = Modifier) {
 
                                 LazyVerticalGrid(
                                     state = gridState,
-                                    columns = GridCells.Adaptive(minSize = 165.dp),
+                                    columns = GridCells.Fixed(2),
                                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 110.dp),
                                     horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(14.dp),
                                     modifier = Modifier.fillMaxSize()
                                 ) {
                                     item(span = { GridItemSpan(maxLineSpan) }) {
                                         Text(
-                                            text = if (mode == AvMode.Search) "🔍 Kết quả cho \"$submittedSearch\""
+                                            text = if (mode == AvMode.Search) "🔍 Kết quả cho \"$submittedSearch\" (${activeCatalog.gridMovies.size})"
                                             else "📂 $selectedCategoryTitle (${currentSource.badge})",
                                             color = Tone.text,
                                             fontWeight = FontWeight.Bold,
@@ -879,7 +1107,7 @@ fun AvPane(modifier: Modifier = Modifier) {
                                             ) {
                                                 CircularProgressIndicator(
                                                     modifier = Modifier.size(24.dp),
-                                                    color = AvAccent,
+                                                    color = Tone.accent,
                                                     strokeWidth = 2.dp
                                                 )
                                             }
@@ -926,6 +1154,1153 @@ fun AvPane(modifier: Modifier = Modifier) {
     }
 }
 
+// =============================================================================
+// MISSAV-STYLE INLINE PORTRAIT PLAYER + DETAIL + RELATED MOVIES
+// =============================================================================
+
+@OptIn(UnstableApi::class)
+@kotlin.OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AvDetailWithInlinePlayer(
+    item: MovieItem,
+    detail: MovieDetail?,
+    relatedMovies: List<MovieItem>,
+    isLoading: Boolean,
+    isLoadingRelated: Boolean,
+    isBookmarked: Boolean,
+    historyRecord: MovieWatchProgress?,
+    onBack: () -> Unit,
+    onOpenFullscreen: (serverIndex: Int, episodeIndex: Int) -> Unit,
+    onToggleWatchlist: () -> Unit,
+    onSelectRelatedMovie: (MovieItem) -> Unit,
+    onSearchKeyword: (String) -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val movie = detail?.movie ?: item
+    val scrollState = rememberScrollState()
+
+    var serverIdx by remember(movie.slug) { mutableIntStateOf(historyRecord?.serverIndex ?: 0) }
+    var epIdx by remember(movie.slug) { mutableIntStateOf(historyRecord?.episodeIndex ?: 0) }
+    var showDetailsSection by remember(movie.slug) { mutableStateOf(true) }
+    var showCloudPullSheet by remember { mutableStateOf(false) }
+
+    val currentServer = detail?.servers?.getOrNull(serverIdx) ?: detail?.servers?.firstOrNull()
+    val currentEp = currentServer?.episodes?.getOrNull(epIdx) ?: currentServer?.episodes?.firstOrNull()
+
+    var resolvedStream by remember(movie.slug, serverIdx, epIdx) { mutableStateOf<MovieStream?>(null) }
+    var isStreamLoading by remember(movie.slug, serverIdx, epIdx) { mutableStateOf(true) }
+    var isPlaying by remember(movie.slug) { mutableStateOf(true) }
+    var isBuffering by remember(movie.slug) { mutableStateOf(true) }
+    var isMuted by remember { mutableStateOf(false) }
+    var currentPosMs by remember(movie.slug) { mutableLongStateOf(0L) }
+    var durationMs by remember(movie.slug) { mutableLongStateOf(0L) }
+    var showPlayerControls by remember { mutableStateOf(true) }
+    var lastControlTapMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var initialSeekApplied by remember(movie.slug, serverIdx, epIdx) { mutableStateOf(false) }
+    var seekToastLabel by remember { mutableStateOf<String?>(null) }
+    var streamError by remember(movie.slug, serverIdx, epIdx) { mutableStateOf<String?>(null) }
+
+    // Scroll to top when switching to a related movie
+    LaunchedEffect(movie.slug) {
+        scrollState.scrollTo(0)
+    }
+
+    val httpSourceFactory = remember {
+        DefaultHttpDataSource.Factory()
+            .setUserAgent(AvRepository.CHROME_UA)
+            .setConnectTimeoutMs(15_000)
+            .setReadTimeoutMs(20_000)
+            .setAllowCrossProtocolRedirects(true)
+    }
+
+    val exoPlayer = remember {
+        val dataSourceFactory = DefaultDataSource.Factory(context, httpSourceFactory)
+        val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
+        ExoPlayer.Builder(context)
+            .setMediaSourceFactory(mediaSourceFactory)
+            .build()
+    }
+
+    // Keep screen on while inline player is active and playing
+    DisposableEffect(isPlaying) {
+        val window = (context as? Activity)?.window
+        if (isPlaying) {
+            window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+        onDispose {
+            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+
+    // Resolve stream when detail / server / episode is ready
+    LaunchedEffect(detail, serverIdx, epIdx) {
+        if (detail != null && currentServer != null && currentEp != null) {
+            isStreamLoading = true
+            streamError = null
+            val stream = AvRepository.resolveAvStream(
+                source = detail.movie.source,
+                movieTitle = detail.movie.name,
+                server = currentServer,
+                episode = currentEp
+            )
+            resolvedStream = stream
+            isStreamLoading = false
+        }
+    }
+
+    // Load resolved stream into ExoPlayer
+    LaunchedEffect(resolvedStream?.streamUrl) {
+        val stream = resolvedStream ?: return@LaunchedEffect
+        if (stream.streamUrl.isBlank()) {
+            streamError = "Chưa lấy được link phát trực tiếp"
+            isBuffering = false
+            return@LaunchedEffect
+        }
+        try {
+            isBuffering = true
+            streamError = null
+            initialSeekApplied = false
+            val ref = stream.referer.ifBlank { "https://avdbapi.com/" }
+            httpSourceFactory.setDefaultRequestProperties(
+                mapOf(
+                    "Referer" to ref,
+                    "Origin" to ref.trimEnd('/'),
+                    "Accept" to "*/*",
+                    "Accept-Language" to "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7"
+                )
+            )
+            val mediaItem = MediaItem.Builder()
+                .setUri(stream.streamUrl)
+                .apply {
+                    if (stream.streamUrl.contains(".m3u8")) {
+                        setMimeType(MimeTypes.APPLICATION_M3U8)
+                    }
+                }
+                .build()
+            exoPlayer.setMediaItem(mediaItem)
+            exoPlayer.prepare()
+            exoPlayer.playWhenReady = true
+        } catch (e: Exception) {
+            isBuffering = false
+            streamError = "Không thể phát: ${e.message}"
+        }
+    }
+
+    // Sync player state & listeners
+    DisposableEffect(exoPlayer, detail, serverIdx, epIdx) {
+        val listener = object : Player.Listener {
+            override fun onPlaybackStateChanged(state: Int) {
+                isBuffering = (state == Player.STATE_BUFFERING)
+                if (state == Player.STATE_READY) {
+                    isBuffering = false
+                    streamError = null
+                    durationMs = exoPlayer.duration.coerceAtLeast(0L)
+                    if (!initialSeekApplied) {
+                        initialSeekApplied = true
+                        val saved = AvStore.getProgress(movie.slug)
+                        if (saved != null && !saved.isFinished && saved.positionMs > 2_000L) {
+                            exoPlayer.seekTo(saved.positionMs)
+                            currentPosMs = saved.positionMs
+                        }
+                    }
+                }
+            }
+
+            override fun onIsPlayingChanged(playing: Boolean) {
+                isPlaying = playing
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                isBuffering = false
+                streamError = "Lỗi luồng phát (${error.errorCodeName})"
+            }
+        }
+        exoPlayer.addListener(listener)
+        onDispose {
+            val d = detail
+            val pos = exoPlayer.currentPosition
+            val dur = exoPlayer.duration
+            if (d != null && pos > 2_000L && dur > 0L) {
+                AvStore.saveProgress(
+                    context = context,
+                    detail = d,
+                    serverIndex = serverIdx,
+                    episodeIndex = epIdx,
+                    episodeName = currentEp?.name ?: "Full",
+                    positionMs = pos,
+                    durationMs = dur
+                )
+            }
+            exoPlayer.removeListener(listener)
+        }
+    }
+
+    // Release ExoPlayer when leaving detail view completely
+    DisposableEffect(Unit) {
+        onDispose {
+            exoPlayer.release()
+        }
+    }
+
+    // Sync position when returning from Fullscreen OnlinePlayerActivity
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, movie.slug) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE) {
+                exoPlayer.pause()
+            } else if (event == Lifecycle.Event.ON_RESUME) {
+                val latestSaved = AvStore.getProgress(movie.slug)
+                if (latestSaved != null && latestSaved.positionMs > 1_000L && exoPlayer.duration > 0L) {
+                    if (kotlin.math.abs(exoPlayer.currentPosition - latestSaved.positionMs) > 2_500L) {
+                        exoPlayer.seekTo(latestSaved.positionMs)
+                        currentPosMs = latestSaved.positionMs
+                    }
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // Periodic progress update & auto-save
+    LaunchedEffect(exoPlayer, isPlaying, detail) {
+        var tick = 0
+        while (true) {
+            currentPosMs = exoPlayer.currentPosition.coerceAtLeast(0L)
+            val dur = exoPlayer.duration
+            if (dur > 0L) durationMs = dur
+            tick++
+            if (tick % 10 == 0 && isPlaying && detail != null && currentPosMs > 3_000L && durationMs > 0L) {
+                AvStore.saveProgress(
+                    context = context,
+                    detail = detail,
+                    serverIndex = serverIdx,
+                    episodeIndex = epIdx,
+                    episodeName = currentEp?.name ?: "Full",
+                    positionMs = currentPosMs,
+                    durationMs = durationMs
+                )
+            }
+            delay(500)
+        }
+    }
+
+    // Auto-hide player controls overlay after 4s of playing
+    LaunchedEffect(lastControlTapMs, showPlayerControls, isPlaying) {
+        if (showPlayerControls && isPlaying) {
+            delay(4000)
+            if (System.currentTimeMillis() - lastControlTapMs >= 3800 && isPlaying) {
+                showPlayerControls = false
+            }
+        }
+    }
+
+    // Clear quick-seek toast label
+    LaunchedEffect(seekToastLabel) {
+        if (seekToastLabel != null) {
+            delay(900)
+            seekToastLabel = null
+        }
+    }
+
+    fun seekByDelta(deltaMs: Long, label: String) {
+        val dur = exoPlayer.duration.takeIf { it > 0L } ?: durationMs.takeIf { it > 0L } ?: Long.MAX_VALUE
+        val target = (exoPlayer.currentPosition + deltaMs).coerceIn(0L, dur)
+        exoPlayer.seekTo(target)
+        currentPosMs = target
+        seekToastLabel = label
+        lastControlTapMs = System.currentTimeMillis()
+    }
+
+    fun launchLandscapeFullscreen() {
+        val d = detail ?: return
+        val pos = exoPlayer.currentPosition
+        val dur = exoPlayer.duration
+        if (pos > 1_000L) {
+            AvStore.saveProgress(
+                context = context,
+                detail = d,
+                serverIndex = serverIdx,
+                episodeIndex = epIdx,
+                episodeName = currentEp?.name ?: "Full",
+                positionMs = pos,
+                durationMs = dur.coerceAtLeast(pos + 60_000L)
+            )
+        }
+        exoPlayer.pause()
+        onOpenFullscreen(serverIdx, epIdx)
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Tone.background)
+            .verticalScroll(scrollState)
+            .padding(bottom = 110.dp)
+    ) {
+        // =====================================================================
+        // 1. INLINE 16:9 PORTRAIT VIDEO PLAYER (Thay thế phần Poster)
+        // =====================================================================
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(16f / 9f)
+                .background(Color.Black)
+                .pointerInput(durationMs) {
+                    detectTapGestures(
+                        onTap = {
+                            showPlayerControls = !showPlayerControls
+                            lastControlTapMs = System.currentTimeMillis()
+                        },
+                        onDoubleTap = { offset ->
+                            if (offset.x < size.width / 2f) {
+                                seekByDelta(-10_000L, "⏪ -10s")
+                            } else {
+                                seekByDelta(10_000L, "⏩ +10s")
+                            }
+                        }
+                    )
+                }
+                .pointerInput(durationMs) {
+                    var dragAccumPx = 0f
+                    detectHorizontalDragGestures(
+                        onDragStart = { dragAccumPx = 0f },
+                        onHorizontalDrag = { change, dragAmount ->
+                            change.consume()
+                            dragAccumPx += dragAmount
+                        },
+                        onDragEnd = {
+                            val widthPx = size.width.coerceAtLeast(1).toFloat()
+                            val fraction = dragAccumPx / widthPx
+                            if (kotlin.math.abs(fraction) > 0.04f) {
+                                val fullSpanMs = (durationMs.takeIf { it > 0L } ?: 3_600_000L) * 0.25f
+                                val delta = (fraction * fullSpanMs).roundToLong()
+                                val sec = delta / 1000L
+                                val sign = if (sec >= 0) "+" else ""
+                                seekByDelta(delta, "${sign}${sec}s")
+                            }
+                        }
+                    )
+                }
+        ) {
+            // ExoPlayer Surface
+            AndroidView(
+                factory = { ctx ->
+                    PlayerView(ctx).apply {
+                        useController = false
+                        resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                        player = exoPlayer
+                    }
+                },
+                update = { view ->
+                    if (view.player !== exoPlayer) {
+                        view.player = exoPlayer
+                    }
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+
+            // Poster preview while stream is still resolving or before first frame
+            if ((isLoading || isStreamLoading || (isBuffering && currentPosMs < 500L)) && streamError == null) {
+                AsyncAvImage(
+                    url = movie.thumbUrl.ifEmpty { movie.posterUrl },
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.45f))
+                )
+            }
+
+            // Center Play/Pause or Buffering Spinner or Seek Feedback
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                when {
+                    seekToastLabel != null -> {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(Color.Black.copy(alpha = 0.78f))
+                                .padding(horizontal = 16.dp, vertical = 8.dp)
+                        ) {
+                            Text(
+                                text = seekToastLabel!!,
+                                color = Tone.accent,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp
+                            )
+                        }
+                    }
+                    isLoading || isStreamLoading || isBuffering -> {
+                        CircularProgressIndicator(
+                            color = Tone.accent,
+                            strokeWidth = 3.dp,
+                            modifier = Modifier.size(44.dp)
+                        )
+                    }
+                    streamError != null -> {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color.Black.copy(alpha = 0.75f))
+                                .padding(12.dp)
+                        ) {
+                            Text(streamError!!, color = Color.White, fontSize = 12.sp)
+                            Spacer(Modifier.height(6.dp))
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Tone.accent)
+                                    .clickable {
+                                        exoPlayer.prepare()
+                                        exoPlayer.playWhenReady = true
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 5.dp)
+                            ) {
+                                Text("Thử lại", color = Color.Black, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                    showPlayerControls || !isPlaying -> {
+                        Box(
+                            modifier = Modifier
+                                .size(54.dp)
+                                .clip(CircleShape)
+                                .background(Tone.accent.copy(alpha = 0.9f))
+                                .clickable {
+                                    lastControlTapMs = System.currentTimeMillis()
+                                    if (exoPlayer.isPlaying) {
+                                        exoPlayer.pause()
+                                    } else {
+                                        exoPlayer.play()
+                                    }
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = if (isPlaying) TmIcons.PauseSolid else TmIcons.PlaySolid,
+                                contentDescription = if (isPlaying) "Tạm dừng" else "Phát",
+                                tint = Color.Black,
+                                modifier = Modifier.size(26.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Top bar overlay inside player: Back button + Server switcher + Fullscreen button
+            androidx.compose.animation.AnimatedVisibility(
+                visible = showPlayerControls || !isPlaying,
+                enter = fadeIn(),
+                exit = fadeOut(),
+                modifier = Modifier.align(Alignment.TopCenter)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(Color.Black.copy(alpha = 0.7f), Color.Transparent)
+                            )
+                        )
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(34.dp)
+                                .clip(CircleShape)
+                                .background(Color.Black.copy(alpha = 0.6f))
+                                .clickable(onClick = onBack),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = TmIcons.ArrowBack,
+                                contentDescription = "Quay lại",
+                                tint = Color.White,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(Tone.accent)
+                                .padding(horizontal = 7.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = movie.source.badge,
+                                color = Color.Black,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    // Server pills if multiple servers exist
+                    if ((detail?.servers?.size ?: 0) > 1) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            detail!!.servers.forEachIndexed { idx, srv ->
+                                val active = serverIdx == idx
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(if (active) Tone.accent else Color.Black.copy(alpha = 0.6f))
+                                        .clickable { serverIdx = idx }
+                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Text(
+                                        text = srv.serverName,
+                                        color = if (active) Color.Black else Color.White,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Bottom control bar inside player (matching MissAV screenshot 1: ⏪ ▶ ⏩ [slider] 00:00 🔊 ⛶)
+            androidx.compose.animation.AnimatedVisibility(
+                visible = showPlayerControls || !isPlaying,
+                enter = fadeIn(),
+                exit = fadeOut(),
+                modifier = Modifier.align(Alignment.BottomCenter)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f))
+                            )
+                        )
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    // Rewind 10s
+                    Text(
+                        text = "⏪",
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .clickable { seekByDelta(-10_000L, "⏪ -10s") }
+                            .padding(4.dp)
+                    )
+                    // Play / Pause
+                    Icon(
+                        imageVector = if (isPlaying) TmIcons.PauseSolid else TmIcons.PlaySolid,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier
+                            .size(22.dp)
+                            .clickable {
+                                lastControlTapMs = System.currentTimeMillis()
+                                if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                            }
+                    )
+                    // Fast-forward 10s
+                    Text(
+                        text = "⏩",
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .clickable { seekByDelta(10_000L, "⏩ +10s") }
+                            .padding(4.dp)
+                    )
+
+                    // Progress Slider
+                    val fraction = if (durationMs > 0L) (currentPosMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
+                    Slider(
+                        value = fraction,
+                        onValueChange = { newFrac ->
+                            lastControlTapMs = System.currentTimeMillis()
+                            if (durationMs > 0L) {
+                                val target = (newFrac * durationMs).toLong()
+                                currentPosMs = target
+                                exoPlayer.seekTo(target)
+                            }
+                        },
+                        colors = SliderDefaults.colors(
+                            thumbColor = Color.White,
+                            activeTrackColor = Tone.accent,
+                            inactiveTrackColor = Color.White.copy(alpha = 0.3f)
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(26.dp)
+                    )
+
+                    // Time label
+                    Text(
+                        text = formatAvTime(currentPosMs),
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+
+                    // Mute / Unmute
+                    Text(
+                        text = if (isMuted) "🔇" else "🔊",
+                        fontSize = 13.sp,
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .clickable {
+                                isMuted = !isMuted
+                                exoPlayer.volume = if (isMuted) 0f else 1f
+                            }
+                            .padding(4.dp)
+                    )
+
+                    // Fullscreen Landscape Button
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color.White.copy(alpha = 0.16f))
+                            .clickable { launchLandscapeFullscreen() }
+                            .padding(horizontal = 7.dp, vertical = 3.dp)
+                    ) {
+                        Text(
+                            text = "⛶",
+                            color = Color.White,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
+
+        // =====================================================================
+        // 2. MISSAV QUICK SEEK STRIP: [<< 10m | < 1m | < 10s]  [10s > | 1m > | 10m >>]
+        // =====================================================================
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Left Rewind Segmented Group
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(34.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Tone.surfaceHigh)
+                    .border(0.8.dp, Tone.outline.copy(alpha = 0.55f), RoundedCornerShape(8.dp)),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                QuickSeekSegmentButton(
+                    label = "<< 10m",
+                    onClick = { seekByDelta(-600_000L, "⏪ -10 phút") },
+                    modifier = Modifier.weight(1f)
+                )
+                VerticalSegmentDivider()
+                QuickSeekSegmentButton(
+                    label = "< 1m",
+                    onClick = { seekByDelta(-60_000L, "⏪ -1 phút") },
+                    modifier = Modifier.weight(1f)
+                )
+                VerticalSegmentDivider()
+                QuickSeekSegmentButton(
+                    label = "< 10s",
+                    onClick = { seekByDelta(-10_000L, "⏪ -10 giây") },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            // Right Forward Segmented Group
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(34.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Tone.surfaceHigh)
+                    .border(0.8.dp, Tone.outline.copy(alpha = 0.55f), RoundedCornerShape(8.dp)),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                QuickSeekSegmentButton(
+                    label = "10s >",
+                    onClick = { seekByDelta(10_000L, "⏩ +10 giây") },
+                    modifier = Modifier.weight(1f)
+                )
+                VerticalSegmentDivider()
+                QuickSeekSegmentButton(
+                    label = "1m >",
+                    onClick = { seekByDelta(60_000L, "⏩ +1 phút") },
+                    modifier = Modifier.weight(1f)
+                )
+                VerticalSegmentDivider()
+                QuickSeekSegmentButton(
+                    label = "10m >>",
+                    onClick = { seekByDelta(600_000L, "⏩ +10 phút") },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+
+        // =====================================================================
+        // 3. TITLE (MAX 3 LINES WITH ELLIPSIS) + ACTION ROW + CHI TIẾT
+        // =====================================================================
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            // Movie Title: Strictly max 3 lines with ellipsis (...)
+            Text(
+                text = movie.name,
+                color = Tone.text,
+                fontWeight = FontWeight.Bold,
+                fontSize = 16.sp,
+                lineHeight = 22.sp,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            // Action Buttons Bar (Theo dõi | Kéo về Tele | Toàn màn hình)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                AvActionPill(
+                    icon = if (isBookmarked) "♥" else "♡",
+                    label = if (isBookmarked) "Đã lưu" else "Theo dõi",
+                    highlighted = isBookmarked,
+                    onClick = onToggleWatchlist
+                )
+                AvActionPill(
+                    icon = "☁️",
+                    label = "Kéo về Tele",
+                    highlighted = false,
+                    onClick = { showCloudPullSheet = true }
+                )
+                AvActionPill(
+                    icon = "⛶",
+                    label = "Toàn màn hình",
+                    highlighted = false,
+                    onClick = { launchLandscapeFullscreen() }
+                )
+            }
+
+            // "Chi tiết" Header with accent underline (matching MissAV screenshot 1 & 2)
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = "Chi tiết",
+                            color = Tone.accent,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            modifier = Modifier.padding(bottom = 6.dp)
+                        )
+                        Box(
+                            modifier = Modifier
+                                .width(56.dp)
+                                .height(2.dp)
+                                .background(Tone.accent)
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Tone.surfaceHigh)
+                            .clickable { showDetailsSection = !showDetailsSection },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = if (showDetailsSection) "✕" else "▾",
+                            color = Tone.muted,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+                HorizontalDivider(color = Tone.outline.copy(alpha = 0.35f), thickness = 0.5.dp)
+            }
+
+            if (showDetailsSection) {
+                val codePrefix = remember(movie.slug, movie.name) {
+                    AvStore.extractCodePrefix(movie.slug, movie.name).ifBlank { movie.slug.uppercase() }
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    // Mã phim & Thời lượng
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Mã phim:", color = Tone.muted, fontSize = 13.sp)
+                        Text(
+                            text = movie.rating.ifBlank { movie.slug.uppercase() },
+                            color = Tone.accent,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.clickable { onSearchKeyword(codePrefix) }
+                        )
+                        if (!detail?.time.isNullOrBlank()) {
+                            Text("• ${detail!!.time}", color = Tone.muted, fontSize = 13.sp)
+                        }
+                    }
+
+                    // Diễn viên (Clickable)
+                    if (!detail?.actor.isNullOrEmpty()) {
+                        Row(
+                            modifier = Modifier.horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Diễn viên:", color = Tone.muted, fontSize = 13.sp)
+                            detail!!.actor.forEach { actress ->
+                                Text(
+                                    text = actress,
+                                    color = Tone.accent,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(Tone.surfaceHigh)
+                                        .clickable { onSearchKeyword(actress) }
+                                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    // Thể loại (Matching screenshot 2: "thể loại: Nghiệp dư")
+                    if (!detail?.categories.isNullOrEmpty()) {
+                        Row(
+                            modifier = Modifier.horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Thể loại:", color = Tone.muted, fontSize = 13.sp)
+                            detail!!.categories.forEach { catName ->
+                                Text(
+                                    text = catName,
+                                    color = Tone.accent,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .clickable { onSearchKeyword(catName) }
+                                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    // Nhãn / Studio Prefix (Matching screenshot 2: "Nhãn: FC2")
+                    if (codePrefix.isNotBlank()) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Nhãn:", color = Tone.muted, fontSize = 13.sp)
+                            Text(
+                                text = codePrefix,
+                                color = Tone.accent,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .clickable { onSearchKeyword(codePrefix) }
+                                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+
+                    // Mô tả ngắn gọn (tối đa 3 dòng, bấm để mở rộng)
+                    if (!detail?.content.isNullOrBlank() && detail!!.content != movie.name) {
+                        var expandedDesc by remember { mutableStateOf(false) }
+                        Text(
+                            text = detail.content,
+                            color = Tone.text.copy(alpha = 0.78f),
+                            fontSize = 12.sp,
+                            lineHeight = 18.sp,
+                            maxLines = if (expandedDesc) 20 else 3,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.clickable { expandedDesc = !expandedDesc }
+                        )
+                    }
+                }
+            }
+
+            // =================================================================
+            // 4. PHIM TƯƠNG TỰ (2-COLUMN LANDSCAPE GRID, GIỐNG ẢNH MISSAV SỐ 2)
+            // =================================================================
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "Phim tương tự",
+                color = Tone.text,
+                fontWeight = FontWeight.Bold,
+                fontSize = 15.sp
+            )
+
+            if (isLoadingRelated && relatedMovies.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(140.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(
+                        color = Tone.accent,
+                        modifier = Modifier.size(26.dp),
+                        strokeWidth = 2.dp
+                    )
+                }
+            } else if (relatedMovies.isEmpty()) {
+                Text(
+                    text = "Đang cập nhật danh sách phim tương tự...",
+                    color = Tone.muted,
+                    fontSize = 12.sp
+                )
+            } else {
+                val rows = remember(relatedMovies) { relatedMovies.chunked(2) }
+                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    rows.forEach { pair ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            pair.forEach { relItem ->
+                                AvLandscapeCard(
+                                    item = relItem,
+                                    onClick = { onSelectRelatedMovie(relItem) },
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                            if (pair.size == 1) {
+                                Spacer(Modifier.weight(1f))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // =========================================================================
+    // 5. CLOUD PULL SHEET CHO AV (CHỌN ĐÍCH ĐẾN TELE + KÉO VỀ TELE CLOUD)
+    // =========================================================================
+    if (showCloudPullSheet) {
+        val currentDest by MovieStore.cloudDestinationFlow.collectAsState()
+        ModalBottomSheet(
+            onDismissRequest = { showCloudPullSheet = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = Tone.surface
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 12.dp)
+                    .padding(bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Kéo phim AV về Tele Cloud",
+                        color = Tone.text,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Tone.surfaceHigh)
+                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                    ) {
+                        Text(
+                            text = currentDest.displayLabel,
+                            color = Tone.accent,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                Text(
+                    text = movie.name,
+                    color = Tone.text.copy(alpha = 0.7f),
+                    fontSize = 13.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                // Reusable Destination Picker Card (same as Movie tab)
+                CloudDestinationSelectorCard()
+
+                // Pull Full HD button
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Tone.accent)
+                        .clickable {
+                            showCloudPullSheet = false
+                            scope.launch {
+                                MovieCloudDownloader.pullToCloud(
+                                    context = context,
+                                    slug = movie.slug,
+                                    movieTitle = movie.name,
+                                    source = movie.source,
+                                    epRange = "full",
+                                    totalEpisodes = 1,
+                                    movie = movie,
+                                    detail = detail
+                                )
+                            }
+                        }
+                        .padding(16.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(Color.Black.copy(alpha = 0.18f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = TmIcons.Download,
+                                contentDescription = null,
+                                tint = Color.Black,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Spacer(Modifier.width(14.dp))
+                        Column {
+                            Text(
+                                text = "☁️ Kéo bản Full HD về ${currentDest.displayLabel}",
+                                color = Color.Black,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "Tự động trích xuất luồng HLS m3u8 & gửi lệnh tải về đích đã chọn",
+                                color = Color.Black.copy(alpha = 0.75f),
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuickSeekSegmentButton(
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .fillMaxHeight()
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = label,
+            color = Tone.text,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            textAlign = TextAlign.Center,
+            maxLines = 1
+        )
+    }
+}
+
+@Composable
+private fun VerticalSegmentDivider() {
+    Box(
+        modifier = Modifier
+            .width(0.8.dp)
+            .fillMaxHeight()
+            .background(Tone.outline.copy(alpha = 0.55f))
+    )
+}
+
+@Composable
+private fun AvActionPill(
+    icon: String,
+    label: String,
+    highlighted: Boolean,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(20.dp))
+            .background(if (highlighted) Tone.accent.copy(alpha = 0.18f) else Tone.surfaceHigh)
+            .border(
+                0.5.dp,
+                if (highlighted) Tone.accent else Tone.outline.copy(alpha = 0.35f),
+                RoundedCornerShape(20.dp)
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp)
+    ) {
+        Text(
+            text = icon,
+            color = if (highlighted) Tone.accent else Tone.text,
+            fontSize = 13.sp
+        )
+        Text(
+            text = label,
+            color = if (highlighted) Tone.accent else Tone.text,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+    }
+}
+
+private fun formatAvTime(ms: Long): String {
+    if (ms <= 0L) return "00:00"
+    val totalSec = ms / 1000L
+    val h = totalSec / 3600L
+    val m = (totalSec % 3600L) / 60L
+    val s = totalSec % 60L
+    return if (h > 0L) {
+        String.format("%d:%02d:%02d", h, m, s)
+    } else {
+        String.format("%02d:%02d", m, s)
+    }
+}
+
+// =============================================================================
+// REUSABLE CARDS & CHIPS (UNIFIED WITH APP THEME + MISSAV CARD LAYOUT)
+// =============================================================================
+
 @Composable
 private fun AvChip(
     label: String,
@@ -935,10 +2310,10 @@ private fun AvChip(
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(18.dp))
-            .background(if (selected) AvAccent else Color.White.copy(alpha = 0.07f))
+            .background(if (selected) Tone.accent else Tone.surfaceHigh)
             .border(
-                1.dp,
-                if (selected) AvAccent else Color.White.copy(alpha = 0.1f),
+                0.5.dp,
+                if (selected) Tone.accent else Tone.outline.copy(alpha = 0.35f),
                 RoundedCornerShape(18.dp)
             )
             .clickable(onClick = onClick)
@@ -946,7 +2321,7 @@ private fun AvChip(
     ) {
         Text(
             text = label,
-            color = if (selected) Color.White else Tone.text,
+            color = if (selected) Color.Black else Tone.text,
             fontSize = 12.sp,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
         )
@@ -973,10 +2348,14 @@ private fun AvFeaturedCarousel(
                 modifier = Modifier
                     .fillMaxSize()
                     .clip(RoundedCornerShape(16.dp))
-                    .background(Color(0xFF1A1A24))
+                    .background(Tone.surfaceHigh)
                     .clickable { onOpen(item) }
             ) {
-                AsyncAvImage(url = item.thumbUrl.ifEmpty { item.posterUrl }, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                AsyncAvImage(
+                    url = item.thumbUrl.ifEmpty { item.posterUrl },
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -990,7 +2369,7 @@ private fun AvFeaturedCarousel(
                             )
                         )
                 )
-                // Code / Quality Badge at Top Left
+                // Code / Duration Badge at Top Left
                 Row(
                     modifier = Modifier
                         .align(Alignment.TopStart)
@@ -1001,12 +2380,12 @@ private fun AvFeaturedCarousel(
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(6.dp))
-                                .background(AvAccent)
+                                .background(Tone.accent)
                                 .padding(horizontal = 8.dp, vertical = 3.dp)
                         ) {
                             Text(
                                 text = item.episodeCurrent,
-                                color = Color.White,
+                                color = Color.Black,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 11.sp
                             )
@@ -1016,12 +2395,12 @@ private fun AvFeaturedCarousel(
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(6.dp))
-                                .background(Color.Black.copy(alpha = 0.7f))
+                                .background(Color.Black.copy(alpha = 0.72f))
                                 .padding(horizontal = 7.dp, vertical = 3.dp)
                         ) {
                             Text(
                                 text = item.quality,
-                                color = Color(0xFFFFD54F),
+                                color = Tone.accent,
                                 fontWeight = FontWeight.SemiBold,
                                 fontSize = 10.sp
                             )
@@ -1057,6 +2436,12 @@ private fun AvFeaturedCarousel(
     }
 }
 
+/**
+ * Thẻ phim ngang 16:9 chuẩn giao diện MissAV (giống ảnh đính kèm số 2):
+ * - Góc dưới phải: Thời lượng phim (VD: 1:00:04, 1:10:01) trên nền đen mờ bo góc.
+ * - Góc dưới trái: Nhãn Không kiểm duyệt / Vietsub (nếu có).
+ * - Bên dưới ảnh: Tên phim (tối đa 2 dòng, quá dài thì ...).
+ */
 @Composable
 private fun AvLandscapeCard(
     item: MovieItem,
@@ -1065,68 +2450,86 @@ private fun AvLandscapeCard(
 ) {
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(10.dp))
             .clickable(onClick = onClick),
-        verticalArrangement = Arrangement.spacedBy(5.dp)
+        verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(16f / 9.5f)
-                .clip(RoundedCornerShape(12.dp))
-                .background(Color(0xFF1A1A24))
+                .aspectRatio(16f / 9.2f)
+                .clip(RoundedCornerShape(10.dp))
+                .background(Tone.surfaceHigh)
         ) {
-            AsyncAvImage(url = item.posterUrl.ifEmpty { item.thumbUrl }, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-            // Code Badge
-            if (item.episodeCurrent.isNotBlank()) {
+            AsyncAvImage(
+                url = item.posterUrl.ifEmpty { item.thumbUrl },
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+
+            // Bottom-left Uncensored / Category badge (matching MissAV screenshot 2)
+            val leftTag = when {
+                item.lang.contains("Không", ignoreCase = true) ||
+                    item.lang.contains("Uncensored", ignoreCase = true) ||
+                    item.slug.contains("uncensored", ignoreCase = true) ||
+                    item.slug.startsWith("fc2", ignoreCase = true) -> "Không kiểm duyệt"
+                item.lang.contains("Vietsub", ignoreCase = true) -> "Vietsub"
+                else -> ""
+            }
+            if (leftTag.isNotBlank()) {
                 Box(
                     modifier = Modifier
-                        .align(Alignment.TopStart)
+                        .align(Alignment.BottomStart)
                         .padding(6.dp)
                         .clip(RoundedCornerShape(5.dp))
-                        .background(AvAccent.copy(alpha = 0.9f))
+                        .background(Color(0xFF1E40AF).copy(alpha = 0.88f))
                         .padding(horizontal = 6.dp, vertical = 2.dp)
                 ) {
                     Text(
-                        text = item.episodeCurrent,
+                        text = leftTag,
                         color = Color.White,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.SemiBold,
                         maxLines = 1
                     )
                 }
             }
-            if (item.quality.isNotBlank() || item.lang.isNotBlank()) {
+
+            // Bottom-right Duration / Code badge (matching MissAV screenshot 2: e.g. "1:00:04")
+            val durationOrCode = item.episodeCurrent.ifBlank { item.quality }
+            if (durationOrCode.isNotBlank()) {
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
                         .padding(6.dp)
                         .clip(RoundedCornerShape(5.dp))
-                        .background(Color.Black.copy(alpha = 0.72f))
-                        .padding(horizontal = 5.dp, vertical = 2.dp)
+                        .background(Color.Black.copy(alpha = 0.78f))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
                 ) {
                     Text(
-                        text = listOf(item.quality, item.lang).filter { it.isNotBlank() }.distinct().joinToString(" • "),
+                        text = durationOrCode,
                         color = Color.White,
-                        fontSize = 9.sp,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold,
                         maxLines = 1
                     )
                 }
             }
         }
+
         Text(
             text = item.name,
             color = Tone.text,
             fontSize = 12.sp,
-            fontWeight = FontWeight.SemiBold,
+            fontWeight = FontWeight.Medium,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
-            lineHeight = 15.sp
+            lineHeight = 16.sp
         )
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+@kotlin.OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun AvHistoryCard(
     record: MovieWatchProgress,
@@ -1141,22 +2544,26 @@ private fun AvHistoryCard(
 
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(10.dp))
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         verticalArrangement = Arrangement.spacedBy(5.dp)
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(16f / 9.5f)
-                .clip(RoundedCornerShape(12.dp))
-                .background(Color(0xFF1A1A24))
+                .aspectRatio(16f / 9.2f)
+                .clip(RoundedCornerShape(10.dp))
+                .background(Tone.surfaceHigh)
                 .then(
-                    if (isSelected) Modifier.border(2.dp, AvAccent, RoundedCornerShape(12.dp))
+                    if (isSelected) Modifier.border(2.dp, Tone.accent, RoundedCornerShape(10.dp))
                     else Modifier
                 )
         ) {
-            AsyncAvImage(url = record.posterUrl.ifEmpty { record.thumbUrl }, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            AsyncAvImage(
+                url = record.posterUrl.ifEmpty { record.thumbUrl },
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
             if (isEditMode) {
                 Box(
                     modifier = Modifier
@@ -1164,12 +2571,12 @@ private fun AvHistoryCard(
                         .padding(6.dp)
                         .size(22.dp)
                         .clip(CircleShape)
-                        .background(if (isSelected) AvAccent else Color.Black.copy(alpha = 0.65f))
+                        .background(if (isSelected) Tone.accent else Color.Black.copy(alpha = 0.65f))
                         .border(1.5.dp, Color.White, CircleShape),
                     contentAlignment = Alignment.Center
                 ) {
                     if (isSelected) {
-                        Text("✓", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Text("✓", color = Color.Black, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             } else {
@@ -1187,10 +2594,27 @@ private fun AvHistoryCard(
                 }
             }
 
+            if (record.durationMs > 0L) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(bottom = 8.dp, end = 6.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color.Black.copy(alpha = 0.78f))
+                        .padding(horizontal = 5.dp, vertical = 1.dp)
+                ) {
+                    Text(
+                        text = "${formatAvTime(record.positionMs)} / ${formatAvTime(record.durationMs)}",
+                        color = Color.White,
+                        fontSize = 9.sp
+                    )
+                }
+            }
+
             if (progress > 0f) {
                 LinearProgressIndicator(
                     progress = { progress.coerceAtLeast(0.04f) },
-                    color = AvAccent,
+                    color = Tone.accent,
                     trackColor = Color.White.copy(alpha = 0.25f),
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
@@ -1203,236 +2627,11 @@ private fun AvHistoryCard(
             text = record.name,
             color = Tone.text,
             fontSize = 12.sp,
-            fontWeight = FontWeight.SemiBold,
+            fontWeight = FontWeight.Medium,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
             lineHeight = 15.sp
         )
-    }
-}
-
-@Composable
-private fun AvDetailContent(
-    item: MovieItem,
-    detail: MovieDetail?,
-    isLoading: Boolean,
-    isBookmarked: Boolean,
-    historyRecord: MovieWatchProgress?,
-    onBack: () -> Unit,
-    onPlay: (serverIndex: Int, episodeIndex: Int) -> Unit,
-    onToggleWatchlist: () -> Unit,
-    onSearchActress: (String) -> Unit
-) {
-    val context = LocalContext.current
-    val movie = detail?.movie ?: item
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(bottom = 110.dp)
-    ) {
-        // Top 16:9 Cover Preview
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(16f / 9.2f)
-                .background(Color(0xFF14141D))
-        ) {
-            AsyncAvImage(url = movie.thumbUrl.ifEmpty { movie.posterUrl }, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(
-                                Color.Black.copy(alpha = 0.45f),
-                                Color.Transparent,
-                                Tone.background
-                            )
-                        )
-                    )
-            )
-            IconButton(
-                onClick = onBack,
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(12.dp)
-                    .clip(CircleShape)
-                    .background(Color.Black.copy(alpha = 0.6f))
-            ) {
-                Icon(TmIcons.ArrowBack, contentDescription = "Quay lại", tint = Color.White)
-            }
-        }
-
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            // Badges
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(AvAccent)
-                        .padding(horizontal = 8.dp, vertical = 3.dp)
-                ) {
-                    Text(
-                        text = movie.source.badge,
-                        color = Color.White,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-                if (movie.episodeCurrent.isNotBlank()) {
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(Color.White.copy(alpha = 0.12f))
-                            .padding(horizontal = 8.dp, vertical = 3.dp)
-                    ) {
-                        Text(
-                            text = movie.episodeCurrent,
-                            color = Color(0xFFFFD54F),
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-                if (movie.year.isNotBlank()) {
-                    Text(movie.year, color = Tone.muted, fontSize = 12.sp)
-                }
-                if (detail?.time?.isNotBlank() == true) {
-                    Text("• ${detail.time}", color = Tone.muted, fontSize = 12.sp)
-                }
-            }
-
-            Text(
-                text = movie.name,
-                color = Tone.text,
-                fontWeight = FontWeight.Bold,
-                fontSize = 18.sp
-            )
-
-            // Action Buttons
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Button(
-                    onClick = {
-                        if (detail != null && detail.servers.isNotEmpty()) {
-                            val srvIdx = historyRecord?.serverIndex ?: 0
-                            val epIdx = historyRecord?.episodeIndex ?: 0
-                            onPlay(srvIdx, epIdx)
-                        }
-                    },
-                    enabled = !isLoading && detail != null && detail.servers.isNotEmpty(),
-                    colors = ButtonDefaults.buttonColors(containerColor = AvAccent),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(46.dp)
-                ) {
-                    if (isLoading) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(18.dp),
-                            color = Color.White,
-                            strokeWidth = 2.dp
-                        )
-                    } else {
-                        Text(
-                            text = if (historyRecord != null && historyRecord.positionMs > 15_000L) "▶ Xem tiếp"
-                            else "▶ Xem ngay",
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp
-                        )
-                    }
-                }
-
-                OutlinedButton(
-                    onClick = onToggleWatchlist,
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.height(46.dp)
-                ) {
-                    Text(
-                        text = if (isBookmarked) "★ Đang theo dõi" else "☆ Theo dõi",
-                        color = if (isBookmarked) Color(0xFFFFD54F) else Tone.text,
-                        fontSize = 13.sp
-                    )
-                }
-            }
-
-            // Clickable Actress Tags
-            if (!detail?.actor.isNullOrEmpty()) {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(
-                        text = "👩 Diễn viên (Nhấn để tìm phim cùng diễn viên):",
-                        color = Tone.muted,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Row(
-                        modifier = Modifier.horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        detail!!.actor.forEach { actress ->
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(16.dp))
-                                    .background(AvAccent.copy(alpha = 0.16f))
-                                    .border(1.dp, AvAccent.copy(alpha = 0.5f), RoundedCornerShape(16.dp))
-                                    .clickable { onSearchActress(actress) }
-                                    .padding(horizontal = 12.dp, vertical = 6.dp)
-                            ) {
-                                Text(
-                                    text = "👩 $actress",
-                                    color = Color.White,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Category Tags
-            if (!detail?.categories.isNullOrEmpty()) {
-                Row(
-                    modifier = Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    detail!!.categories.forEach { catName ->
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(Color.White.copy(alpha = 0.08f))
-                                .clickable { onSearchActress(catName) }
-                                .padding(horizontal = 10.dp, vertical = 4.dp)
-                        ) {
-                            Text(catName, color = Tone.muted, fontSize = 11.sp)
-                        }
-                    }
-                }
-            }
-
-            // Description / Overview
-            if (!detail?.content.isNullOrBlank()) {
-                Text(
-                    text = detail!!.content,
-                    color = Tone.text.copy(alpha = 0.85f),
-                    fontSize = 13.sp,
-                    lineHeight = 19.sp
-                )
-            }
-        }
     }
 }
 
@@ -1455,7 +2654,7 @@ private fun AvPinLockScreen(
             modifier = Modifier
                 .size(64.dp)
                 .clip(CircleShape)
-                .background(AvAccent.copy(alpha = 0.16f)),
+                .background(Tone.accent.copy(alpha = 0.16f)),
             contentAlignment = Alignment.Center
         ) {
             Text("🔒", fontSize = 28.sp)
@@ -1470,7 +2669,7 @@ private fun AvPinLockScreen(
         Spacer(Modifier.height(6.dp))
         Text(
             text = errorMessage ?: "Nhập mã PIN 4 số để mở khóa Tab AV",
-            color = if (errorMessage != null) Color(0xFFFF5252) else Tone.muted,
+            color = if (errorMessage != null) Tone.danger else Tone.muted,
             fontSize = 13.sp
         )
         Spacer(Modifier.height(24.dp))
@@ -1483,7 +2682,7 @@ private fun AvPinLockScreen(
                     modifier = Modifier
                         .size(16.dp)
                         .clip(CircleShape)
-                        .background(if (filled) AvAccent else Color.White.copy(alpha = 0.18f))
+                        .background(if (filled) Tone.accent else Tone.surfaceHigh)
                 )
             }
         }
@@ -1504,7 +2703,7 @@ private fun AvPinLockScreen(
                             modifier = Modifier
                                 .size(68.dp)
                                 .clip(CircleShape)
-                                .background(Color.White.copy(alpha = 0.08f))
+                                .background(Tone.surfaceHigh)
                                 .clickable {
                                     errorMessage = null
                                     when (key) {
@@ -1539,7 +2738,7 @@ private fun AvPinLockScreen(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@kotlin.OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AvPrivacyBottomSheet(
     hasPin: Boolean,
@@ -1553,12 +2752,12 @@ private fun AvPrivacyBottomSheet(
 ) {
     var currentPinInput by remember { mutableStateOf("") }
     var newPinInput by remember { mutableStateOf("") }
-    var pinMode by remember { mutableStateOf<String?>(null) } // "set", "change", "remove"
+    var pinMode by remember { mutableStateOf<String?>(null) }
     var pinError by remember { mutableStateOf<String?>(null) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF1A1A24)
+        containerColor = Tone.surface
     ) {
         Column(
             modifier = Modifier
@@ -1569,17 +2768,16 @@ private fun AvPrivacyBottomSheet(
         ) {
             Text(
                 text = "🔒 Bảo mật & Ẩn Tab AV 18+",
-                color = Color.White,
+                color = Tone.text,
                 fontWeight = FontWeight.Bold,
                 fontSize = 18.sp
             )
 
-            // Show / Hide AV Tab on Navigation Bar
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(12.dp))
-                    .background(Color.White.copy(alpha = 0.06f))
+                    .background(Tone.surfaceHigh)
                     .padding(14.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
@@ -1587,7 +2785,7 @@ private fun AvPrivacyBottomSheet(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "Hiện Tab AV trên thanh điều hướng",
-                        color = Color.White,
+                        color = Tone.text,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 14.sp
                     )
@@ -1600,18 +2798,18 @@ private fun AvPrivacyBottomSheet(
                 Switch(
                     checked = isTabVisible,
                     onCheckedChange = onToggleTabVisible,
-                    colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = AvAccent)
+                    colors = SwitchDefaults.colors(checkedThumbColor = Color.Black, checkedTrackColor = Tone.accent)
                 )
             }
 
             if (hasPin) {
                 Button(
                     onClick = onLockNow,
-                    colors = ButtonDefaults.buttonColors(containerColor = AvAccent),
+                    colors = ButtonDefaults.buttonColors(containerColor = Tone.accent),
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("🔒 Khóa Tab AV ngay lập tức", color = Color.White, fontWeight = FontWeight.Bold)
+                    Text("🔒 Khóa Tab AV ngay lập tức", color = Color.Black, fontWeight = FontWeight.Bold)
                 }
             }
 
@@ -1630,7 +2828,7 @@ private fun AvPrivacyBottomSheet(
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text(if (hasPin) "Đổi mã PIN" else "Đặt mã PIN 4 số", color = Color.White)
+                        Text(if (hasPin) "Đổi mã PIN" else "Đặt mã PIN 4 số", color = Tone.text)
                     }
                     if (hasPin) {
                         OutlinedButton(
@@ -1642,7 +2840,7 @@ private fun AvPrivacyBottomSheet(
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text("Xóa mã PIN", color = Color(0xFFFF6B6B))
+                            Text("Xóa mã PIN", color = Tone.danger)
                         }
                     }
                 }
@@ -1651,7 +2849,7 @@ private fun AvPrivacyBottomSheet(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(12.dp))
-                        .background(Color.White.copy(alpha = 0.06f))
+                        .background(Tone.surfaceHigh)
                         .padding(14.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
@@ -1678,7 +2876,7 @@ private fun AvPrivacyBottomSheet(
                         )
                     }
                     if (pinError != null) {
-                        Text(pinError!!, color = Color(0xFFFF5252), fontSize = 12.sp)
+                        Text(pinError!!, color = Tone.danger, fontSize = 12.sp)
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         TextButton(onClick = { pinMode = null }) {
@@ -1715,9 +2913,9 @@ private fun AvPrivacyBottomSheet(
                                     }
                                 }
                             },
-                            colors = ButtonDefaults.buttonColors(containerColor = AvAccent)
+                            colors = ButtonDefaults.buttonColors(containerColor = Tone.accent)
                         ) {
-                            Text("Lưu", color = Color.White)
+                            Text("Lưu", color = Color.Black, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -1725,7 +2923,6 @@ private fun AvPrivacyBottomSheet(
         }
     }
 }
-
 
 @Composable
 private fun AsyncAvImage(
@@ -1752,7 +2949,7 @@ private fun AsyncAvImage(
         )
     } else {
         Box(
-            modifier = modifier.background(Color(0xFF1A1A24)),
+            modifier = modifier.background(Tone.surfaceHigh),
             contentAlignment = Alignment.Center
         ) {
             Icon(
