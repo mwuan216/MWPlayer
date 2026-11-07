@@ -25,4 +25,7 @@
 - **Build APK & Gửi Telegram:**
   - Sau khi hoàn thành sửa code, commit và `git push` thành công:
     - Bắt buộc tiến hành build file APK (`./gradlew assembleDebug` hoặc build tool tương ứng của project).
-    - Tự động gửi file APK debug/hoàn chỉnh qua Telegram cho người dùng thông qua Telegram Bot API (sử dụng `$env:BOT_TOKEN` và Chat ID `1982424293` hoặc chat ID được cấu hình trong `ALLOWED_USER_IDS`).
+    - Tự động gửi thông báo / file APK qua Telegram cho người dùng thông qua Telegram Bot API (sử dụng `$env:BOT_TOKEN` và Chat ID `1982424293` hoặc chat ID được cấu hình trong `ALLOWED_USER_IDS`).
+    - **Quy tắc giới hạn kích thước Telegram (50MB):**
+      - Nếu file APK ≤ 50MB: Gửi trực tiếp file APK qua Telegram.
+      - Nếu file APK > 50MB (vượt quá giới hạn upload của bot): **Không cần gửi file**, chỉ cần gửi tin nhắn thông báo kèm link tải trực tiếp file APK từ GitHub repository (ví dụ: `https://github.com/mwuan216/MWPlayer/raw/master/releases/MWPlayer-arm64-v8a.apk`).
