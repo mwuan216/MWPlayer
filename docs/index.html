@@ -503,7 +503,7 @@
       -webkit-overflow-scrolling: touch;
     }
 
-    .overlay.hidden {
+    .overlay.hidden, .hidden {
       display: none !important;
     }
 
@@ -666,14 +666,14 @@
   <div id="toast"></div>
 
   <!-- 3-Day Silent Trial Gate -->
-  <div id="license-gate" class="hidden">
+  <div id="license-gate" class="hidden" style="display:none;">
     <div class="gate-card">
       <div style="font-size:44px;margin-bottom:12px;">🔒</div>
       <h2 style="margin:0 0 8px;">Kích hoạt MWPlayer</h2>
       <p style="color:var(--muted);font-size:14px;line-height:1.5;margin-bottom:20px;">
         Thời gian dùng thử 3 ngày đã kết thúc. Vui lòng nhập mã kích hoạt bản quyền để tiếp tục sử dụng trọn đời trên iPad / iPhone.
       </p>
-      <input id="license-input" type="text" placeholder="Nhập mã kích hoạt (VD: MWPLAYER_...)"
+      <input id="license-input" type="text" placeholder="Nhập mã kích hoạt..." onkeydown="if(event.key==='Enter'){activateLicense()}"
         style="width:100%;padding:12px 14px;border-radius:12px;border:1px solid var(--border);background:var(--bg);color:#fff;font-size:15px;margin-bottom:12px;text-align:center;" />
       <div id="license-err" style="color:#ff5252;font-size:13px;margin-bottom:10px;display:none;"></div>
       <button class="btn btn-primary" style="width:100%;justify-content:center;padding:12px;" onclick="activateLicense()">
@@ -907,29 +907,39 @@ let avStore = loadAvData();
 // 2. 3-DAY SILENT TRIAL & ACTIVATION CHECK
 // ============================================================================
 function checkLicenseGate() {
-  let firstLaunch = parseInt(localStorage.getItem(StorageKeys.FIRST_LAUNCH) || "0", 10);
-  if (!firstLaunch) {
+  let firstLaunch = 0;
+  let activated = false;
+  try {
+    firstLaunch = parseInt(localStorage.getItem(StorageKeys.FIRST_LAUNCH) || "0", 10);
+    if (!firstLaunch) {
+      firstLaunch = Date.now();
+      localStorage.setItem(StorageKeys.FIRST_LAUNCH, String(firstLaunch));
+    }
+    activated = localStorage.getItem(StorageKeys.ACTIVATED) === "true";
+  } catch (e) {
     firstLaunch = Date.now();
-    localStorage.setItem(StorageKeys.FIRST_LAUNCH, String(firstLaunch));
   }
-  const activated = localStorage.getItem(StorageKeys.ACTIVATED) === "true";
   const expired = (Date.now() - firstLaunch) >= TRIAL_DURATION_MS;
   const gate = document.getElementById("license-gate");
   if (expired && !activated) {
     gate.classList.remove("hidden");
+    gate.style.display = "flex";
   } else {
     gate.classList.add("hidden");
+    gate.style.display = "none";
   }
 }
 
 function activateLicense() {
   const val = (document.getElementById("license-input").value || "").trim();
   const errEl = document.getElementById("license-err");
+  const gate = document.getElementById("license-gate");
   if (val.toUpperCase() === VALID_ACTIVE_KEY) {
-    localStorage.setItem(StorageKeys.ACTIVATED, "true");
+    try { localStorage.setItem(StorageKeys.ACTIVATED, "true"); } catch (e) {}
     errEl.style.display = "none";
-    document.getElementById("license-gate").classList.add("hidden");
-    showToast("Đã kích hoạt bản quyền trọn đời thành công!");
+    gate.classList.add("hidden");
+    gate.style.display = "none";
+    showToast("✅ Đã kích hoạt bản quyền trọn đời thành công!");
   } else {
     errEl.textContent = "Mã kích hoạt không hợp lệ. Vui lòng kiểm tra lại.";
     errEl.style.display = "block";
