@@ -1,0 +1,24 @@
+{
+  "name": "MWPlayer - Phim HD & Giải Trí",
+  "short_name": "MWPlayer",
+  "description": "Ứng dụng xem phim trực tuyến tốc độ cao cho iPad & iPhone",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0B0E14",
+  "theme_color": "#0B0E14",
+  "icons": [
+    {
+      "src": "./icon.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "./icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
