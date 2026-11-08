@@ -61,6 +61,7 @@ object BackupWords {
     fun restoreMessage(plan: RestorePlan): String {
         val lines = buildList {
             if (plan.nothing) add(L.backupRestoreNothing)
+            if (plan.movieAvChanges > 0) add("Khôi phục ${plan.movieAvChanges} mục dữ liệu Movie & AV (đã xem, tiến trình xem, yêu thích).")
             if (plan.settingsChanged > 0) add(L.backupRestoreSettings(plan.settingsChanged))
             if (plan.favouritesAdded > 0) add(L.backupRestoreFavourites(plan.favouritesAdded))
             if (plan.watchedAdded > 0) add(L.backupRestoreWatched(plan.watchedAdded))

@@ -867,4 +867,233 @@ object MovieStore {
             getPrefs(context).edit().putString(KEY_CLOUD_SYNCED, array.toString()).apply()
         } catch (_: Exception) {}
     }
+
+    // =========================================================================
+    // BACKUP & RESTORE (SAO LƯU & KHÔI PHỤC DỮ LIỆU MOVIE)
+    // =========================================================================
+
+    @Synchronized
+    fun exportBackupJson(context: Context): JSONObject {
+        init(context)
+        return JSONObject().apply {
+            val wlArray = JSONArray()
+            _watchlistFlow.value.forEach { m ->
+                wlArray.put(
+                    JSONObject().apply {
+                        put("name", m.name)
+                        put("originName", m.originName)
+                        put("slug", m.slug)
+                        put("thumbUrl", m.thumbUrl)
+                        put("posterUrl", m.posterUrl)
+                        put("year", m.year)
+                        put("quality", m.quality)
+                        put("lang", m.lang)
+                        put("source", m.source.name.lowercase())
+                    }
+                )
+            }
+            put("watchlist", wlArray)
+
+            val cwArray = JSONArray()
+            _continueWatchingFlow.value.forEach { cwArray.put(it.toJson()) }
+            put("continueWatching", cwArray)
+
+            val histArray = JSONArray()
+            _historyFlow.value.forEach { histArray.put(it.toJson()) }
+            put("history", histArray)
+
+            val cloudArray = JSONArray()
+            _cloudSyncedFlow.value.forEach { cloudArray.put(it.toJson()) }
+            put("cloudSynced", cloudArray)
+
+            val dest = _cloudDestinationFlow.value
+            put(
+                "cloudDestination",
+                JSONObject().apply {
+                    put("chatId", dest.chatId)
+                    put("topicId", dest.topicId)
+                    put("chatTitle", dest.chatTitle)
+                    put("topicTitle", dest.topicTitle)
+                }
+            )
+            put("selectedBot", _selectedBotFlow.value)
+            put("pullFormat", _pullFormatFlow.value)
+        }
+    }
+
+    @Synchronized
+    fun countBackupChanges(context: Context, jsonStr: String?): Int {
+        if (jsonStr.isNullOrBlank()) return 0
+        init(context)
+        return try {
+            val obj = JSONObject(jsonStr)
+            var count = 0
+            val existingWl = _watchlistFlow.value.map { it.slug }.toSet()
+            val wlArr = obj.optJSONArray("watchlist")
+            if (wlArr != null) {
+                for (i in 0 until wlArr.length()) {
+                    val slug = wlArr.optJSONObject(i)?.optString("slug").orEmpty()
+                    if (slug.isNotBlank() && slug !in existingWl) count++
+                }
+            }
+            val existingHist = _historyFlow.value.associateBy { it.slug }
+            val histArr = obj.optJSONArray("history")
+            if (histArr != null) {
+                for (i in 0 until histArr.length()) {
+                    val item = histArr.optJSONObject(i)?.let { MovieWatchProgress.fromJson(it) } ?: continue
+                    val cur = existingHist[item.slug]
+                    if (cur == null || item.updatedAt > cur.updatedAt || !cur.watchedEpisodes.containsAll(item.watchedEpisodes)) {
+                        count++
+                    }
+                }
+            }
+            val existingCw = _continueWatchingFlow.value.associateBy { it.slug }
+            val cwArr = obj.optJSONArray("continueWatching")
+            if (cwArr != null) {
+                for (i in 0 until cwArr.length()) {
+                    val item = cwArr.optJSONObject(i)?.let { MovieWatchProgress.fromJson(it) } ?: continue
+                    val cur = existingCw[item.slug]
+                    if (cur == null || item.updatedAt > cur.updatedAt) {
+                        count++
+                    }
+                }
+            }
+            val existingCloud = _cloudSyncedFlow.value.associateBy { it.slug }
+            val cloudArr = obj.optJSONArray("cloudSynced")
+            if (cloudArr != null) {
+                for (i in 0 until cloudArr.length()) {
+                    val item = cloudArr.optJSONObject(i)?.let { CloudSyncedMovie.fromJson(it) } ?: continue
+                    val cur = existingCloud[item.slug]
+                    if (cur == null || item.updatedAt > cur.updatedAt || item.pulledUpToEpisode > cur.pulledUpToEpisode) {
+                        count++
+                    }
+                }
+            }
+            count
+        } catch (_: Exception) {
+            0
+        }
+    }
+
+    @Synchronized
+    fun restoreFromBackupJson(context: Context, jsonStr: String?) {
+        if (jsonStr.isNullOrBlank()) return
+        init(context)
+        try {
+            val obj = JSONObject(jsonStr)
+
+            // 1. Merge Watchlist
+            val wlArr = obj.optJSONArray("watchlist")
+            if (wlArr != null) {
+                val mergedWl = _watchlistFlow.value.toMutableList()
+                val seenSlugs = mergedWl.map { it.slug }.toMutableSet()
+                for (i in 0 until wlArr.length()) {
+                    val itemObj = wlArr.optJSONObject(i) ?: continue
+                    val slug = itemObj.optString("slug").trim()
+                    val name = itemObj.optString("name").trim()
+                    if (slug.isNotBlank() && name.isNotBlank() && seenSlugs.add(slug)) {
+                        mergedWl.add(
+                            MovieItem(
+                                name = name,
+                                originName = itemObj.optString("originName"),
+                                slug = slug,
+                                thumbUrl = itemObj.optString("thumbUrl"),
+                                posterUrl = itemObj.optString("posterUrl"),
+                                year = itemObj.optString("year"),
+                                quality = itemObj.optString("quality", "HD"),
+                                lang = itemObj.optString("lang", "Vietsub"),
+                                source = MovieSource.fromString(itemObj.optString("source", "kkphim"))
+                            )
+                        )
+                    }
+                }
+                _watchlistFlow.value = mergedWl
+                saveWatchlist(context, mergedWl)
+            }
+
+            // 2. Merge Continue Watching
+            val cwArr = obj.optJSONArray("continueWatching")
+            if (cwArr != null) {
+                val map = _continueWatchingFlow.value.associateBy { it.slug }.toMutableMap()
+                for (i in 0 until cwArr.length()) {
+                    val item = cwArr.optJSONObject(i)?.let { MovieWatchProgress.fromJson(it) } ?: continue
+                    val cur = map[item.slug]
+                    if (cur == null) {
+                        map[item.slug] = item
+                    } else {
+                        val newer = if (item.updatedAt >= cur.updatedAt) item else cur
+                        map[item.slug] = newer.copy(watchedEpisodes = cur.watchedEpisodes + item.watchedEpisodes)
+                    }
+                }
+                val mergedCw = map.values.sortedByDescending { it.updatedAt }.take(50)
+                _continueWatchingFlow.value = mergedCw
+                saveContinue(context, mergedCw)
+            }
+
+            // 3. Merge History
+            val histArr = obj.optJSONArray("history")
+            if (histArr != null) {
+                val map = _historyFlow.value.associateBy { it.slug }.toMutableMap()
+                for (i in 0 until histArr.length()) {
+                    val item = histArr.optJSONObject(i)?.let { MovieWatchProgress.fromJson(it) } ?: continue
+                    val cur = map[item.slug]
+                    if (cur == null) {
+                        map[item.slug] = item
+                    } else {
+                        val newer = if (item.updatedAt >= cur.updatedAt) item else cur
+                        map[item.slug] = newer.copy(watchedEpisodes = cur.watchedEpisodes + item.watchedEpisodes)
+                    }
+                }
+                val mergedHist = map.values.sortedByDescending { it.updatedAt }.take(50)
+                _historyFlow.value = mergedHist
+                saveHistory(context, mergedHist)
+            }
+
+            // 4. Merge Cloud Synced Movies
+            val cloudArr = obj.optJSONArray("cloudSynced")
+            if (cloudArr != null) {
+                val map = _cloudSyncedFlow.value.associateBy { it.slug }.toMutableMap()
+                for (i in 0 until cloudArr.length()) {
+                    val item = cloudArr.optJSONObject(i)?.let { CloudSyncedMovie.fromJson(it) } ?: continue
+                    val cur = map[item.slug]
+                    if (cur == null) {
+                        map[item.slug] = item
+                    } else {
+                        val newer = if (item.updatedAt >= cur.updatedAt) item else cur
+                        val mergedPulled = cur.pulledEpisodes + item.pulledEpisodes
+                        val maxPulled = maxOf(cur.pulledUpToEpisode, item.pulledUpToEpisode)
+                        val maxLatest = maxOf(cur.latestKnownEpisodes, item.latestKnownEpisodes, maxPulled)
+                        map[item.slug] = newer.copy(
+                            pulledUpToEpisode = maxPulled,
+                            pulledEpisodes = mergedPulled,
+                            latestKnownEpisodes = maxLatest
+                        )
+                    }
+                }
+                val mergedCloud = map.values.sortedWith(
+                    compareByDescending<CloudSyncedMovie> { it.hasNewEpisodes }.thenByDescending { it.updatedAt }
+                )
+                _cloudSyncedFlow.value = mergedCloud
+                saveCloudSynced(context, mergedCloud)
+            }
+
+            // 5. Cloud Destination & Bot
+            obj.optJSONObject("cloudDestination")?.let { destObj ->
+                val chatId = destObj.optLong("chatId", 0L)
+                if (chatId != 0L) {
+                    setCloudDestination(
+                        context,
+                        CloudDestination(
+                            chatId = chatId,
+                            topicId = destObj.optInt("topicId", 0),
+                            chatTitle = destObj.optString("chatTitle", "MovieBox Cloud"),
+                            topicTitle = destObj.optString("topicTitle", "")
+                        )
+                    )
+                }
+            }
+            obj.optString("selectedBot").takeIf { it.isNotBlank() }?.let { setSelectedBot(context, it) }
+            obj.optString("pullFormat").takeIf { it.isNotBlank() }?.let { setPullFormat(context, it) }
+        } catch (_: Exception) {}
+    }
 }

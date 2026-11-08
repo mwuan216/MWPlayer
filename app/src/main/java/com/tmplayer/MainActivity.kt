@@ -328,6 +328,7 @@ class MainActivity : ComponentActivity() {
         // everywhere. Every screen already handles its own insets.
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        com.tmplayer.license.AppLicenseManager.init(this)
         // `--ez lowend true` on a debug build: the low-end device verdict, short of memory and of
         // storage, so the setup step, the Settings card and the hint can be seen anywhere (CP68).
         if (BuildConfig.DEBUG && intent?.hasExtra("lowend") == true) {
@@ -382,11 +383,25 @@ class MainActivity : ComponentActivity() {
                     // Where each tap lands, for a page it opens to grow out of (see PageMotion).
                     // On a TV, banners and lines with buttons are reached from the screen's edge (HX22).
                     androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize().noteTouchOrigin().tvReachRoot()) {
-                        // The last runs crashed as they started: the question alone, then the shell.
                         val holding by CrashReports.holdShell.collectAsStateWithLifecycle()
+                        val isActivated by com.tmplayer.license.AppLicenseManager.isActivatedFlow.collectAsStateWithLifecycle()
+                        val isTrialExpired by com.tmplayer.license.AppLicenseManager.isTrialExpiredFlow.collectAsStateWithLifecycle()
                         // On a remote, a list keeps still while the focused item is in full view.
                         com.tmplayer.ui.components.StillWhenVisible(enabled = !com.tmplayer.ui.components.isTouch()) {
-                            if (holding) StartupCrashQuestion() else Root()
+                            if (isTrialExpired && !isActivated) {
+                                com.tmplayer.license.ActivationGateScreen(
+                                    onActivated = {
+                                        com.tmplayer.ui.components.showMessage(
+                                            this@MainActivity,
+                                            "Đã kích hoạt bản quyền trọn đời thành công!"
+                                        )
+                                    }
+                                )
+                            } else if (holding) {
+                                StartupCrashQuestion()
+                            } else {
+                                Root()
+                            }
                         }
                         // Messages at the top, clear of the floating bar and the buttons at the foot.
                         TopMessageHost()
@@ -476,6 +491,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        com.tmplayer.license.AppLicenseManager.refreshStatus(this)
         // Back from the player (or never left): no press of Play is still on its way.
         com.tmplayer.ui.components.PlayPress.end()
         lifecycleScope.launch {

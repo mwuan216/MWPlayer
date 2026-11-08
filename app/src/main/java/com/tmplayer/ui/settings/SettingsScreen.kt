@@ -477,7 +477,7 @@ fun SettingsScreen(
         SettingsPage.Notifications -> s.settingsPageNotifications
         SettingsPage.Storage -> s.settingsPageStorage
         SettingsPage.Account -> s.settingsPageAccount
-        SettingsPage.About -> s.settingsPageAbout
+        SettingsPage.About -> "Sao lưu và khôi phục"
     }
 
     // Back on a page goes to the list, not out of Settings. Composed after the caller's own
@@ -1679,259 +1679,24 @@ fun SettingsScreen(
             }
 
             SettingsPage.About -> {
-                // ---- version -------------------------------------------------------------------------
-
-                // Not in a build that a store keeps up to date (Updates.enabled, the F-Droid
-                // build): the store is what updates it, and the version is still on the About
-                // row and the About screen. The page then lands on the first help row instead.
-                if (Updates.enabled) {
-                    sectionTitle { s.settingsVersion }
-                    updateState.release?.let { offered ->
-                        item {
-                            ActionRow(
-                                title = UpdateWords.settingsRow(offered),
-                                modifier = Modifier.focusRequester(landing),
-                                subtitle = s.settingsUpdateDetail(s.formatter.bytes(Updates.apkFor(offered)?.size ?: 0L)),
-                                icon = TmIcons.Refresh,
-                                tint = Tone.caution,
-                                onClick = { showUpdate = true },
-                            )
-                        }
-                    }
-                    item {
-                        ActionRow(
-                            title = s.settingsCheckUpdates,
-                            modifier = if (updateState.release == null) Modifier.focusRequester(landing) else Modifier,
-                            subtitle = s.settingsCheckUpdatesDetail(Updates.installedVersion, Updates.RELEASES_PAGE),
-                            icon = TmIcons.Refresh,
-                            onClick = {
-                                showUpdate = true
-                                // Past the six hour wait and the skipped version: the viewer asked.
-                                scope.launch { updateScheduler(context).checkNow() }
-                            },
-                        )
-                    }
-                    item {
-                        ToggleRow(
-                            title = s.settingsUpdateNotify,
-                            subtitle = s.settingsUpdateNotifyDetail,
-                            icon = TmIcons.Bell,
-                            checked = updateNotify,
-                            onToggle = { scope.launch { settings.setUpdateNotify(!updateNotify) } },
-                        )
-                    }
-                    // GitHub pre-releases (RL1). On asks first, with what it means; off is not asked.
-                    item {
-                        ToggleRow(
-                            title = s.settingsTestVersions,
-                            subtitle = if (updateTestVersions) s.settingsTestVersionsOn else s.settingsTestVersionsOff,
-                            icon = TmIcons.Warning,
-                            checked = updateTestVersions,
-                            onToggle = {
-                                if (updateTestVersions) {
-                                    scope.launch {
-                                        settings.setUpdateTestVersions(false)
-                                        Updates.testVersionsSwitched(on = false, skipped = settings.updatePrefs.skippedVersion())
-                                    }
-                                } else {
-                                    prompt = Prompt.TestVersions
-                                }
-                            },
-                        )
-                    }
-                    // "Install updates by itself" (HX5): Android 12 and later only, where Android can
-                    // install an update without asking. Off by default; nothing more to answer.
-                    if (com.tmplayer.data.AutoUpdater.supported) {
-                        item {
-                            // Read on each pass: the install permission may have changed meanwhile.
-                            val mayInstall = Updates.canInstall(context)
-                            ToggleRow(
-                                title = s.settingsAutoInstall,
-                                subtitle = when {
-                                    !updateAutoInstall -> s.settingsAutoInstallOff
-                                    !mayInstall -> s.settingsAutoInstallBlocked
-                                    else -> s.settingsAutoInstallOn
-                                },
-                                icon = TmIcons.Refresh,
-                                checked = updateAutoInstall,
-                                onToggle = {
-                                    scope.launch {
-                                        settings.setUpdateAutoInstall(!updateAutoInstall)
-                                        runCatching { com.tmplayer.data.BackgroundChecks.schedule(context) }
-                                    }
-                                },
-                            )
-                        }
-                    }
-                }
-
                 // ---- backup ----------------------------------------------------------------------------
-
-                // To a file the viewer keeps, and back: settings, lists and resume points, never the
-                // Telegram sign in. See BackupActions for where the file goes on a box with no picker.
-                // Here rather than on Library since 2026-11-01: it is the whole account's, not the
-                // library's. Without the version rows (a store build) the remote lands on it.
                 sectionTitle { s.backupSection }
                 item {
                     ActionRow(
                         title = s.backupBackUp,
-                        subtitle = s.backupBackUpDetail,
+                        subtitle = "Lưu toàn bộ cài đặt, phim yêu thích, lịch sử đã xem và tiến trình xem (Movie, AV, Telegram) ra tệp sao lưu",
                         icon = TmIcons.Download,
-                        modifier = if (Updates.enabled) Modifier else Modifier.focusRequester(landing),
+                        modifier = Modifier.focusRequester(landing),
                         onClick = backup.backUp,
                     )
                 }
                 item {
                     ActionRow(
                         title = s.backupRestore,
-                        subtitle = s.backupRestoreDetail,
+                        subtitle = "Khôi phục toàn bộ dữ liệu, danh sách yêu thích và tiến trình xem từ tệp sao lưu",
                         icon = TmIcons.Refresh,
                         onClick = backup.restore,
                     )
-                }
-
-                // ---- help ----------------------------------------------------------------------------
-
-                sectionTitle { s.settingsHelp }
-                // A proxy (CP77), for a network where Telegram is blocked; the same screen the
-                // connecting help opens before sign in.
-                item {
-                    val proxyOn by com.tmplayer.data.Td.proxyOn.collectAsStateWithLifecycle()
-                    ActionRow(
-                        title = s.proxyTitle,
-                        subtitle = if (proxyOn) s.proxyInUse else s.proxySettingsDetailOff,
-                        icon = TmIcons.Wifi,
-                        onClick = { com.tmplayer.ui.connect.ProxyScreenState.open = true },
-                    )
-                }
-                item {
-                    ActionRow(
-                        title = s.settingsTour,
-                        subtitle = s.settingsTourBody,
-                        icon = TmIcons.Info,
-                        onClick = { scope.launch { settings.openTour() } },
-                    )
-                }
-                item {
-                    ActionRow(
-                        title = s.settingsWhatsNew,
-                        subtitle = s.settingsWhatsNewDetail(WhatsNew.VERSION),
-                        icon = TmIcons.StarOutline,
-                        onClick = { whatsNew = true },
-                    )
-                }
-                item {
-                    ActionRow(
-                        title = s.settingsChangelog,
-                        subtitle = s.settingsChangelogDetail,
-                        icon = TmIcons.List,
-                        onClick = { openPage(WhatsNew.CHANGELOG, s.settingsQrChangelogPage) },
-                    )
-                }
-                item {
-                    ActionRow(
-                        title = s.settingsReportProblem,
-                        subtitle = s.settingsReportProblemDetail,
-                        icon = TmIcons.Bug,
-                        onClick = { reporting = true },
-                    )
-                }
-                // The logs to attach to that report (CP59), scrubbed of names and ids before they are written.
-                item {
-                    ActionRow(
-                        title = s.logsSave,
-                        subtitle = s.logsSaveDetail,
-                        icon = TmIcons.Logs,
-                        onClick = saveLogs,
-                    )
-                }
-                // Hidden until a chat's search turns it on (see DEVELOPER_PHRASE): how the app read
-                // the file names of the chat opened last, to check its guesses against real chats.
-                if (developerOptions) {
-                    item {
-                        ActionRow(
-                            title = s.logsNameReport,
-                            subtitle = s.logsNameReportDetail,
-                            icon = TmIcons.Checklist,
-                            onClick = saveNameCheck,
-                        )
-                    }
-                }
-                item {
-                    ActionRow(
-                        title = s.aboutPrivacy,
-                        subtitle = s.settingsPrivacyDetail(device),
-                        icon = TmIcons.Lock,
-                        onClick = { openPage(About.PRIVACY, s.settingsQrPrivacyPage) },
-                    )
-                }
-                // The one setting that sends anything anywhere except Telegram and GitHub, and it is off
-                // until it is asked for. A build with no DSN compiled in has nowhere to send a report, so
-                // rather than offer a switch that does nothing, it is not drawn at all.
-                if (CrashReports.available) {
-                    item {
-                        ToggleRow(
-                            title = s.settingsCrashReports,
-                            subtitle = if (crashReports) {
-                                s.settingsCrashReportsOn
-                            } else {
-                                s.settingsCrashReportsOff
-                            },
-                            icon = TmIcons.Warning,
-                            checked = crashReports,
-                            onToggle = {
-                                val next = !crashReports
-                                scope.launch { settings.setCrashReports(next) }
-                                if (next) CrashReports.start(context, true) else CrashReports.stop()
-                            },
-                        )
-                    }
-                }
-                item {
-                    ActionRow(
-                        title = s.aboutLawfulUse,
-                        subtitle = s.aboutLawfulUseDetail,
-                        icon = TmIcons.Gavel,
-                        onClick = { openPage(About.LEGAL, s.settingsQrLawfulUsePage) },
-                    )
-                }
-
-                if (SupportReminder.enabled) {
-                    item {
-                        ActionRow(
-                            title = if (supportCounters.supporter) About.SUPPORT_THANKS_TITLE else About.SUPPORT_TITLE,
-                            subtitle = s.settingsSupportDetail,
-                            icon = TmIcons.Favorite,
-                            onClick = { supporting = true },
-                        )
-                    }
-                    // The occasional support notification's switch lives on the Notifications
-                    // page with the rest (CP76).
-                }
-
-                item {
-                    ActionRow(
-                        title = s.settingsAbout,
-                        subtitle = s.settingsAboutDetail(Updates.installedVersion),
-                        icon = TmIcons.Info,
-                        onClick = onOpenAbout,
-                    )
-                }
-
-                item {
-                    Column(
-                        Modifier.padding(
-                            top = 20.dp,
-                            start = if (touch) 16.dp else 0.dp,
-                            end = if (touch) 16.dp else 0.dp,
-                        ),
-                    ) {
-                        Text(
-                            s.settingsPrivacyNote,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Tone.muted,
-                        )
-                    }
                 }
             }
 
@@ -2063,18 +1828,11 @@ fun SettingsScreen(
                     )
                 }
                 item {
-                    // An update waiting is said here as well as inside, in the same colour, so it
-                    // is not hidden one level down.
-                    val offered = updateState.release
                     ActionRow(
                         title = titleOf(SettingsPage.About),
-                        subtitle = if (offered != null) {
-                            UpdateWords.settingsRow(offered)
-                        } else {
-                            s.settingsPageAboutBackupSummary(Updates.installedVersion)
-                        },
-                        icon = TmIcons.Info,
-                        tint = if (offered != null) Tone.caution else Color.Unspecified,
+                        subtitle = "Sao lưu và khôi phục dữ liệu Movie, AV, Telegram và cài đặt",
+                        icon = TmIcons.Download,
+                        tint = Color.Unspecified,
                         modifier = Modifier.focusRequester(categoryFocus.getValue(SettingsPage.About)),
                         onClick = { showPage(SettingsPage.About) },
                     )

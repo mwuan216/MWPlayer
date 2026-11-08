@@ -47,6 +47,10 @@ data class Backup(
     val watchLater: List<WatchLaterRecord> = emptyList(),
     /** Every video's bookmarks, from [BookmarkStore]. */
     val bookmarks: List<Bookmark> = emptyList(),
+    /** Full MovieStore backup payload (watchlist, continueWatching, history, cloudSynced, settings). */
+    val movieDataJson: String? = null,
+    /** Full AvStore backup payload (watchlist, history, affinities, tab settings). */
+    val avDataJson: String? = null,
     val version: Int = Backups.VERSION,
 )
 
@@ -82,10 +86,12 @@ data class RestorePlan(
     val resumeAdded: Int,
     val memoryAdded: Int,
     val searchesAdded: Int,
+    /** Movie & AV items (watchlist, watched history, continue watching, cloud synced) to add/update. */
+    val movieAvChanges: Int = 0,
 ) {
     val nothing: Boolean
         get() = settingsChanged + favouritesAdded + watchedAdded + watchLaterAdded + bookmarksAdded + resumeAdded + memoryAdded +
-            searchesAdded == 0
+            searchesAdded + movieAvChanges == 0
 }
 
 /**
@@ -158,10 +164,16 @@ object Backups {
         "downloads_sort" to Kind.TEXT,
         "hold_speed" to Kind.FLOAT,
         "home_enabled" to Kind.BOOL,
+        "home_enabled_v2" to Kind.BOOL,
         "home_carousel" to Kind.BOOL,
         "home_continue" to Kind.BOOL,
         "home_recent" to Kind.BOOL,
         "home_starred_rows" to Kind.BOOL,
+        "favorite_videos_data" to Kind.TEXT,
+        "favorite_forward_enabled" to Kind.BOOL,
+        "favorite_forward_chat_id" to Kind.LONG,
+        "favorite_forward_chat_title" to Kind.TEXT,
+        "favorite_forward_topic_title" to Kind.TEXT,
         "language" to Kind.TEXT,
         "lighter_pictures" to Kind.BOOL,
         "low_storage_mode" to Kind.BOOL,
@@ -231,6 +243,8 @@ object Backups {
         // A chat's own order ([VideoSort]) and filter ([VideoFilter]), and the viewer's corrections to names ([VideoCorrection]).
         "vsort_" to Kind.TEXT,
         "vfilter_" to Kind.TEXT,
+        "vdur_" to Kind.TEXT,
+        "vsz_" to Kind.TEXT,
         VideoCorrections.PREFIX to Kind.TEXT,
         "copy_pick_" to Kind.TEXT,
     )
@@ -323,6 +337,8 @@ object Backups {
         root.put("watched", JSONArray(backup.watched.map(::watchedJson)))
         root.put("watchLater", JSONArray(backup.watchLater.map(::watchLaterJson)))
         root.put("bookmarks", JSONArray(backup.bookmarks.map(::bookmarkJson)))
+        backup.movieDataJson?.let { runCatching { root.put("movieData", JSONObject(it)) } }
+        backup.avDataJson?.let { runCatching { root.put("avData", JSONObject(it)) } }
         return root.toString(2)
     }
 
@@ -426,6 +442,8 @@ object Backups {
                 watched = objects(root.optJSONArray("watched")).mapNotNull(::watchedOf),
                 watchLater = objects(root.optJSONArray("watchLater")).mapNotNull(::watchLaterOf),
                 bookmarks = objects(root.optJSONArray("bookmarks")).mapNotNull(::bookmarkOf),
+                movieDataJson = root.optJSONObject("movieData")?.toString(),
+                avDataJson = root.optJSONObject("avData")?.toString(),
                 version = version,
             ),
         )
@@ -456,6 +474,33 @@ object Backups {
         if (array == null) emptyList() else (0 until array.length()).mapNotNull { (array.opt(it) as? Number)?.toLong() }
 
     private fun JSONObject.longOrNull(name: String): Long? = (opt(name) as? Number)?.toLong()
+
+    private fun mergeFavoriteVideosJson(currentRaw: String?, incomingRaw: String): String? {
+        return try {
+            val incomingArr = JSONArray(incomingRaw)
+            if (incomingArr.length() == 0) return currentRaw
+            val currentArr = if (!currentRaw.isNullOrBlank()) JSONArray(currentRaw) else JSONArray()
+            val seen = mutableSetOf<String>()
+            val merged = JSONArray()
+            for (i in 0 until currentArr.length()) {
+                val obj = currentArr.optJSONObject(i) ?: continue
+                val key = "${obj.optLong("chatId")}_${obj.optLong("messageId")}"
+                if (seen.add(key)) merged.put(obj)
+            }
+            var added = false
+            for (i in 0 until incomingArr.length()) {
+                val obj = incomingArr.optJSONObject(i) ?: continue
+                val key = "${obj.optLong("chatId")}_${obj.optLong("messageId")}"
+                if (seen.add(key)) {
+                    merged.put(obj)
+                    added = true
+                }
+            }
+            if (added) merged.toString() else currentRaw
+        } catch (_: Exception) {
+            incomingRaw
+        }
+    }
 
     /** Through [ResumeRecord.decode]'s own checks, so the file can hold nothing the store would not. */
     private fun resumeOf(json: JSONObject): ResumeRecord? {
@@ -550,6 +595,11 @@ object Backups {
      */
     fun settingsWrites(device: Map<String, Any>, backup: Backup): Map<String, Any> = buildMap {
         for ((name, value) in backup.settings) {
+            if (name == "favorite_videos_data" && value is String) {
+                val merged = mergeFavoriteVideosJson(device[name] as? String, value)
+                if (merged != null && merged != device[name]) put(name, merged)
+                continue
+            }
             if (SETTINGS[name]?.let { fits(value, it) } == true && device[name] != value) put(name, value)
         }
 

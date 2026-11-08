@@ -369,4 +369,164 @@ object AvStore {
             getPrefs(context).edit().putString(KEY_HISTORY, array.toString()).apply()
         } catch (_: Exception) {}
     }
+
+    // =========================================================================
+    // BACKUP & RESTORE (SAO LƯU & KHÔI PHỤC DỮ LIỆU AV)
+    // =========================================================================
+
+    @Synchronized
+    fun exportBackupJson(context: Context): JSONObject {
+        init(context)
+        return JSONObject().apply {
+            val wlArray = JSONArray()
+            _watchlistFlow.value.forEach { item ->
+                wlArray.put(
+                    JSONObject().apply {
+                        put("name", item.name)
+                        put("originName", item.originName)
+                        put("slug", item.slug)
+                        put("thumbUrl", item.thumbUrl)
+                        put("posterUrl", item.posterUrl)
+                        put("year", item.year)
+                        put("quality", item.quality)
+                        put("lang", item.lang)
+                        put("episodeCurrent", item.episodeCurrent)
+                        put("source", item.source.name.lowercase())
+                    }
+                )
+            }
+            put("watchlist", wlArray)
+
+            val histArray = JSONArray()
+            _historyFlow.value.forEach { histArray.put(it.toJson()) }
+            put("history", histArray)
+
+            put("affinityActresses", JSONArray(_preferredActressesFlow.value))
+            put("affinityPrefixes", JSONArray(_preferredPrefixesFlow.value))
+            put("affinityCategories", JSONArray(_preferredCategoriesFlow.value))
+            put("tabVisible", _isTabVisibleFlow.value)
+            put("chatsTabVisible", _isChatsTabVisibleFlow.value)
+        }
+    }
+
+    @Synchronized
+    fun countBackupChanges(context: Context, jsonStr: String?): Int {
+        if (jsonStr.isNullOrBlank()) return 0
+        init(context)
+        return try {
+            val obj = JSONObject(jsonStr)
+            var count = 0
+            val existingWl = _watchlistFlow.value.map { it.slug }.toSet()
+            val wlArr = obj.optJSONArray("watchlist")
+            if (wlArr != null) {
+                for (i in 0 until wlArr.length()) {
+                    val slug = wlArr.optJSONObject(i)?.optString("slug").orEmpty()
+                    if (slug.isNotBlank() && slug !in existingWl) count++
+                }
+            }
+            val existingHist = _historyFlow.value.associateBy { it.slug }
+            val histArr = obj.optJSONArray("history")
+            if (histArr != null) {
+                for (i in 0 until histArr.length()) {
+                    val item = histArr.optJSONObject(i)?.let { MovieWatchProgress.fromJson(it) } ?: continue
+                    val cur = existingHist[item.slug]
+                    if (cur == null || item.updatedAt > cur.updatedAt) {
+                        count++
+                    }
+                }
+            }
+            count
+        } catch (_: Exception) {
+            0
+        }
+    }
+
+    @Synchronized
+    fun restoreFromBackupJson(context: Context, jsonStr: String?) {
+        if (jsonStr.isNullOrBlank()) return
+        init(context)
+        try {
+            val obj = JSONObject(jsonStr)
+
+            // 1. Merge Watchlist
+            val wlArr = obj.optJSONArray("watchlist")
+            if (wlArr != null) {
+                val mergedWl = _watchlistFlow.value.toMutableList()
+                val seenSlugs = mergedWl.map { it.slug }.toMutableSet()
+                for (i in 0 until wlArr.length()) {
+                    val itemObj = wlArr.optJSONObject(i) ?: continue
+                    val slug = itemObj.optString("slug").trim()
+                    val name = itemObj.optString("name").trim()
+                    if (slug.isNotBlank() && name.isNotBlank() && seenSlugs.add(slug)) {
+                        mergedWl.add(
+                            MovieItem(
+                                name = name,
+                                originName = itemObj.optString("originName"),
+                                slug = slug,
+                                thumbUrl = itemObj.optString("thumbUrl"),
+                                posterUrl = itemObj.optString("posterUrl"),
+                                year = itemObj.optString("year"),
+                                quality = itemObj.optString("quality", "HD"),
+                                lang = itemObj.optString("lang", "Vietsub"),
+                                episodeCurrent = itemObj.optString("episodeCurrent", ""),
+                                source = MovieSource.fromString(itemObj.optString("source", "avdb"))
+                            )
+                        )
+                    }
+                }
+                _watchlistFlow.value = mergedWl
+                saveWatchlist(context, mergedWl)
+            }
+
+            // 2. Merge History & Progress
+            val histArr = obj.optJSONArray("history")
+            if (histArr != null) {
+                val map = _historyFlow.value.associateBy { it.slug }.toMutableMap()
+                for (i in 0 until histArr.length()) {
+                    val item = histArr.optJSONObject(i)?.let { MovieWatchProgress.fromJson(it) } ?: continue
+                    val cur = map[item.slug]
+                    if (cur == null) {
+                        map[item.slug] = item
+                    } else {
+                        val newer = if (item.updatedAt >= cur.updatedAt) item else cur
+                        map[item.slug] = newer.copy(watchedEpisodes = cur.watchedEpisodes + item.watchedEpisodes)
+                    }
+                }
+                val mergedHist = map.values.sortedByDescending { it.updatedAt }.take(50)
+                _historyFlow.value = mergedHist
+                saveHistory(context, mergedHist)
+            }
+
+            // 3. Merge Affinity Lists
+            fun mergeStrings(arr: JSONArray?, current: List<String>, max: Int): List<String> {
+                if (arr == null) return current
+                val incoming = buildList {
+                    for (i in 0 until arr.length()) {
+                        val s = arr.optString(i, "").trim()
+                        if (s.isNotBlank()) add(s)
+                    }
+                }
+                return (current + incoming).distinct().take(max)
+            }
+
+            val mergedActresses = mergeStrings(obj.optJSONArray("affinityActresses"), _preferredActressesFlow.value, 25)
+            _preferredActressesFlow.value = mergedActresses
+            saveStringList(context, KEY_AFFINITY_ACTRESSES, mergedActresses)
+
+            val mergedPrefixes = mergeStrings(obj.optJSONArray("affinityPrefixes"), _preferredPrefixesFlow.value, 20)
+            _preferredPrefixesFlow.value = mergedPrefixes
+            saveStringList(context, KEY_AFFINITY_PREFIXES, mergedPrefixes)
+
+            val mergedCategories = mergeStrings(obj.optJSONArray("affinityCategories"), _preferredCategoriesFlow.value, 20)
+            _preferredCategoriesFlow.value = mergedCategories
+            saveStringList(context, KEY_AFFINITY_CATEGORIES, mergedCategories)
+
+            if (obj.has("tabVisible")) {
+                setTabVisible(context, obj.optBoolean("tabVisible", false))
+            }
+            if (obj.has("chatsTabVisible")) {
+                setChatsTabVisible(context, obj.optBoolean("chatsTabVisible", false))
+            }
+        } catch (_: Exception) {}
+    }
 }

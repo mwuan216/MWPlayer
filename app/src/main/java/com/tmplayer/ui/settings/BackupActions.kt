@@ -71,11 +71,23 @@ internal fun rememberBackupActions(
         }
         when (val read = service.read(text)) {
             is BackupRead.Ok -> {
-                val plan = service.plan(read.backup)
+                val basePlan = service.plan(read.backup)
+                val movieChanges = com.tmplayer.movie.MovieStore.countBackupChanges(context, read.backup.movieDataJson)
+                val avChanges = com.tmplayer.av.AvStore.countBackupChanges(context, read.backup.avDataJson)
+                val hasMovieOrAvPayload = !read.backup.movieDataJson.isNullOrBlank() || !read.backup.avDataJson.isNullOrBlank()
+                val totalMovieAvChanges = maxOf(movieChanges + avChanges, if (hasMovieOrAvPayload) 1 else 0)
+                val plan = basePlan.copy(movieAvChanges = totalMovieAvChanges)
                 if (plan.nothing) say(L.backupRestoreNothing) else onPlan(plan)
             }
             else -> BackupWords.refusal(read)?.let(say)
         }
+    }
+
+    suspend fun exportFullBackup(): String {
+        val baseJson = org.json.JSONObject(service.export())
+        baseJson.put("movieData", com.tmplayer.movie.MovieStore.exportBackupJson(context))
+        baseJson.put("avData", com.tmplayer.av.AvStore.exportBackupJson(context))
+        return baseJson.toString(2)
     }
 
     val saver = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(MIME)) { uri ->
@@ -83,7 +95,7 @@ internal fun rememberBackupActions(
             scope.launch {
                 val saved = withContext(Dispatchers.IO) {
                     runCatching {
-                        val text = service.export()
+                        val text = exportFullBackup()
                         context.contentResolver.openOutputStream(uri, "wt")!!.use { it.write(text.toByteArray()) }
                     }.onFailure { Logger.w(TAG, "Backup not written", it) }.isSuccess
                 }
@@ -109,7 +121,7 @@ internal fun rememberBackupActions(
             if (picked.isFailure) {
                 scope.launch {
                     val place = withContext(Dispatchers.IO) {
-                        runCatching { SharedDownloads.write(context, service.fileName(), service.export()) }
+                        runCatching { SharedDownloads.write(context, service.fileName(), exportFullBackup()) }
                             .onFailure { Logger.w(TAG, "Backup not written to Download", it) }
                             .getOrNull()
                     }
@@ -129,8 +141,13 @@ internal fun rememberBackupActions(
         },
         apply = { backup ->
             scope.launch {
-                val done = runCatching { service.restore(backup) }
-                    .onFailure { Logger.w(TAG, "Restore failed", it) }.isSuccess
+                val done = withContext(Dispatchers.IO) {
+                    runCatching {
+                        service.restore(backup)
+                        com.tmplayer.movie.MovieStore.restoreFromBackupJson(context, backup.movieDataJson)
+                        com.tmplayer.av.AvStore.restoreFromBackupJson(context, backup.avDataJson)
+                    }.onFailure { Logger.w(TAG, "Restore failed", it) }.isSuccess
+                }
                 say(if (done) L.backupRestored else L.backupReadFailed)
             }
         },
