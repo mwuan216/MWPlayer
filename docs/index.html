@@ -788,10 +788,6 @@
         </div>
 
         <div class="header-actions">
-          <div class="source-switcher">
-            <button class="source-btn active" id="src-vsmov" onclick="switchSource('VSMov')">VSMov</button>
-            <button class="source-btn" id="src-kkphim" onclick="switchSource('KKPhim')">KKPhim</button>
-          </div>
           <button class="icon-btn" onclick="openBackupModal()" title="Sao lưu & Khôi phục">💾</button>
         </div>
       </div>
@@ -799,7 +795,7 @@
       <!-- Row 2: Full-Width Search Input Bar -->
       <div class="search-row">
         <span style="color:var(--muted);font-size:15px;">🔍</span>
-        <input id="search-input" type="search" placeholder="Tìm kiếm phim online (VSMov)..."
+        <input id="search-input" type="search" placeholder="Tìm kiếm phim online (KKPhim)..."
           oninput="onSearchInput(this.value)"
           onkeydown="if(event.key==='Enter'){triggerSearchNow()}" />
         <button id="search-clear" class="search-clear-btn hidden" onclick="clearSearch()">✕</button>
@@ -868,16 +864,15 @@
     <div class="detail-body">
       <!-- Video Player Container (Defaults to Embed / HLS seamlessly) -->
       <div class="player-box">
-        <iframe id="embed-iframe" allowfullscreen allow="autoplay; fullscreen; picture-in-picture" referrerpolicy="no-referrer"></iframe>
-        <video id="hls-video" class="hidden" controls playsinline webkit-playsinline preload="metadata"></video>
+        <iframe id="embed-iframe" allowfullscreen allow="autoplay; fullscreen" referrerpolicy="no-referrer"></iframe>
+        <video id="hls-video" class="hidden" controls disablePictureInPicture playsinline webkit-playsinline preload="metadata"></video>
       </div>
 
       <!-- Player Controls Bar -->
       <div class="player-toolbar">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
           <button class="btn btn-accent" id="mode-embed-btn" onclick="setPlayerMode('embed')">🌐 Phát Nhúng (Ổn định)</button>
-          <button class="btn" id="mode-hls-btn" onclick="setPlayerMode('hls')">🎬 Phát HLS / PiP</button>
-          <button class="btn" id="pip-btn" onclick="togglePiP()">🖼️ PiP</button>
+          <button class="btn" id="mode-hls-btn" onclick="setPlayerMode('hls')">🎬 Phát HLS</button>
         </div>
         <div style="display:flex;align-items:center;gap:8px;">
           <button class="btn" onclick="playPrevEpisode()">⏮️ Tập trước</button>
@@ -930,7 +925,6 @@ const CATEGORIES = [
   { slug: "phim-chieu-rap", label: "Phim chiếu rạp" },
   { slug: "hoat-hinh", label: "Hoạt hình" },
   { slug: "tv-shows", label: "TV Shows" },
-  { slug: "subteam", label: "Subteam" },
 ];
 
 const GENRES = [
@@ -1000,7 +994,7 @@ function saveStore() {
 let movieStore = loadStore();
 
 let state = {
-  source: "VSMov", // 'VSMov' | 'KKPhim'
+  source: "KKPhim", // single source: KKPhim
   searchQuery: "",
   selectedCategory: "",
   selectedGenre: "",
@@ -1054,9 +1048,7 @@ function activeFilterCount() {
 }
 
 function renderHeaderUI() {
-  document.getElementById("src-vsmov").classList.toggle("active", state.source === "VSMov");
-  document.getElementById("src-kkphim").classList.toggle("active", state.source === "KKPhim");
-  document.getElementById("search-input").placeholder = `Tìm kiếm phim online (${state.source})...`;
+  document.getElementById("search-input").placeholder = "Tìm kiếm phim online (KKPhim)...";
   document.getElementById("search-clear").classList.toggle("hidden", !state.searchQuery);
 
   const count = activeFilterCount();
@@ -1112,13 +1104,6 @@ function renderHeaderUI() {
   } else {
     activeRow.classList.add("hidden");
   }
-}
-
-function switchSource(src) {
-  if (state.source === src) return;
-  state.source = src;
-  renderHeaderUI();
-  refreshMainView();
 }
 
 function onQuickPillClick(slug) {
@@ -1215,7 +1200,7 @@ function refreshMainView() {
 }
 
 // ============================================================================
-// 4. API FETCHING (KKPhim & VSMov)
+// 4. API FETCHING (KKPhim)
 // ============================================================================
 async function fetchJson(url) {
   try {
@@ -1234,7 +1219,7 @@ function fixImg(u, pathImage, cdn) {
   return `${prefix}/${u.replace(/^\/+/, "")}`;
 }
 
-function parseMovieList(root, sourceName) {
+function parseMovieList(root) {
   if (!root) return { items: [], totalPages: 1 };
   const dObj = root.data || null;
   const itemsArr = (dObj && dObj.items) || root.items || [];
@@ -1256,94 +1241,66 @@ function parseMovieList(root, sourceName) {
       quality: obj.quality || "HD",
       lang: obj.lang || "Vietsub",
       episodeCurrent: obj.episode_current || "",
-      source: sourceName,
+      source: "KKPhim",
     };
   });
   return { items, totalPages: Math.max(1, totalPages) };
 }
 
 async function getLatestMovies(source, page = 1) {
-  const url = source === "KKPhim"
-    ? `https://phimapi.com/danh-sach/phim-moi-cap-nhat?page=${page}`
-    : `https://vsmov.com/api/danh-sach/phim-moi-cap-nhat?page=${page}`;
-  return parseMovieList(await fetchJson(url), source).items;
+  const url = `https://phimapi.com/danh-sach/phim-moi-cap-nhat?page=${page}`;
+  return parseMovieList(await fetchJson(url)).items;
 }
 
 async function getCategoryMovies(source, catSlug, page = 1) {
-  let url = "";
-  if (source === "KKPhim") {
-    url = `https://phimapi.com/v1/api/danh-sach/${catSlug}?page=${page}&limit=18`;
-  } else {
-    const isGenreRoute = ["hoat-hinh", "co-trang", "hanh-dong", "tinh-cam", "hai-huoc", "tam-ly", "kinh-di", "khoa-hoc-vien-tuong", "vo-thuat", "phieu-luu", "hinh-su"].includes(catSlug);
-    const path = isGenreRoute ? `the-loai/${catSlug}` : `danh-sach/${catSlug}`;
-    url = `https://vsmov.com/api/${path}?page=${page}`;
-  }
-  return parseMovieList(await fetchJson(url), source).items;
+  const url = `https://phimapi.com/v1/api/danh-sach/${catSlug}?page=${page}&limit=18`;
+  return parseMovieList(await fetchJson(url)).items;
 }
 
 async function getGenreMovies(source, genreSlug, page = 1) {
-  const url = source === "KKPhim"
-    ? `https://phimapi.com/v1/api/the-loai/${genreSlug}?page=${page}&limit=18`
-    : `https://vsmov.com/api/the-loai/${genreSlug}?page=${page}`;
-  return parseMovieList(await fetchJson(url), source).items;
+  const url = `https://phimapi.com/v1/api/the-loai/${genreSlug}?page=${page}&limit=18`;
+  return parseMovieList(await fetchJson(url)).items;
 }
 
 async function getCountryMovies(source, countrySlug, page = 1) {
-  const url = source === "KKPhim"
-    ? `https://phimapi.com/v1/api/quoc-gia/${countrySlug}?page=${page}&limit=18`
-    : `https://vsmov.com/api/quoc-gia/${countrySlug}?page=${page}`;
-  return parseMovieList(await fetchJson(url), source).items;
+  const url = `https://phimapi.com/v1/api/quoc-gia/${countrySlug}?page=${page}&limit=18`;
+  return parseMovieList(await fetchJson(url)).items;
 }
 
 async function filterMoviesApi(source, { category = "", genre = "", country = "", year = "", keyword = "", page = 1 }) {
+  const base = "https://phimapi.com/v1/api";
   let url = "";
-  if (source === "KKPhim") {
-    const base = "https://phimapi.com/v1/api";
-    if (keyword.trim()) {
-      url = `${base}/tim-kiem?keyword=${encodeURIComponent(keyword.trim())}&page=${page}&limit=24`;
-      if (category) url += `&category=${category}`;
-      if (genre) url += `&category=${genre}`;
-      if (country) url += `&country=${country}`;
-      if (year) url += `&year=${year}`;
-    } else if (!category && !genre && !country && !year) {
-      url = `https://phimapi.com/danh-sach/phim-moi-cap-nhat?page=${page}`;
-    } else {
-      const catSlug = category || "phim-bo";
-      url = `${base}/danh-sach/${catSlug}?page=${page}&limit=24`;
-      if (genre) url += `&category=${genre}`;
-      if (country) url += `&country=${country}`;
-      if (year) url += `&year=${year}`;
-    }
+  if (keyword.trim()) {
+    url = `${base}/tim-kiem?keyword=${encodeURIComponent(keyword.trim())}&page=${page}&limit=24`;
+    if (category) url += `&category=${category}`;
+    if (genre) url += `&category=${genre}`;
+    if (country) url += `&country=${country}`;
+    if (year) url += `&year=${year}`;
+  } else if (category) {
+    url = `${base}/danh-sach/${category}?page=${page}&limit=24`;
+    if (genre) url += `&category=${genre}`;
+    if (country) url += `&country=${country}`;
+    if (year) url += `&year=${year}`;
+  } else if (genre) {
+    url = `${base}/the-loai/${genre}?page=${page}&limit=24`;
+    if (country) url += `&country=${country}`;
+    if (year) url += `&year=${year}`;
+  } else if (country) {
+    url = `${base}/quoc-gia/${country}?page=${page}&limit=24`;
+    if (year) url += `&year=${year}`;
+  } else if (year) {
+    url = `${base}/nam/${year}?page=${page}&limit=24`;
   } else {
-    const base = "https://vsmov.com/api";
-    if (keyword.trim()) {
-      url = `${base}/tim-kiem?keyword=${encodeURIComponent(keyword.trim())}&page=${page}`;
-      if (country) url += `&country=${country}`;
-      if (year) url += `&year=${year}`;
-    } else if (genre) {
-      url = `${base}/the-loai/${genre}?page=${page}`;
-      if (country) url += `&country=${country}`;
-      if (year) url += `&year=${year}`;
-    } else if (country) {
-      url = `${base}/quoc-gia/${country}?page=${page}`;
-      if (year) url += `&year=${year}`;
-    } else if (year) {
-      url = `${base}/nam/${year}?page=${page}`;
-    } else if (category) {
-      const path = ["hoat-hinh", "co-trang"].includes(category) ? `the-loai/${category}` : `danh-sach/${category}`;
-      url = `${base}/${path}?page=${page}`;
-    } else {
-      url = `${base}/danh-sach/phim-moi-cap-nhat?page=${page}`;
-    }
+    url = `https://phimapi.com/danh-sach/phim-moi-cap-nhat?page=${page}`;
   }
-  return parseMovieList(await fetchJson(url), source);
+  return parseMovieList(await fetchJson(url));
 }
 
 // ============================================================================
-// 5. MULTI-SHELF HOME VIEW (HERO CAROUSEL + 10 SHELVES LIKE ANDROID APP)
+// 5. MULTI-SHELF HOME VIEW (HERO CAROUSEL + SHELVES LIKE ANDROID APP)
 // ============================================================================
 async function loadHomeShelves(forceRefresh = false) {
-  const src = state.source;
+  const src = "KKPhim";
   const container = document.getElementById("home-shelves-view");
 
   if (!forceRefresh && state.homeCache[src]) {
@@ -1351,7 +1308,7 @@ async function loadHomeShelves(forceRefresh = false) {
     return;
   }
 
-  container.innerHTML = `<div style="text-align:center;padding:60px 20px;color:var(--muted);font-weight:700;">⏳ Đang tải kho phim ${src}...</div>`;
+  container.innerHTML = `<div style="text-align:center;padding:60px 20px;color:var(--muted);font-weight:700;">⏳ Đang tải kho phim KKPhim...</div>`;
 
   const [
     latestMovies,
@@ -1361,8 +1318,7 @@ async function loadHomeShelves(forceRefresh = false) {
     costumeMovies,
     koreaMovies,
     chinaMovies,
-    animeMovies,
-    subteamMovies
+    animeMovies
   ] = await Promise.all([
     getLatestMovies(src, 1),
     getCategoryMovies(src, "phim-chieu-rap", 1),
@@ -1372,7 +1328,6 @@ async function loadHomeShelves(forceRefresh = false) {
     getCountryMovies(src, "han-quoc", 1),
     getCountryMovies(src, "trung-quoc", 1),
     getCategoryMovies(src, "hoat-hinh", 1),
-    src === "VSMov" ? getCategoryMovies(src, "subteam", 1) : Promise.resolve([]),
   ]);
 
   const data = {
@@ -1384,7 +1339,6 @@ async function loadHomeShelves(forceRefresh = false) {
     koreaMovies,
     chinaMovies,
     animeMovies,
-    subteamMovies,
   };
 
   if (latestMovies.length > 0) {
@@ -1696,12 +1650,7 @@ async function openMovieDetail(item) {
   document.getElementById("server-tabs").innerHTML = "";
   document.getElementById("episode-grid").innerHTML = "";
 
-  const src = item.source === "KKPhim" || item.source === "kkphim" ? "KKPhim" : (item.source === "VSMov" || item.source === "vsmov" ? "VSMov" : state.source);
-  let detail = await fetchDetailFromSource(src, item);
-  if (!detail) {
-    const fallbackSrc = src === "VSMov" ? "KKPhim" : "VSMov";
-    detail = await fetchDetailFromSource(fallbackSrc, item);
-  }
+  const detail = await fetchDetailFromSource("KKPhim", item);
 
   if (!detail) {
     showToast("Không tải được chi tiết phim này.");
@@ -1736,12 +1685,10 @@ async function openMovieDetail(item) {
 }
 
 async function fetchDetailFromSource(src, fallbackItem) {
-  const key = `${src}:${fallbackItem.slug}`;
+  const key = `KKPhim:${fallbackItem.slug}`;
   if (state.detailCache[key]) return state.detailCache[key];
 
-  const url = src === "KKPhim"
-    ? `https://phimapi.com/phim/${fallbackItem.slug}`
-    : `https://vsmov.com/api/phim/${fallbackItem.slug}`;
+  const url = `https://phimapi.com/phim/${fallbackItem.slug}`;
   const raw = await fetchJson(url);
   if (!raw || !raw.movie) return null;
 
@@ -1918,26 +1865,6 @@ videoEl.addEventListener("timeupdate", () => {
   }
 });
 videoEl.addEventListener("ended", () => playNextEpisode());
-
-function togglePiP() {
-  if (videoEl.classList.contains("hidden")) {
-    setPlayerMode("hls");
-    setTimeout(() => requestVideoPiP(), 900);
-    return;
-  }
-  requestVideoPiP();
-}
-
-function requestVideoPiP() {
-  if (videoEl.webkitSupportsPresentationMode && typeof videoEl.webkitSetPresentationMode === "function") {
-    const mode = videoEl.webkitPresentationMode === "picture-in-picture" ? "inline" : "picture-in-picture";
-    videoEl.webkitSetPresentationMode(mode);
-  } else if (document.pictureInPictureElement) {
-    document.exitPictureInPicture().catch(() => {});
-  } else if (videoEl.requestPictureInPicture) {
-    videoEl.requestPictureInPicture().catch(() => {});
-  }
-}
 
 function playPrevEpisode() {
   if (state.currentEpIdx > 0) {
