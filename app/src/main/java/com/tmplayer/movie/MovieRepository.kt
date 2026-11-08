@@ -334,30 +334,13 @@ object MovieRepository {
     private fun formatUnifiedServerName(
         source: MovieSource,
         rawServerName: String,
-        indexInSource: Int,
-        totalInSource: Int
+        movieLang: String = ""
     ): String {
-        val basePrefix = if (source == MovieSource.KKPhim) "Server 1 #kk" else "Server 2 #msv"
-        val subLabel = extractServerSubLabel(rawServerName)
-        return when {
-            totalInSource <= 1 -> {
-                if (subLabel.isNotBlank() && subLabel != "Vietsub") {
-                    "$basePrefix ($subLabel)"
-                } else {
-                    basePrefix
-                }
-            }
-            else -> {
-                val detailLabel = subLabel.ifBlank {
-                    rawServerName
-                        .replace("#", "")
-                        .replace(Regex("(?i)server\\s*\\d*"), "")
-                        .trim()
-                        .ifBlank { "Bản ${indexInSource + 1}" }
-                }
-                "$basePrefix ($detailLabel)"
-            }
+        val serverTag = if (source == MovieSource.KKPhim) "#kk" else "#msv"
+        val subLabel = extractServerSubLabel(rawServerName).ifBlank {
+            extractServerSubLabel(movieLang).ifBlank { "Vietsub" }
         }
+        return "$serverTag ($subLabel)"
     }
 
     private suspend fun fetchSingleSourceDetail(source: MovieSource, slug: String): MovieDetail? {
@@ -441,9 +424,9 @@ object MovieRepository {
                 }
             }
 
-            val servers = rawServers.mapIndexed { idx, (rawName, eps) ->
+            val servers = rawServers.map { (rawName, eps) ->
                 MovieServer(
-                    serverName = formatUnifiedServerName(source, rawName, idx, rawServers.size),
+                    serverName = formatUnifiedServerName(source, rawName, item.lang),
                     episodes = eps,
                     source = source,
                     sourceSlug = resolvedSlug

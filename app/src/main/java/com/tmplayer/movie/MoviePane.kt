@@ -552,7 +552,7 @@ fun MoviePane(
                 .background(Tone.surface)
                 .padding(horizontal = 16.dp, vertical = 10.dp)
         ) {
-            // Row 1: Title & Unified Sources Badge (#kk + #msv)
+            // Row 1: Title
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -571,35 +571,6 @@ fun MoviePane(
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
                         color = Tone.text
-                    )
-                }
-
-                // UNIFIED SOURCE BADGES (#kk + #msv)
-                Row(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(Tone.surfaceHigh)
-                        .border(0.5.dp, Tone.accent.copy(alpha = 0.45f), RoundedCornerShape(16.dp))
-                        .padding(horizontal = 10.dp, vertical = 5.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "SV1 #kk",
-                        color = Tone.accent,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = "•",
-                        color = Tone.text.copy(alpha = 0.4f),
-                        fontSize = 11.sp
-                    )
-                    Text(
-                        text = "SV2 #msv",
-                        color = Tone.text.copy(alpha = 0.85f),
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold
                     )
                 }
             }
@@ -635,7 +606,7 @@ fun MoviePane(
                     decorationBox = { innerTextField ->
                         if (searchQuery.isEmpty()) {
                             Text(
-                                "Tìm kiếm kết hợp cả 2 nguồn (#kk + #msv)...",
+                                "Nhập tên phim cần tìm",
                                 color = Tone.text.copy(alpha = 0.4f),
                                 fontSize = 14.sp
                             )
@@ -1324,7 +1295,7 @@ fun MoviePane(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Bộ lọc phim (${activeSource.badge})",
+                        text = "Bộ lọc phim",
                         color = Tone.text,
                         fontSize = 17.sp,
                         fontWeight = FontWeight.Bold
@@ -2216,10 +2187,10 @@ private fun MovieDetailContent(
                         BadgePill(detail.movie.lang, bg = Tone.surfaceHigh, textColor = Tone.text)
                     }
                     if (detail.hasBothSources) {
-                        BadgePill("SV1 #kk + SV2 #msv", bg = Tone.accent.copy(alpha = 0.2f), textColor = Tone.accent)
+                        BadgePill("#kk + #msv", bg = Tone.accent.copy(alpha = 0.2f), textColor = Tone.accent)
                     } else {
                         val singleTag = detail.servers.firstOrNull()?.shortTag ?: detail.movie.source.shortTag
-                        BadgePill("Server $singleTag", bg = Tone.surfaceHigh, textColor = Tone.accent)
+                        BadgePill(singleTag, bg = Tone.surfaceHigh, textColor = Tone.accent)
                     }
                 }
 

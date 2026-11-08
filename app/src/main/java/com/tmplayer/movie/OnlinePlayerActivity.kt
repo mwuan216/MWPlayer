@@ -1148,12 +1148,11 @@ fun OnlinePlayerScreen(
                             epName.lowercase().startsWith("tập") -> epName
                             else -> "Tập $epName"
                         }
-                        val srvLabel = currentServer?.serverName?.ifBlank { currentServer.shortTag } ?: ""
+                        val srvLabel = currentServer?.serverName?.ifBlank { currentServer.shortTag } ?: subType
                         Text(
                             text = buildString {
                                 if (epLabel.isNotBlank()) append("$epLabel • ")
-                                append(subType)
-                                if (srvLabel.isNotBlank()) append(" • $srvLabel")
+                                append(srvLabel)
                             },
                             color = Tone.accent,
                             fontSize = 13.sp,
@@ -1162,19 +1161,6 @@ fun OnlinePlayerScreen(
                             softWrap = false,
                             overflow = TextOverflow.Ellipsis
                         )
-                    }
-
-                    // Quick Server Switch button on Top Bar when movie has multiple servers (#kk / #msv)
-                    if (detail.servers.size > 1) {
-                        val curTag = currentServer?.shortTag ?: "#kk"
-                        val nextSrv = detail.servers.firstOrNull { it.source != currentServer?.source }
-                            ?: detail.servers.getOrNull((serverIdx + 1) % detail.servers.size)
-                        val nextTag = nextSrv?.shortTag ?: "#msv"
-                        ControlPill(
-                            text = "⚡ $curTag ⇄ $nextTag",
-                            onClick = { switchServerQuick() }
-                        )
-                        Spacer(Modifier.width(8.dp))
                     }
 
                     // Watchlist / Bookmark button
