@@ -146,6 +146,7 @@ object MovieCatalogState {
 
     // Detail Sheet
     var selectedMovieSlug by mutableStateOf<String?>(null)
+    var selectedMovieItem by mutableStateOf<MovieItem?>(null)
     var movieDetail by mutableStateOf<MovieDetail?>(null)
     var isDetailLoading by mutableStateOf(false)
 }
@@ -207,6 +208,7 @@ fun MoviePane(
 
     // Detail Sheet
     var selectedMovieSlug by catalogState::selectedMovieSlug
+    var selectedMovieItem by catalogState::selectedMovieItem
     var movieDetail by catalogState::movieDetail
     var isDetailLoading by catalogState::isDetailLoading
 
@@ -519,21 +521,16 @@ fun MoviePane(
         }
     }
 
-    // Fetch movie detail when selected or when source changes
-    LaunchedEffect(selectedMovieSlug, activeSource) {
+    // Fetch unified movie detail (merges KKPhim #kk + MSMov #msv) when selected
+    LaunchedEffect(selectedMovieSlug) {
         val slug = selectedMovieSlug
         if (slug != null) {
-            if (movieDetail?.movie?.slug != slug || movieDetail?.movie?.source != activeSource) {
+            if (movieDetail?.movie?.slug != slug) {
                 isDetailLoading = true
                 movieDetail = null
                 try {
-                    val fetched = MovieRepository.getMovieDetail(activeSource, slug)
-                    if (fetched != null) {
-                        movieDetail = fetched
-                    } else {
-                        val fallbackSource = if (activeSource == MovieSource.VSMov) MovieSource.KKPhim else MovieSource.VSMov
-                        movieDetail = MovieRepository.getMovieDetail(fallbackSource, slug)
-                    }
+                    val hint = selectedMovieItem?.takeIf { it.slug == slug }
+                    movieDetail = MovieRepository.getMovieDetail(MovieSource.VSMov, slug, hint)
                 } catch (_: Exception) {
                     movieDetail = null
                 } finally {
@@ -555,7 +552,7 @@ fun MoviePane(
                 .background(Tone.surface)
                 .padding(horizontal = 16.dp, vertical = 10.dp)
         ) {
-            // Row 1: Title & Source Switcher
+            // Row 1: Title & Unified Sources Badge (#kk + #msv)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -577,33 +574,32 @@ fun MoviePane(
                     )
                 }
 
-                // SOURCE SWITCHER (VSMov Tab 1 / KKPhim Tab 2)
+                // UNIFIED SOURCE BADGES (#kk + #msv)
                 Row(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(20.dp))
+                        .clip(RoundedCornerShape(16.dp))
                         .background(Tone.surfaceHigh)
-                        .padding(2.dp),
-                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                        .border(0.5.dp, Tone.accent.copy(alpha = 0.45f), RoundedCornerShape(16.dp))
+                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    SourceTabButton(
-                        title = "VSMov",
-                        isSelected = activeSource == MovieSource.VSMov,
-                        onClick = {
-                            if (activeSource != MovieSource.VSMov) {
-                                activeSource = MovieSource.VSMov
-                                if (selectedMovieSlug == null) movieDetail = null
-                            }
-                        }
+                    Text(
+                        text = "SV1 #kk",
+                        color = Tone.accent,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
                     )
-                    SourceTabButton(
-                        title = "KKPhim",
-                        isSelected = activeSource == MovieSource.KKPhim,
-                        onClick = {
-                            if (activeSource != MovieSource.KKPhim) {
-                                activeSource = MovieSource.KKPhim
-                                if (selectedMovieSlug == null) movieDetail = null
-                            }
-                        }
+                    Text(
+                        text = "•",
+                        color = Tone.text.copy(alpha = 0.4f),
+                        fontSize = 11.sp
+                    )
+                    Text(
+                        text = "SV2 #msv",
+                        color = Tone.text.copy(alpha = 0.85f),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold
                     )
                 }
             }
@@ -639,7 +635,7 @@ fun MoviePane(
                     decorationBox = { innerTextField ->
                         if (searchQuery.isEmpty()) {
                             Text(
-                                "Tìm kiếm phim online (${activeSource.badge})...",
+                                "Tìm kiếm kết hợp cả 2 nguồn (#kk + #msv)...",
                                 color = Tone.text.copy(alpha = 0.4f),
                                 fontSize = 14.sp
                             )
@@ -1076,6 +1072,7 @@ fun MoviePane(
                                             selectedHistorySlugs + item.slug
                                         }
                                     } else {
+                                        selectedMovieItem = item
                                         selectedMovieSlug = item.slug
                                     }
                                 }
@@ -1127,7 +1124,10 @@ fun MoviePane(
                             item(key = "featured_hero_carousel") {
                                 MovieHeroCarousel(
                                     movies = latestMovies.take(6),
-                                    onMovieClick = { selectedMovieSlug = it.slug }
+                                    onMovieClick = {
+                                        selectedMovieItem = it
+                                        selectedMovieSlug = it.slug
+                                    }
                                 )
                             }
                         }
@@ -1139,7 +1139,10 @@ fun MoviePane(
                                     title = "⭐ Phim Đang Theo Dõi",
                                     movies = watchlist,
                                     onViewAll = { selectedCategory = "watchlist" },
-                                    onMovieClick = { selectedMovieSlug = it.slug }
+                                    onMovieClick = {
+                                        selectedMovieItem = it
+                                        selectedMovieSlug = it.slug
+                                    }
                                 )
                             }
                         }
@@ -1151,7 +1154,10 @@ fun MoviePane(
                                     title = "🎬 Phim Xem Gần Đây",
                                     records = history,
                                     onViewAll = { selectedCategory = "history" },
-                                    onRecordClick = { rec -> selectedMovieSlug = rec.slug },
+                                    onRecordClick = { rec ->
+                                        selectedMovieItem = rec.toMovieItem()
+                                        selectedMovieSlug = rec.slug
+                                    },
                                     onRemoveRecord = { rec -> MovieStore.removeFromHistory(context, rec.slug) }
                                 )
                             }
@@ -1164,7 +1170,10 @@ fun MoviePane(
                                     title = "🌟 Phim Mới Cập Nhật",
                                     movies = latestMovies.drop(6),
                                     onViewAll = { viewAllCategory = "latest" to "Phim Mới Cập Nhật" },
-                                    onMovieClick = { selectedMovieSlug = it.slug }
+                                    onMovieClick = {
+                                        selectedMovieItem = it
+                                        selectedMovieSlug = it.slug
+                                    }
                                 )
                             }
                         }
@@ -1176,7 +1185,10 @@ fun MoviePane(
                                     title = "🎬 Phim Chiếu Rạp",
                                     movies = cinemaMovies,
                                     onViewAll = { viewAllCategory = "phim-chieu-rap" to "Phim Chiếu Rạp" },
-                                    onMovieClick = { selectedMovieSlug = it.slug }
+                                    onMovieClick = {
+                                        selectedMovieItem = it
+                                        selectedMovieSlug = it.slug
+                                    }
                                 )
                             }
                         }
@@ -1188,7 +1200,10 @@ fun MoviePane(
                                     title = "🍿 Phim Bộ Đang Hot",
                                     movies = seriesMovies,
                                     onViewAll = { viewAllCategory = "phim-bo" to "Phim Bộ" },
-                                    onMovieClick = { selectedMovieSlug = it.slug }
+                                    onMovieClick = {
+                                        selectedMovieItem = it
+                                        selectedMovieSlug = it.slug
+                                    }
                                 )
                             }
                         }
@@ -1200,7 +1215,10 @@ fun MoviePane(
                                     title = "🎥 Phim Lẻ Đặc Sắc",
                                     movies = singleMovies,
                                     onViewAll = { viewAllCategory = "phim-le" to "Phim Lẻ" },
-                                    onMovieClick = { selectedMovieSlug = it.slug }
+                                    onMovieClick = {
+                                        selectedMovieItem = it
+                                        selectedMovieSlug = it.slug
+                                    }
                                 )
                             }
                         }
@@ -1212,7 +1230,10 @@ fun MoviePane(
                                     title = "🏮 Phim Cổ Trang",
                                     movies = costumeMovies,
                                     onViewAll = { viewAllCategory = "co-trang" to "Phim Cổ Trang" },
-                                    onMovieClick = { selectedMovieSlug = it.slug }
+                                    onMovieClick = {
+                                        selectedMovieItem = it
+                                        selectedMovieSlug = it.slug
+                                    }
                                 )
                             }
                         }
@@ -1224,7 +1245,10 @@ fun MoviePane(
                                     title = "🇰🇷 Phim Hàn Quốc",
                                     movies = koreaMovies,
                                     onViewAll = { viewAllCategory = "han-quoc" to "Phim Hàn Quốc" },
-                                    onMovieClick = { selectedMovieSlug = it.slug }
+                                    onMovieClick = {
+                                        selectedMovieItem = it
+                                        selectedMovieSlug = it.slug
+                                    }
                                 )
                             }
                         }
@@ -1236,7 +1260,10 @@ fun MoviePane(
                                     title = "🏮 Phim Trung Quốc",
                                     movies = chinaMovies,
                                     onViewAll = { viewAllCategory = "trung-quoc" to "Phim Trung Quốc" },
-                                    onMovieClick = { selectedMovieSlug = it.slug }
+                                    onMovieClick = {
+                                        selectedMovieItem = it
+                                        selectedMovieSlug = it.slug
+                                    }
                                 )
                             }
                         }
@@ -1248,7 +1275,10 @@ fun MoviePane(
                                     title = "🎌 Hoạt Hình & Anime",
                                     movies = animeMovies,
                                     onViewAll = { viewAllCategory = "hoat-hinh" to "Hoạt Hình & Anime" },
-                                    onMovieClick = { selectedMovieSlug = it.slug }
+                                    onMovieClick = {
+                                        selectedMovieItem = it
+                                        selectedMovieSlug = it.slug
+                                    }
                                 )
                             }
                         }
@@ -1260,7 +1290,10 @@ fun MoviePane(
                                     title = "👥 Phim Thuyết Minh & Subteam",
                                     movies = subteamMovies,
                                     onViewAll = { viewAllCategory = "subteam" to "Subteam" },
-                                    onMovieClick = { selectedMovieSlug = it.slug }
+                                    onMovieClick = {
+                                        selectedMovieItem = it
+                                        selectedMovieSlug = it.slug
+                                    }
                                 )
                             }
                         }
@@ -2031,21 +2064,34 @@ private fun MoviePosterCard(
                 }
             }
 
-            // Bottom-right badge: Lang (Vietsub / TM)
-            if (movie.lang.isNotBlank()) {
+            // Bottom-right badge: Lang + Source Tag (#kk + #msv)
+            val bottomRightBadge = buildString {
+                if (movie.lang.isNotBlank()) append(movie.lang)
+                if (movie.hasBothSources) {
+                    if (isNotEmpty()) append(" • ")
+                    append("#kk #msv")
+                } else if (movie.kkSlug.isNotBlank() && movie.msvSlug.isBlank()) {
+                    if (isNotEmpty()) append(" • ")
+                    append("#kk")
+                } else if (movie.msvSlug.isNotBlank() && movie.kkSlug.isBlank()) {
+                    if (isNotEmpty()) append(" • ")
+                    append("#msv")
+                }
+            }
+            if (bottomRightBadge.isNotBlank()) {
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
                         .padding(4.dp)
                         .clip(RoundedCornerShape(4.dp))
-                        .background(Color.Black.copy(alpha = 0.7f))
+                        .background(Color.Black.copy(alpha = 0.75f))
                         .padding(horizontal = 5.dp, vertical = 2.dp)
                 ) {
                     Text(
-                        text = movie.lang,
-                        color = Color.White,
+                        text = bottomRightBadge,
+                        color = if (movie.hasBothSources) Tone.accent else Color.White,
                         fontSize = 9.sp,
-                        fontWeight = FontWeight.Medium
+                        fontWeight = if (movie.hasBothSources) FontWeight.Bold else FontWeight.Medium
                     )
                 }
             }
@@ -2169,6 +2215,12 @@ private fun MovieDetailContent(
                     if (detail.movie.lang.isNotBlank()) {
                         BadgePill(detail.movie.lang, bg = Tone.surfaceHigh, textColor = Tone.text)
                     }
+                    if (detail.hasBothSources) {
+                        BadgePill("SV1 #kk + SV2 #msv", bg = Tone.accent.copy(alpha = 0.2f), textColor = Tone.accent)
+                    } else {
+                        val singleTag = detail.servers.firstOrNull()?.shortTag ?: detail.movie.source.shortTag
+                        BadgePill("Server $singleTag", bg = Tone.surfaceHigh, textColor = Tone.accent)
+                    }
                 }
 
                 Spacer(Modifier.height(6.dp))
@@ -2209,12 +2261,17 @@ private fun MovieDetailContent(
 
         // CONTINUE WATCHING BUTTON (If progress exists)
         if (savedProgress != null && !savedProgress.isFinished && savedProgress.positionMs > 5000L) {
+            val targetResumeServerIdx = selectedServerIdx.coerceIn(0, (detail.servers.size - 1).coerceAtLeast(0))
+            val targetResumeServerTag = detail.servers.getOrNull(targetResumeServerIdx)?.shortTag ?: "#kk"
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(10.dp))
                     .background(Tone.accent)
-                    .clickable { onPlayEpisode(savedProgress.serverIndex, savedProgress.episodeIndex) }
+                    .clickable {
+                        val resumeEpIdx = savedProgress.episodeIndex.coerceIn(0, (epList.size - 1).coerceAtLeast(0))
+                        onPlayEpisode(targetResumeServerIdx, resumeEpIdx)
+                    }
                     .padding(vertical = 12.dp, horizontal = 16.dp),
                 contentAlignment = Alignment.Center
             ) {
@@ -2229,7 +2286,7 @@ private fun MovieDetailContent(
                     val epText = if (savedProgress.episodeName.isNotBlank()) savedProgress.episodeName else "Tập ${savedProgress.episodeIndex + 1}"
                     val percent = (savedProgress.progressFraction * 100).toInt()
                     Text(
-                        text = "Tiếp tục xem: $epText ($percent%)",
+                        text = "Tiếp tục xem: $epText ($percent% • $targetResumeServerTag)",
                         color = Color.Black,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold
@@ -2437,36 +2494,66 @@ private fun MovieDetailContent(
 
             Spacer(Modifier.height(8.dp))
 
-            if (detail.servers.size > 1) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    detail.servers.forEachIndexed { sIdx, srv ->
-                        val isSel = (sIdx == selectedServerIdx)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                detail.servers.forEachIndexed { sIdx, srv ->
+                    val isSel = (sIdx == selectedServerIdx)
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (isSel) Tone.accent else Tone.surfaceHigh)
+                            .border(
+                                width = if (isSel) 1.dp else 0.5.dp,
+                                color = if (isSel) Tone.accent else Tone.outline.copy(alpha = 0.5f),
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                            .clickable { selectedServerIdx = sIdx }
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = srv.serverName.replace(Regex("\\s+"), " ").trim(),
+                            color = if (isSel) Color.Black else Tone.text,
+                            fontSize = 12.sp,
+                            fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                // Nút đổi server nhanh cho phim có ở cả 2 nguồn (#kk ⇄ #msv)
+                if (detail.hasBothSources) {
+                    val curSource = activeServer?.source
+                    val nextSourceIdx = detail.servers.indexOfFirst { it.source != curSource }
+                    if (nextSourceIdx >= 0) {
+                        val nextTag = detail.servers[nextSourceIdx].shortTag
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(8.dp))
-                                .background(if (isSel) Tone.accent else Tone.surfaceHigh)
-                                .clickable { selectedServerIdx = sIdx }
-                                .padding(horizontal = 12.dp, vertical = 6.dp)
+                                .background(Tone.accent.copy(alpha = 0.16f))
+                                .border(0.8.dp, Tone.accent, RoundedCornerShape(8.dp))
+                                .clickable { selectedServerIdx = nextSourceIdx }
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
                         ) {
                             Text(
-                                text = srv.serverName.replace(Regex("\\s+"), " ").trim(),
-                                color = if (isSel) Color.Black else Tone.text,
-                                fontSize = 12.sp,
-                                fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium,
+                                text = "⚡ Đổi nhanh sang $nextTag",
+                                color = Tone.accent,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
                                 maxLines = 1,
-                                softWrap = false,
-                                overflow = TextOverflow.Ellipsis
+                                softWrap = false
                             )
                         }
                     }
                 }
-                Spacer(Modifier.height(10.dp))
             }
+            Spacer(Modifier.height(10.dp))
 
             // Status banner above episode grid (Watch progress in "Xem online" mode; Cloud Sync status in "Kéo về Cloud" mode)
             if (!isCloudMode && savedProgress != null && epList.isNotEmpty()) {
@@ -2607,11 +2694,13 @@ private fun MovieDetailContent(
                                             if (isCloudMode) {
                                                 scope.launch {
                                                     val epNum = "$epNumber"
+                                                    val pullSlug = activeServer?.sourceSlug?.takeIf { it.isNotBlank() } ?: detail.movie.slug
+                                                    val pullSource = activeServer?.source ?: detail.movie.source
                                                     MovieCloudDownloader.pullToCloud(
                                                         context = context,
-                                                        slug = detail.movie.slug,
+                                                        slug = pullSlug,
                                                         movieTitle = detail.movie.name,
-                                                        source = detail.movie.source,
+                                                        source = pullSource,
                                                         epRange = epNum,
                                                         totalEpisodes = epList.size,
                                                         movie = detail.movie

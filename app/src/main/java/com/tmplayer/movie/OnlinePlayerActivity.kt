@@ -241,13 +241,14 @@ fun OnlinePlayerScreen(
     var lastLoadedEpIdx by remember { mutableIntStateOf(OnlinePlayerSession.episodeIndex) }
 
     val currentServer = detail.servers.getOrNull(serverIdx) ?: detail.servers.firstOrNull()
+    val activeServerSource = if (isAv) detail.movie.source else (currentServer?.source ?: detail.movie.source)
     val episodes = currentServer?.episodes ?: emptyList()
     val currentEp = episodes.getOrNull(epIdx) ?: episodes.firstOrNull()
 
     var streamInfo by remember {
         mutableStateOf(
-            if (!isAv && detail.movie.source != MovieSource.VSMov && currentServer != null && currentEp != null) {
-                MovieRepository.resolveStream(detail.movie.source, detail.movie.name, currentServer, currentEp)
+            if (!isAv && activeServerSource != MovieSource.VSMov && currentServer != null && currentEp != null) {
+                MovieRepository.resolveStream(activeServerSource, detail.movie.name, currentServer, currentEp)
             } else null
         )
     }
@@ -273,11 +274,12 @@ fun OnlinePlayerScreen(
             autoRetryCount = 0
         }
         if (currentServer != null && currentEp != null) {
+            isLoading = true
             if (!isAv) {
                 MovieStore.markEpisodeWatched(context, detail, serverIdx, epIdx, currentEp.name)
             }
             val resolved = MovieRepository.resolveStreamWithSubtitles(
-                detail.movie.source,
+                activeServerSource,
                 detail.movie.name,
                 currentServer,
                 currentEp
@@ -446,6 +448,48 @@ fun OnlinePlayerScreen(
         }
     }
 
+    fun switchServerQuick(targetIdx: Int? = null) {
+        if (detail.servers.size <= 1) return
+        val nextIdx = targetIdx ?: run {
+            val curSource = currentServer?.source
+            val otherSourceIdx = detail.servers.indexOfFirst { it.source != curSource }
+            if (otherSourceIdx >= 0) otherSourceIdx else (serverIdx + 1) % detail.servers.size
+        }
+        if (nextIdx == serverIdx || nextIdx !in detail.servers.indices) return
+
+        val resumePos = maxOf(currentPosition, exoPlayer.currentPosition.coerceAtLeast(0L))
+        saveCurrentProgress(resumePos, duration)
+        if (resumePos > 1000L) {
+            currentPosition = resumePos
+            pendingResumePositionMs = resumePos
+        }
+
+        val targetServer = detail.servers[nextIdx]
+        val curEpSlug = currentEp?.slug?.lowercase()?.trim().orEmpty()
+        val curEpName = currentEp?.name?.lowercase()?.trim().orEmpty()
+        val matchedEpIdx = targetServer.episodes.indexOfFirst {
+            (curEpSlug.isNotBlank() && it.slug.lowercase().trim() == curEpSlug) ||
+                (curEpName.isNotBlank() && it.name.lowercase().trim() == curEpName)
+        }.let { found ->
+            if (found >= 0) found else epIdx.coerceIn(0, (targetServer.episodes.size - 1).coerceAtLeast(0))
+        }
+
+        lastLoadedEpIdx = matchedEpIdx
+        autoRetryCount = 0
+        errorMessage = null
+        isLoading = true
+        serverIdx = nextIdx
+        epIdx = matchedEpIdx
+        OnlinePlayerSession.serverIndex = nextIdx
+        OnlinePlayerSession.episodeIndex = matchedEpIdx
+        lastInteraction = System.currentTimeMillis()
+        android.widget.Toast.makeText(
+            context,
+            "⚡ Đã chuyển sang ${targetServer.serverName}",
+            android.widget.Toast.LENGTH_SHORT
+        ).show()
+    }
+
     // Update media source when stream changes or retry is triggered
     LaunchedEffect(streamInfo?.streamUrl, streamInfo?.subtitles, retryTrigger) {
         var stream = streamInfo
@@ -455,9 +499,9 @@ fun OnlinePlayerScreen(
             initialSeekDone = false
             errorMessage = null
             try {
-                if (retryTrigger > 0 && stream.subtitles.isEmpty() && detail.movie.source == MovieSource.VSMov && currentServer != null && currentEp != null) {
+                if (retryTrigger > 0 && stream.subtitles.isEmpty() && activeServerSource == MovieSource.VSMov && currentServer != null && currentEp != null) {
                     val reResolved = MovieRepository.resolveStreamWithSubtitles(
-                        detail.movie.source,
+                        activeServerSource,
                         detail.movie.name,
                         currentServer,
                         currentEp
@@ -1043,18 +1087,7 @@ fun OnlinePlayerScreen(
                             ControlPill(
                                 text = "Đổi Server",
                                 icon = TmIcons.Episodes,
-                                onClick = {
-                                    val resumePos = maxOf(currentPosition, exoPlayer.currentPosition.coerceAtLeast(0L))
-                                    if (resumePos > 0L) {
-                                        currentPosition = resumePos
-                                        pendingResumePositionMs = resumePos
-                                    }
-                                    autoRetryCount = 0
-                                    errorMessage = null
-                                    isLoading = true
-                                    serverIdx = (serverIdx + 1) % detail.servers.size
-                                    OnlinePlayerSession.serverIndex = serverIdx
-                                }
+                                onClick = { switchServerQuick() }
                             )
                         }
                     }
@@ -1115,8 +1148,13 @@ fun OnlinePlayerScreen(
                             epName.lowercase().startsWith("tập") -> epName
                             else -> "Tập $epName"
                         }
+                        val srvLabel = currentServer?.serverName?.ifBlank { currentServer.shortTag } ?: ""
                         Text(
-                            text = if (epLabel.isNotBlank()) "$epLabel • $subType" else subType,
+                            text = buildString {
+                                if (epLabel.isNotBlank()) append("$epLabel • ")
+                                append(subType)
+                                if (srvLabel.isNotBlank()) append(" • $srvLabel")
+                            },
                             color = Tone.accent,
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Medium,
@@ -1124,6 +1162,19 @@ fun OnlinePlayerScreen(
                             softWrap = false,
                             overflow = TextOverflow.Ellipsis
                         )
+                    }
+
+                    // Quick Server Switch button on Top Bar when movie has multiple servers (#kk / #msv)
+                    if (detail.servers.size > 1) {
+                        val curTag = currentServer?.shortTag ?: "#kk"
+                        val nextSrv = detail.servers.firstOrNull { it.source != currentServer?.source }
+                            ?: detail.servers.getOrNull((serverIdx + 1) % detail.servers.size)
+                        val nextTag = nextSrv?.shortTag ?: "#msv"
+                        ControlPill(
+                            text = "⚡ $curTag ⇄ $nextTag",
+                            onClick = { switchServerQuick() }
+                        )
+                        Spacer(Modifier.width(8.dp))
                     }
 
                     // Watchlist / Bookmark button
@@ -1353,6 +1404,18 @@ fun OnlinePlayerScreen(
                                         showSubtitleSheet = true
                                         lastInteraction = System.currentTimeMillis()
                                     }
+                                )
+                            }
+
+                            // Quick Server Switch pill in Bottom Bar
+                            if (detail.servers.size > 1) {
+                                val nextSrv = detail.servers.firstOrNull { it.source != currentServer?.source }
+                                    ?: detail.servers.getOrNull((serverIdx + 1) % detail.servers.size)
+                                val nextLabel = nextSrv?.shortTag ?: "Server khác"
+                                ControlPill(
+                                    text = "Đổi sang $nextLabel",
+                                    icon = TmIcons.Refresh,
+                                    onClick = { switchServerQuick() }
                                 )
                             }
 
@@ -1662,10 +1725,7 @@ fun OnlinePlayerScreen(
                                             .clip(RoundedCornerShape(8.dp))
                                             .background(if (isSelected) Tone.accent else Color.White.copy(alpha = 0.12f))
                                             .clickable {
-                                                serverIdx = sI
-                                                OnlinePlayerSession.serverIndex = sI
-                                                epIdx = 0
-                                                OnlinePlayerSession.episodeIndex = 0
+                                                switchServerQuick(sI)
                                             }
                                             .padding(horizontal = 12.dp, vertical = 6.dp)
                                     ) {

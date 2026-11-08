@@ -3,19 +3,24 @@ package com.tmplayer.movie
 import androidx.compose.runtime.Immutable
 
 /** Nguồn phim hỗ trợ */
-enum class MovieSource(val displayName: String, val badge: String, val isAv: Boolean = false) {
-    VSMov("VSMov (Đa chất lượng)", "VSMov", false),
-    KKPhim("KKPhim (Khuyên dùng)", "KKPhim", false),
-    AVDB("AVDB (530K+ JAV)", "AVDB", true),
-    XXVN("XXVN (JAV Vietsub)", "XXVN", true);
+enum class MovieSource(
+    val displayName: String,
+    val badge: String,
+    val shortTag: String,
+    val isAv: Boolean = false
+) {
+    KKPhim("KKPhim (#kk)", "KKPhim", "#kk", false),
+    VSMov("MSMov (#msv)", "MSMov", "#msv", false),
+    AVDB("AVDB (530K+ JAV)", "AVDB", "#avdb", true),
+    XXVN("XXVN (JAV Vietsub)", "XXVN", "#xxvn", true);
 
     companion object {
         fun fromString(value: String?): MovieSource {
-            return when (value?.lowercase()) {
-                "kkphim" -> KKPhim
-                "avdb" -> AVDB
-                "xxvn" -> XXVN
-                "missav" -> AVDB
+            return when (value?.lowercase()?.trim()) {
+                "kkphim", "kk", "#kk" -> KKPhim
+                "vsmov", "msmov", "msv", "#msv" -> VSMov
+                "avdb", "missav", "#avdb" -> AVDB
+                "xxvn", "#xxvn" -> XXVN
                 else -> VSMov
             }
         }
@@ -36,7 +41,10 @@ data class MovieItem(
     val type: String = "",
     val episodeCurrent: String = "",
     val rating: String = "",
-    val source: MovieSource = MovieSource.VSMov
+    val source: MovieSource = MovieSource.VSMov,
+    val hasBothSources: Boolean = false,
+    val kkSlug: String = "",
+    val msvSlug: String = ""
 )
 
 /** Chi tiết bộ phim */
@@ -51,14 +59,22 @@ data class MovieDetail(
     val categories: List<String> = emptyList(),
     val countries: List<String> = emptyList(),
     val servers: List<MovieServer> = emptyList()
-)
+) {
+    val hasBothSources: Boolean
+        get() = servers.map { it.source }.distinct().size > 1
+}
 
 /** Server chứa các tập phim */
 @Immutable
 data class MovieServer(
     val serverName: String,
-    val episodes: List<MovieEpisode>
-)
+    val episodes: List<MovieEpisode>,
+    val source: MovieSource = MovieSource.KKPhim,
+    val sourceSlug: String = ""
+) {
+    val shortTag: String
+        get() = source.shortTag
+}
 
 /** Tập phim */
 @Immutable

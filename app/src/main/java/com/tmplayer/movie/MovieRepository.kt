@@ -8,6 +8,8 @@ import androidx.collection.LruCache
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -18,6 +20,7 @@ import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URLEncoder
 import java.security.MessageDigest
+import java.text.Normalizer
 
 object MovieRepository {
 
@@ -196,11 +199,10 @@ object MovieRepository {
     }
 
     // =========================================================================
-    // 4. SEARCH
+    // 4. SEARCH (COMBINED KKPHIM #kk + MSMOV #msv)
     // =========================================================================
 
-    suspend fun searchMovies(source: MovieSource, keyword: String, page: Int = 1): List<MovieItem> {
-        if (source.isAv) return com.tmplayer.av.AvRepository.filterAv(source, "", keyword, page).first
+    private suspend fun searchMoviesSingle(source: MovieSource, keyword: String, page: Int = 1): List<MovieItem> {
         val enc = URLEncoder.encode(keyword.trim(), "UTF-8")
         val url = when (source) {
             MovieSource.KKPhim -> "https://phimapi.com/v1/api/tim-kiem?keyword=$enc&page=$page&limit=24"
@@ -211,12 +213,155 @@ object MovieRepository {
         return parseMovieList(jsonStr, source)
     }
 
+    suspend fun searchMovies(source: MovieSource, keyword: String, page: Int = 1): List<MovieItem> = coroutineScope {
+        if (source.isAv) return@coroutineScope com.tmplayer.av.AvRepository.filterAv(source, "", keyword, page).first
+        val kkDeferred = async { searchMoviesSingle(MovieSource.KKPhim, keyword, page) }
+        val msvDeferred = async { searchMoviesSingle(MovieSource.VSMov, keyword, page) }
+        val kkList = kkDeferred.await()
+        val msvList = msvDeferred.await()
+        mergeMovieLists(kkList, msvList)
+    }
+
+    private fun normalizeTitle(raw: String): String {
+        if (raw.isBlank()) return ""
+        val nfd = Normalizer.normalize(raw.lowercase().trim(), Normalizer.Form.NFD)
+        return nfd
+            .replace(Regex("\\p{InCombiningDiacriticalMarks}+"), "")
+            .replace('đ', 'd')
+            .replace(Regex("[^a-z0-9]+"), " ")
+            .trim()
+    }
+
+    private fun isSameMovie(a: MovieItem, b: MovieItem): Boolean {
+        if (a.slug.isNotBlank() && a.slug.equals(b.slug, ignoreCase = true)) return true
+        val normNameA = normalizeTitle(a.name)
+        val normNameB = normalizeTitle(b.name)
+        val nameMatches = normNameA.isNotBlank() && normNameA == normNameB
+        val normOrigA = normalizeTitle(a.originName)
+        val normOrigB = normalizeTitle(b.originName)
+        val origMatches = normOrigA.isNotBlank() && normOrigA == normOrigB
+        if (!nameMatches && !origMatches) return false
+        val yearA = a.year.toIntOrNull()
+        val yearB = b.year.toIntOrNull()
+        if (yearA != null && yearB != null && kotlin.math.abs(yearA - yearB) > 1) return false
+        return true
+    }
+
+    private fun mergeTwoMovieItems(kkItem: MovieItem, msvItem: MovieItem, primarySlug: String = msvItem.slug.ifBlank { kkItem.slug }): MovieItem {
+        return MovieItem(
+            name = msvItem.name.ifBlank { kkItem.name },
+            originName = msvItem.originName.ifBlank { kkItem.originName },
+            slug = primarySlug,
+            thumbUrl = msvItem.thumbUrl.ifBlank { kkItem.thumbUrl },
+            posterUrl = msvItem.posterUrl.ifBlank { kkItem.posterUrl },
+            year = msvItem.year.ifBlank { kkItem.year },
+            quality = msvItem.quality.ifBlank { kkItem.quality },
+            lang = kkItem.lang.ifBlank { msvItem.lang },
+            type = msvItem.type.ifBlank { kkItem.type },
+            episodeCurrent = kkItem.episodeCurrent.ifBlank { msvItem.episodeCurrent },
+            rating = msvItem.rating.ifBlank { kkItem.rating },
+            source = MovieSource.KKPhim,
+            hasBothSources = true,
+            kkSlug = kkItem.slug,
+            msvSlug = msvItem.slug
+        )
+    }
+
+    private fun mergeMovieLists(kkList: List<MovieItem>, msvList: List<MovieItem>): List<MovieItem> {
+        if (kkList.isEmpty()) return msvList.map { it.copy(msvSlug = it.slug) }
+        if (msvList.isEmpty()) return kkList.map { it.copy(kkSlug = it.slug) }
+
+        val matchedKkToMsv = mutableMapOf<Int, Int>()
+        val matchedMsvToKk = mutableMapOf<Int, Int>()
+
+        for (kIdx in kkList.indices) {
+            val kItem = kkList[kIdx]
+            val mIdx = msvList.indices.firstOrNull { mIdxCandidate ->
+                !matchedMsvToKk.containsKey(mIdxCandidate) && isSameMovie(kItem, msvList[mIdxCandidate])
+            } ?: -1
+            if (mIdx >= 0) {
+                matchedKkToMsv[kIdx] = mIdx
+                matchedMsvToKk[mIdx] = kIdx
+            }
+        }
+
+        val usedKk = mutableSetOf<Int>()
+        val usedMsv = mutableSetOf<Int>()
+        val merged = mutableListOf<MovieItem>()
+        val maxLen = maxOf(kkList.size, msvList.size)
+
+        for (i in 0 until maxLen) {
+            if (i < kkList.size && i !in usedKk) {
+                val mIdx = matchedKkToMsv[i]
+                if (mIdx != null) {
+                    usedKk.add(i)
+                    usedMsv.add(mIdx)
+                    merged.add(mergeTwoMovieItems(kkList[i], msvList[mIdx], primarySlug = kkList[i].slug))
+                } else {
+                    usedKk.add(i)
+                    merged.add(kkList[i].copy(source = MovieSource.KKPhim, kkSlug = kkList[i].slug))
+                }
+            }
+            if (i < msvList.size && i !in usedMsv) {
+                val kIdx = matchedMsvToKk[i]
+                if (kIdx != null) {
+                    usedMsv.add(i)
+                    usedKk.add(kIdx)
+                    merged.add(mergeTwoMovieItems(kkList[kIdx], msvList[i], primarySlug = msvList[i].slug))
+                } else {
+                    usedMsv.add(i)
+                    merged.add(msvList[i].copy(source = MovieSource.VSMov, msvSlug = msvList[i].slug))
+                }
+            }
+        }
+        return merged
+    }
+
     // =========================================================================
-    // 5. MOVIE DETAIL
+    // 5. MOVIE DETAIL (UNIFIED SERVER 1 #kk + SERVER 2 #msv)
     // =========================================================================
 
-    suspend fun getMovieDetail(source: MovieSource, slug: String): MovieDetail? {
-        if (source.isAv) return com.tmplayer.av.AvRepository.getDetail(source, slug)
+    private fun extractServerSubLabel(rawServerName: String): String {
+        val s = rawServerName.lowercase()
+        return when {
+            "lồng tiếng" in s || "long tieng" in s -> "Lồng tiếng"
+            "thuyết minh" in s || "thuyet minh" in s -> "Thuyết minh"
+            "vietsub" in s || "sub" in s -> "Vietsub"
+            else -> ""
+        }
+    }
+
+    private fun formatUnifiedServerName(
+        source: MovieSource,
+        rawServerName: String,
+        indexInSource: Int,
+        totalInSource: Int
+    ): String {
+        val basePrefix = if (source == MovieSource.KKPhim) "Server 1 #kk" else "Server 2 #msv"
+        val subLabel = extractServerSubLabel(rawServerName)
+        return when {
+            totalInSource <= 1 -> {
+                if (subLabel.isNotBlank() && subLabel != "Vietsub") {
+                    "$basePrefix ($subLabel)"
+                } else {
+                    basePrefix
+                }
+            }
+            else -> {
+                val detailLabel = subLabel.ifBlank {
+                    rawServerName
+                        .replace("#", "")
+                        .replace(Regex("(?i)server\\s*\\d*"), "")
+                        .trim()
+                        .ifBlank { "Bản ${indexInSource + 1}" }
+                }
+                "$basePrefix ($detailLabel)"
+            }
+        }
+    }
+
+    private suspend fun fetchSingleSourceDetail(source: MovieSource, slug: String): MovieDetail? {
+        if (slug.isBlank()) return null
         val url = when (source) {
             MovieSource.KKPhim -> "https://phimapi.com/phim/$slug"
             else -> "https://vsmov.com/api/phim/$slug"
@@ -245,11 +390,12 @@ object MovieRepository {
             val tmdb = mvObj.optJSONObject("tmdb")
             val vote = tmdb?.optDouble("vote_average", 0.0) ?: 0.0
             val rating = if (vote > 0.0) String.format(java.util.Locale.US, "%.1f", vote) else ""
+            val resolvedSlug = mvObj.optString("slug", slug).ifBlank { slug }
 
             val item = MovieItem(
                 name = mvObj.optString("name", "Phim"),
                 originName = mvObj.optString("origin_name", ""),
-                slug = mvObj.optString("slug", slug),
+                slug = resolvedSlug,
                 thumbUrl = thumb,
                 posterUrl = poster,
                 year = mvObj.optString("year", ""),
@@ -258,7 +404,9 @@ object MovieRepository {
                 type = mvObj.optString("type", ""),
                 episodeCurrent = mvObj.optString("episode_current", ""),
                 rating = rating,
-                source = source
+                source = source,
+                kkSlug = if (source == MovieSource.KKPhim) resolvedSlug else "",
+                msvSlug = if (source == MovieSource.VSMov) resolvedSlug else ""
             )
 
             val directors = parseStringList(mvObj.optJSONArray("director"))
@@ -266,7 +414,7 @@ object MovieRepository {
             val cats = parseNameList(mvObj.optJSONArray("category"))
             val countries = parseNameList(mvObj.optJSONArray("country"))
 
-            val servers = mutableListOf<MovieServer>()
+            val rawServers = mutableListOf<Pair<String, List<MovieEpisode>>>()
             val epArr = root.optJSONArray("episodes")
             if (epArr != null) {
                 for (sIdx in 0 until epArr.length()) {
@@ -288,9 +436,18 @@ object MovieRepository {
                         }
                     }
                     if (eps.isNotEmpty()) {
-                        servers.add(MovieServer(sName, eps))
+                        rawServers.add(sName to eps)
                     }
                 }
+            }
+
+            val servers = rawServers.mapIndexed { idx, (rawName, eps) ->
+                MovieServer(
+                    serverName = formatUnifiedServerName(source, rawName, idx, rawServers.size),
+                    episodes = eps,
+                    source = source,
+                    sourceSlug = resolvedSlug
+                )
             }
 
             val cleanContent = mvObj.optString("content", "")
@@ -321,6 +478,83 @@ object MovieRepository {
         }
     }
 
+    suspend fun getMovieDetail(
+        source: MovieSource,
+        slug: String,
+        hintItem: MovieItem? = null
+    ): MovieDetail? = coroutineScope {
+        if (source.isAv) return@coroutineScope com.tmplayer.av.AvRepository.getDetail(source, slug)
+
+        val kkSlugCandidate = hintItem?.kkSlug?.takeIf { it.isNotBlank() } ?: slug
+        val msvSlugCandidate = hintItem?.msvSlug?.takeIf { it.isNotBlank() } ?: slug
+
+        val kkDeferred = async { fetchSingleSourceDetail(MovieSource.KKPhim, kkSlugCandidate) }
+        val msvDeferred = async { fetchSingleSourceDetail(MovieSource.VSMov, msvSlugCandidate) }
+
+        var kkDetail = kkDeferred.await()
+        var msvDetail = msvDeferred.await()
+
+        // Nếu 1 trong 2 nguồn khác slug, tự động tìm nhanh theo tên phim để gộp đủ cả 2 server (#kk & #msv)
+        if (kkDetail == null && msvDetail != null) {
+            val targetMovie = msvDetail.movie
+            val candidates = searchMoviesSingle(MovieSource.KKPhim, targetMovie.name, 1)
+            val matched = candidates.firstOrNull { isSameMovie(it, targetMovie) }
+            if (matched != null && matched.slug.isNotBlank() && matched.slug != kkSlugCandidate) {
+                kkDetail = fetchSingleSourceDetail(MovieSource.KKPhim, matched.slug)
+            }
+        } else if (msvDetail == null && kkDetail != null) {
+            val targetMovie = kkDetail.movie
+            val candidates = searchMoviesSingle(MovieSource.VSMov, targetMovie.name, 1)
+            val matched = candidates.firstOrNull { isSameMovie(it, targetMovie) }
+            if (matched != null && matched.slug.isNotBlank() && matched.slug != msvSlugCandidate) {
+                msvDetail = fetchSingleSourceDetail(MovieSource.VSMov, matched.slug)
+            }
+        }
+
+        if (kkDetail == null && msvDetail == null) return@coroutineScope null
+
+        // Server 1 ưu tiên là KKPhim (#kk), Server 2 là MSMov (#msv)
+        val combinedServers = buildList {
+            if (kkDetail != null) addAll(kkDetail.servers)
+            if (msvDetail != null) addAll(msvDetail.servers)
+        }
+
+        val hasBoth = kkDetail != null && msvDetail != null
+        val primaryDetail = msvDetail ?: kkDetail!!
+        val secondaryDetail = if (primaryDetail === msvDetail) kkDetail else msvDetail
+
+        val mergedMovie = MovieItem(
+            name = primaryDetail.movie.name.ifBlank { secondaryDetail?.movie?.name.orEmpty() },
+            originName = primaryDetail.movie.originName.ifBlank { secondaryDetail?.movie?.originName.orEmpty() },
+            slug = slug.ifBlank { primaryDetail.movie.slug },
+            thumbUrl = primaryDetail.movie.thumbUrl.ifBlank { secondaryDetail?.movie?.thumbUrl.orEmpty() },
+            posterUrl = primaryDetail.movie.posterUrl.ifBlank { secondaryDetail?.movie?.posterUrl.orEmpty() },
+            year = primaryDetail.movie.year.ifBlank { secondaryDetail?.movie?.year.orEmpty() },
+            quality = primaryDetail.movie.quality.ifBlank { secondaryDetail?.movie?.quality ?: "HD" },
+            lang = (kkDetail?.movie?.lang ?: primaryDetail.movie.lang).ifBlank { "Vietsub" },
+            type = primaryDetail.movie.type.ifBlank { secondaryDetail?.movie?.type.orEmpty() },
+            episodeCurrent = (kkDetail?.movie?.episodeCurrent ?: primaryDetail.movie.episodeCurrent)
+                .ifBlank { secondaryDetail?.movie?.episodeCurrent.orEmpty() },
+            rating = primaryDetail.movie.rating.ifBlank { secondaryDetail?.movie?.rating.orEmpty() },
+            source = if (kkDetail != null) MovieSource.KKPhim else MovieSource.VSMov,
+            hasBothSources = hasBoth,
+            kkSlug = kkDetail?.movie?.slug.orEmpty(),
+            msvSlug = msvDetail?.movie?.slug.orEmpty()
+        )
+
+        MovieDetail(
+            movie = mergedMovie,
+            content = primaryDetail.content.ifBlank { secondaryDetail?.content.orEmpty() },
+            time = primaryDetail.time.ifBlank { secondaryDetail?.time.orEmpty() },
+            episodeTotal = primaryDetail.episodeTotal.ifBlank { secondaryDetail?.episodeTotal.orEmpty() },
+            director = primaryDetail.director.ifEmpty { secondaryDetail?.director.orEmpty() },
+            actor = primaryDetail.actor.ifEmpty { secondaryDetail?.actor.orEmpty() },
+            categories = primaryDetail.categories.ifEmpty { secondaryDetail?.categories.orEmpty() },
+            countries = primaryDetail.countries.ifEmpty { secondaryDetail?.countries.orEmpty() },
+            servers = combinedServers
+        )
+    }
+
     // =========================================================================
     // 6. STREAM RESOLVER
     // =========================================================================
@@ -328,7 +562,8 @@ object MovieRepository {
     private val subtitleCache = java.util.concurrent.ConcurrentHashMap<String, List<MovieSubtitleTrack>>()
 
     fun resolveStream(source: MovieSource, movieTitle: String, server: MovieServer, episode: MovieEpisode): MovieStream {
-        val referer = if (source == MovieSource.VSMov) "https://vsmov.com/" else "https://phimapi.com/"
+        val actualSource = if (source.isAv) source else server.source
+        val referer = if (actualSource == MovieSource.VSMov) "https://vsmov.com/" else "https://phimapi.com/"
         var streamUrl = episode.linkM3u8.trim()
 
         if (streamUrl.isBlank() && episode.linkEmbed.isNotBlank()) {
@@ -354,7 +589,7 @@ object MovieRepository {
             movieTitle = movieTitle,
             episodeName = episode.name,
             serverName = server.serverName,
-            source = source
+            source = actualSource
         )
     }
 
@@ -367,8 +602,9 @@ object MovieRepository {
         if (source.isAv) {
             return@withContext com.tmplayer.av.AvRepository.resolveAvStream(source, movieTitle, server, episode)
         }
-        val baseStream = resolveStream(source, movieTitle, server, episode)
-        if (source != MovieSource.VSMov || episode.linkEmbed.isBlank()) {
+        val actualSource = server.source
+        val baseStream = resolveStream(actualSource, movieTitle, server, episode)
+        if (actualSource != MovieSource.VSMov || episode.linkEmbed.isBlank()) {
             return@withContext baseStream
         }
 
