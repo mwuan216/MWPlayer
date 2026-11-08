@@ -74,6 +74,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -203,6 +204,90 @@ class OnlinePlayerActivity : ComponentActivity() {
     }
 }
 
+data class ServerSwitchTarget(
+    val serverIndex: Int,
+    val episodeIndex: Int,
+    val server: MovieServer
+)
+
+internal fun extractEpisodeKey(name: String, slug: String): String {
+    val cleanName = name.trim().lowercase()
+    val cleanSlug = slug.trim().lowercase()
+    if (cleanName.contains("full") || cleanSlug.contains("full")) {
+        return "full"
+    }
+    val digitFromName = Regex("""(?:tập|ep|tap)?\s*0*(\d+)""", RegexOption.IGNORE_CASE).find(cleanName)?.groupValues?.get(1)
+        ?: Regex("""\b0*(\d+)\b""").find(cleanName)?.groupValues?.get(1)
+        ?: Regex("""(\d+)""").find(cleanName)?.groupValues?.get(1)
+    if (!digitFromName.isNullOrEmpty()) {
+        return digitFromName.trimStart('0').ifEmpty { "0" }
+    }
+    val digitFromSlug = Regex("""(?:tap|ep)?-?0*(\d+)""", RegexOption.IGNORE_CASE).find(cleanSlug)?.groupValues?.get(1)
+        ?: Regex("""(\d+)""").find(cleanSlug)?.groupValues?.get(1)
+    if (!digitFromSlug.isNullOrEmpty()) {
+        return digitFromSlug.trimStart('0').ifEmpty { "0" }
+    }
+    return cleanSlug.ifBlank { cleanName }
+}
+
+internal fun isSameEpisode(ep1: MovieEpisode?, ep2: MovieEpisode?): Boolean {
+    if (ep1 == null || ep2 == null) return false
+    val k1 = extractEpisodeKey(ep1.name, ep1.slug)
+    val k2 = extractEpisodeKey(ep2.name, ep2.slug)
+    if (k1.isNotBlank() && k1 == k2) return true
+    if (ep1.slug.isNotBlank() && ep1.slug.equals(ep2.slug, ignoreCase = true)) return true
+    if (ep1.name.isNotBlank() && ep1.name.equals(ep2.name, ignoreCase = true)) return true
+    return false
+}
+
+internal fun findMatchingEpisodeIndex(currentEp: MovieEpisode?, currentEpIdx: Int, targetServer: MovieServer): Int {
+    if (targetServer.episodes.isEmpty()) return -1
+    if (currentEp != null) {
+        val curKey = extractEpisodeKey(currentEp.name, currentEp.slug)
+        val idxByKey = targetServer.episodes.indexOfFirst {
+            extractEpisodeKey(it.name, it.slug) == curKey
+        }
+        if (idxByKey >= 0) return idxByKey
+
+        val idxByNameOrSlug = targetServer.episodes.indexOfFirst {
+            (it.slug.isNotBlank() && it.slug.equals(currentEp.slug, ignoreCase = true)) ||
+                (it.name.isNotBlank() && it.name.equals(currentEp.name, ignoreCase = true))
+        }
+        if (idxByNameOrSlug >= 0) return idxByNameOrSlug
+    }
+    if (targetServer.episodes.size == 1 && currentEpIdx == 0) {
+        return 0
+    }
+    return -1
+}
+
+internal fun findSwitchTarget(
+    detail: MovieDetail,
+    currentServer: MovieServer?,
+    currentEp: MovieEpisode?,
+    currentEpIdx: Int
+): ServerSwitchTarget? {
+    if (detail.servers.size <= 1) return null
+    val curSource = currentServer?.source ?: return null
+
+    val otherSourceServers = detail.servers.mapIndexed { idx, srv -> idx to srv }
+        .filter { it.second.source != curSource }
+
+    if (otherSourceServers.isEmpty()) return null
+
+    for ((idx, srv) in otherSourceServers) {
+        val matchingEpIdx = findMatchingEpisodeIndex(currentEp, currentEpIdx, srv)
+        if (matchingEpIdx in srv.episodes.indices) {
+            return ServerSwitchTarget(
+                serverIndex = idx,
+                episodeIndex = matchingEpIdx,
+                server = srv
+            )
+        }
+    }
+    return null
+}
+
 @OptIn(UnstableApi::class)
 @Composable
 fun OnlinePlayerScreen(
@@ -239,11 +324,16 @@ fun OnlinePlayerScreen(
     var serverIdx by remember { mutableIntStateOf(OnlinePlayerSession.serverIndex) }
     var epIdx by remember { mutableIntStateOf(OnlinePlayerSession.episodeIndex) }
     var lastLoadedEpIdx by remember { mutableIntStateOf(OnlinePlayerSession.episodeIndex) }
+    var selectedDrawerServerIdx by remember { mutableIntStateOf(OnlinePlayerSession.serverIndex) }
 
     val currentServer = detail.servers.getOrNull(serverIdx) ?: detail.servers.firstOrNull()
     val activeServerSource = if (isAv) detail.movie.source else (currentServer?.source ?: detail.movie.source)
     val episodes = currentServer?.episodes ?: emptyList()
     val currentEp = episodes.getOrNull(epIdx) ?: episodes.firstOrNull()
+
+    val switchTarget = remember(detail.servers, currentServer, currentEp, epIdx) {
+        findSwitchTarget(detail, currentServer, currentEp, epIdx)
+    }
 
     var streamInfo by remember {
         mutableStateOf(
@@ -292,6 +382,11 @@ fun OnlinePlayerScreen(
     var showControls by remember { mutableStateOf(true) }
     var lastInteraction by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var showEpisodesSheet by remember { mutableStateOf(false) }
+    LaunchedEffect(showEpisodesSheet) {
+        if (showEpisodesSheet) {
+            selectedDrawerServerIdx = serverIdx
+        }
+    }
     var playbackSpeed by remember { mutableFloatStateOf(1.0f) }
     var resizeMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
 
@@ -448,9 +543,10 @@ fun OnlinePlayerScreen(
         }
     }
 
-    fun switchServerQuick(targetIdx: Int? = null) {
+    fun switchServerQuick(targetIdx: Int? = null, targetEpisodeIdx: Int? = null) {
         if (detail.servers.size <= 1) return
-        val nextIdx = targetIdx ?: run {
+        val target = switchTarget
+        val nextIdx = targetIdx ?: target?.serverIndex ?: run {
             val curSource = currentServer?.source
             val otherSourceIdx = detail.servers.indexOfFirst { it.source != curSource }
             if (otherSourceIdx >= 0) otherSourceIdx else (serverIdx + 1) % detail.servers.size
@@ -465,14 +561,12 @@ fun OnlinePlayerScreen(
         }
 
         val targetServer = detail.servers[nextIdx]
-        val curEpSlug = currentEp?.slug?.lowercase()?.trim().orEmpty()
-        val curEpName = currentEp?.name?.lowercase()?.trim().orEmpty()
-        val matchedEpIdx = targetServer.episodes.indexOfFirst {
-            (curEpSlug.isNotBlank() && it.slug.lowercase().trim() == curEpSlug) ||
-                (curEpName.isNotBlank() && it.name.lowercase().trim() == curEpName)
-        }.let { found ->
-            if (found >= 0) found else epIdx.coerceIn(0, (targetServer.episodes.size - 1).coerceAtLeast(0))
-        }
+        val matchedEpIdx = targetEpisodeIdx
+            ?: (if (target != null && target.serverIndex == nextIdx) target.episodeIndex else null)
+            ?: run {
+                val found = findMatchingEpisodeIndex(currentEp, epIdx, targetServer)
+                if (found >= 0) found else epIdx.coerceIn(0, (targetServer.episodes.size - 1).coerceAtLeast(0))
+            }
 
         lastLoadedEpIdx = matchedEpIdx
         autoRetryCount = 0
@@ -480,6 +574,7 @@ fun OnlinePlayerScreen(
         isLoading = true
         serverIdx = nextIdx
         epIdx = matchedEpIdx
+        selectedDrawerServerIdx = nextIdx
         OnlinePlayerSession.serverIndex = nextIdx
         OnlinePlayerSession.episodeIndex = matchedEpIdx
         lastInteraction = System.currentTimeMillis()
@@ -1083,11 +1178,11 @@ fun OnlinePlayerScreen(
                                 retryTrigger += 1
                             }
                         )
-                        if (detail.servers.size > 1) {
+                        if (switchTarget != null) {
                             ControlPill(
-                                text = "Đổi Server",
+                                text = "Đổi Server (${switchTarget.server.shortTag})",
                                 icon = TmIcons.Episodes,
-                                onClick = { switchServerQuick() }
+                                onClick = { switchServerQuick(switchTarget.serverIndex, switchTarget.episodeIndex) }
                             )
                         }
                     }
@@ -1393,15 +1488,13 @@ fun OnlinePlayerScreen(
                                 )
                             }
 
-                            // Quick Server Switch pill in Bottom Bar
-                            if (detail.servers.size > 1) {
-                                val nextSrv = detail.servers.firstOrNull { it.source != currentServer?.source }
-                                    ?: detail.servers.getOrNull((serverIdx + 1) % detail.servers.size)
-                                val nextLabel = nextSrv?.shortTag ?: "Server khác"
+                            // Quick Server Switch pill in Bottom Bar (only shown when current episode exists on another source)
+                            if (switchTarget != null) {
+                                val nextLabel = switchTarget.server.shortTag
                                 ControlPill(
                                     text = "Đổi sang $nextLabel",
                                     icon = TmIcons.Refresh,
-                                    onClick = { switchServerQuick() }
+                                    onClick = { switchServerQuick(switchTarget.serverIndex, switchTarget.episodeIndex) }
                                 )
                             }
 
@@ -1660,6 +1753,12 @@ fun OnlinePlayerScreen(
 
         // EPISODES DRAWER / SHEET
         if (showEpisodesSheet) {
+            val isPortrait = LocalConfiguration.current.orientation == Configuration.ORIENTATION_PORTRAIT
+            val drawerWidthFraction = if (isPortrait) 0.85f else 0.45f
+            val drawerServer = detail.servers.getOrNull(selectedDrawerServerIdx) ?: currentServer
+            val drawerEpisodes = drawerServer?.episodes ?: emptyList()
+            val playerProgress = if (!isAv) MovieStore.getProgress(detail.movie.slug) else null
+
             Box(
                 Modifier
                     .fillMaxSize()
@@ -1670,7 +1769,7 @@ fun OnlinePlayerScreen(
                 Surface(
                     modifier = Modifier
                         .fillMaxHeight()
-                        .fillMaxWidth(0.4f)
+                        .fillMaxWidth(drawerWidthFraction)
                         .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {},
                     color = Tone.surface,
                     shape = RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp)
@@ -1685,12 +1784,19 @@ fun OnlinePlayerScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                "Chọn tập phim",
-                                color = Color.White,
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.Bold
-                            )
+                            Column {
+                                Text(
+                                    "Chọn tập phim",
+                                    color = Color.White,
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    "${drawerEpisodes.size} tập • ${drawerServer?.serverName ?: ""}",
+                                    color = Color.White.copy(alpha = 0.65f),
+                                    fontSize = 12.sp
+                                )
+                            }
                             ControlButton(icon = TmIcons.Close, onClick = { showEpisodesSheet = false })
                         }
 
@@ -1701,87 +1807,176 @@ fun OnlinePlayerScreen(
                             Row(
                                 Modifier
                                     .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState())
                                     .padding(bottom = 10.dp),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 detail.servers.forEachIndexed { sI, srv ->
-                                    val isSelected = (sI == serverIdx)
+                                    val isTabSelected = (sI == selectedDrawerServerIdx)
+                                    val isPlayingThisServer = (sI == serverIdx)
                                     Box(
                                         modifier = Modifier
                                             .clip(RoundedCornerShape(8.dp))
-                                            .background(if (isSelected) Tone.accent else Color.White.copy(alpha = 0.12f))
+                                            .background(
+                                                when {
+                                                    isTabSelected -> Tone.accent
+                                                    isPlayingThisServer -> Tone.accent.copy(alpha = 0.18f)
+                                                    else -> Color.White.copy(alpha = 0.10f)
+                                                }
+                                            )
+                                            .then(
+                                                if (isPlayingThisServer && !isTabSelected) {
+                                                    Modifier.border(1.dp, Tone.accent.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
+                                                } else Modifier
+                                            )
                                             .clickable {
-                                                switchServerQuick(sI)
+                                                selectedDrawerServerIdx = sI
                                             }
-                                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                                            .padding(horizontal = 12.dp, vertical = 7.dp)
                                     ) {
-                                        Text(
-                                            srv.serverName.replace(Regex("\\s+"), " ").trim(),
-                                            color = if (isSelected) Color.Black else Color.White,
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            maxLines = 1,
-                                            softWrap = false,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(
+                                                "${srv.serverName.replace(Regex("\\s+"), " ").trim()} (${srv.episodes.size} tập)",
+                                                color = if (isTabSelected) Color.Black else Color.White,
+                                                fontSize = 12.sp,
+                                                fontWeight = if (isTabSelected || isPlayingThisServer) FontWeight.Bold else FontWeight.Medium,
+                                                maxLines = 1,
+                                                softWrap = false
+                                            )
+                                            if (isPlayingThisServer) {
+                                                Spacer(Modifier.width(4.dp))
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(6.dp)
+                                                        .clip(CircleShape)
+                                                        .background(if (isTabSelected) Color.Black else Tone.accent)
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
 
                         // Episodes Grid
-                        val playerProgress = if (!isAv) MovieStore.getProgress(detail.movie.slug) else null
-                        LazyVerticalGrid(
-                            columns = GridCells.Fixed(4),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            itemsIndexed(episodes) { i, ep ->
-                                val isCurrent = (i == epIdx)
-                                val isWatched = isCurrent || (playerProgress?.isEpisodeWatched(i) == true)
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(
-                                            when {
-                                                isCurrent -> Tone.accent
-                                                isWatched -> Color.White.copy(alpha = 0.14f)
-                                                else -> Color.White.copy(alpha = 0.08f)
-                                            }
-                                        )
-                                        .then(
-                                            if (!isCurrent && isWatched) {
-                                                Modifier.border(0.5.dp, Tone.accent.copy(alpha = 0.55f), RoundedCornerShape(8.dp))
-                                            } else Modifier
-                                        )
-                                        .clickable {
-                                            saveCurrentProgress(currentPosition, duration)
-                                            epIdx = i
-                                            OnlinePlayerSession.episodeIndex = i
-                                            showEpisodesSheet = false
-                                        }
-                                        .padding(vertical = 8.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        if (isWatched) {
-                                            Text(
-                                                text = "✓",
-                                                color = if (isCurrent) Color.Black else Tone.accent,
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.ExtraBold
+                        if (drawerEpisodes.isEmpty()) {
+                            Box(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .weight(1f),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("Chưa có danh sách tập cho server này", color = Color.White.copy(alpha = 0.65f), fontSize = 13.sp)
+                            }
+                        } else {
+                            LazyVerticalGrid(
+                                columns = GridCells.Fixed(4),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                itemsIndexed(drawerEpisodes) { i, ep ->
+                                    val isCurrentlyPlaying = (selectedDrawerServerIdx == serverIdx && i == epIdx)
+                                    val isWatched = isCurrentlyPlaying || (playerProgress?.isEpisodeWatched(i) == true)
+                                    val matchesCurrent = !isCurrentlyPlaying && (selectedDrawerServerIdx != serverIdx) && isSameEpisode(ep, currentEp)
+
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(
+                                                when {
+                                                    isCurrentlyPlaying -> Tone.accent
+                                                    matchesCurrent -> Tone.accent.copy(alpha = 0.20f)
+                                                    isWatched -> Color.White.copy(alpha = 0.14f)
+                                                    else -> Color.White.copy(alpha = 0.08f)
+                                                }
                                             )
-                                            Spacer(Modifier.width(3.dp))
+                                            .then(
+                                                when {
+                                                    matchesCurrent -> Modifier.border(1.dp, Tone.accent, RoundedCornerShape(8.dp))
+                                                    !isCurrentlyPlaying && isWatched -> Modifier.border(0.5.dp, Tone.accent.copy(alpha = 0.55f), RoundedCornerShape(8.dp))
+                                                    else -> Modifier
+                                                }
+                                            )
+                                            .clickable {
+                                                if (selectedDrawerServerIdx == serverIdx) {
+                                                    if (i != epIdx) {
+                                                        saveCurrentProgress(currentPosition, duration)
+                                                        currentPosition = 0L
+                                                        pendingResumePositionMs = 0L
+                                                        epIdx = i
+                                                        lastLoadedEpIdx = i
+                                                        OnlinePlayerSession.episodeIndex = i
+                                                    }
+                                                } else {
+                                                    // Switching to another server from drawer
+                                                    val isSame = isSameEpisode(ep, currentEp)
+                                                    if (isSame) {
+                                                        val resumePos = maxOf(currentPosition, exoPlayer.currentPosition.coerceAtLeast(0L))
+                                                        saveCurrentProgress(resumePos, duration)
+                                                        if (resumePos > 1000L) {
+                                                            currentPosition = resumePos
+                                                            pendingResumePositionMs = resumePos
+                                                        }
+                                                    } else {
+                                                        saveCurrentProgress(currentPosition, duration)
+                                                        currentPosition = 0L
+                                                        pendingResumePositionMs = 0L
+                                                    }
+                                                    lastLoadedEpIdx = i
+                                                    autoRetryCount = 0
+                                                    errorMessage = null
+                                                    isLoading = true
+                                                    serverIdx = selectedDrawerServerIdx
+                                                    epIdx = i
+                                                    OnlinePlayerSession.serverIndex = selectedDrawerServerIdx
+                                                    OnlinePlayerSession.episodeIndex = i
+                                                    android.widget.Toast.makeText(
+                                                        context,
+                                                        "⚡ Đã chuyển sang ${drawerServer?.serverName} - ${ep.name}",
+                                                        android.widget.Toast.LENGTH_SHORT
+                                                    ).show()
+                                                }
+                                                showEpisodesSheet = false
+                                            }
+                                            .padding(vertical = 8.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.Center,
+                                            modifier = Modifier.padding(horizontal = 4.dp)
+                                        ) {
+                                            if (isCurrentlyPlaying) {
+                                                Text(
+                                                    text = "▶",
+                                                    color = Color.Black,
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                                Spacer(Modifier.width(3.dp))
+                                            } else if (isWatched) {
+                                                Text(
+                                                    text = "✓",
+                                                    color = if (matchesCurrent) Tone.accent else Tone.accent.copy(alpha = 0.8f),
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.ExtraBold
+                                                )
+                                                Spacer(Modifier.width(3.dp))
+                                            }
+                                            Text(
+                                                text = ep.name,
+                                                color = when {
+                                                    isCurrentlyPlaying -> Color.Black
+                                                    matchesCurrent -> Tone.accent
+                                                    else -> Color.White
+                                                },
+                                                fontSize = 13.sp,
+                                                fontWeight = if (isCurrentlyPlaying || matchesCurrent || isWatched) FontWeight.Bold else FontWeight.Normal,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
                                         }
-                                        Text(
-                                            text = ep.name,
-                                            color = if (isCurrent) Color.Black else Color.White,
-                                            fontSize = 13.sp,
-                                            fontWeight = if (isCurrent || isWatched) FontWeight.Bold else FontWeight.Normal,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
                                     }
                                 }
                             }
