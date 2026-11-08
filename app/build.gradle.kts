@@ -159,14 +159,11 @@ android {
             ?: ""
         buildConfigField("String", "OMDB_API_KEY", "\"$omdbKey\"")
 
-        // Donation links and the support card, all behind one switch (SupportReminder.enabled).
-        // The `play` flavor planned in CP35 sets this to false: Play does not allow donation links
-        // that bypass its billing.
-        buildConfigField("boolean", "SUPPORT_LINKS", "true")
+        // Donation links and the support card disabled permanently.
+        buildConfigField("boolean", "SUPPORT_LINKS", "false")
 
-        // The update check and the APK install that follows it, off in the F-Droid build (see
-        // fdroidBuild above): F-Droid is what updates that build.
-        buildConfigField("boolean", "UPDATE_CHECK", "${!fdroidBuild}")
+        // The update check and the APK install disabled permanently.
+        buildConfigField("boolean", "UPDATE_CHECK", "false")
 
         // English only. Every androidx and Media3 dependency ships translations for ~80
         // locales, and none of this app's own strings are translated, so the rest is dead

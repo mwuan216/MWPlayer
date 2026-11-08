@@ -124,7 +124,9 @@ fun AboutScreen(onBack: () -> Unit) {
         ) {
             item { Masthead() }
 
-            About.groups(Updates.installedVersion, supporter = supporter.supporter).forEachIndexed { index, group ->
+            About.groups(Updates.installedVersion, supporter = supporter.supporter)
+                .filterNot { it.support }
+                .forEachIndexed { index, group ->
                 item { SectionTitle(group.title) }
                 group.note?.let { note ->
                     item {
@@ -155,37 +157,6 @@ fun AboutScreen(onBack: () -> Unit) {
                             icon = TmIcons.List,
                             modifier = Modifier.focusRequester(first),
                             onClick = { reading = true },
-                        )
-                    }
-                }
-                // Buy Me a Coffee first and in its own yellow, then GitHub Sponsors, then the
-                // codes and the page that lists every way to help.
-                if (group.support) {
-                    item {
-                        CoffeeButton(
-                            onClick = { if (touch) open(About.Link(s.supportBuyCoffee, "", About.COFFEE)) else coffee = true },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = if (touch) 16.dp else 0.dp, vertical = 8.dp),
-                        )
-                    }
-                    item {
-                        ActionRow(
-                            title = s.supportSponsorGithub,
-                            subtitle = readableUrl(About.SPONSORS),
-                            icon = TmIcons.Favorite,
-                            onClick = { open(About.Link(s.supportSponsorGithub, "", About.SPONSORS)) },
-                        )
-                    }
-                }
-                // Both support links as codes on one screen, to scan from any device.
-                if (group.support) {
-                    item {
-                        ActionRow(
-                            title = s.aboutSupportQr,
-                            subtitle = s.aboutSupportQrDetail,
-                            icon = TmIcons.Favorite,
-                            onClick = { supporting = true },
                         )
                     }
                 }

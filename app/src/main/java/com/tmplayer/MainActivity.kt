@@ -576,10 +576,8 @@ class MainActivity : ComponentActivity() {
             intent.removeExtra(com.tmplayer.data.BackgroundChecks.EXTRA_OPEN_CHAT)
         }
         val asked = intent?.getStringExtra(EXTRA_OPEN) ?: return
-        // The sponsor reminder: the Buy Me a Coffee window, once the shell is free for it.
         if (asked == com.tmplayer.data.BackgroundChecks.OPEN_SUPPORT) {
             intent.removeExtra(EXTRA_OPEN)
-            SupportReminder.requestOpen()
             return
         }
         requestedScreen.value = asked
@@ -759,22 +757,8 @@ private fun Root() {
 
     val toast = rememberToast()
 
-    // The update check, on every launch and before sign in too: ten seconds after the first
-    // frame, then every six hours (see UpdateScheduler). Nothing is said unless there is genuinely
-    // a newer release; the drawer and the rail are where it turns up.
-    val updateState by Updates.state.collectAsStateWithLifecycle()
     var showUpdate by remember { mutableStateOf(false) }
-    val updates = remember { updateScheduler(context) }
-    LaunchedEffect(Unit) {
-        // Never in a build a store keeps up to date (Updates.enabled, the F-Droid build).
-        if (!Updates.enabled) return@LaunchedEffect
-        withFrameNanos { }
-        updates.run()
-    }
-    // Whatever stage the update is at, the item stays and reopens the popup. A skipped version
-    // that Settings re-offered stays out of the drawer and the rail.
-    val offeredUpdate = updateState.release?.version
-        ?.takeUnless { (updateState as? UpdateState.Available)?.skipped == true }
+    val offeredUpdate: String? = null
     // Given the settings store so the chat list can paint from the last sync's snapshot before
     // TDLib has finished opening its database. Held by the process rather than the activity, as is
     // Home below: the system destroys this activity behind the player whenever it is short of
@@ -796,38 +780,13 @@ private fun Root() {
     val gateUp = com.tmplayer.data.ChatsGate.up(chatsGate)
     val lifecycleState by LocalLifecycleOwner.current.lifecycle.currentStateAsState()
     val inShell = auth is AuthState.Ready && !setupPending && !gateUp && lifecycleState.isAtLeast(Lifecycle.State.RESUMED)
-    // The popup follows the item, once per version, two seconds after it appears. Not over the
-    // sign in screens and not over the player (another activity, which leaves this one stopped):
-    // either way the wait starts again once the shell is in front.
-    LaunchedEffect(offeredUpdate, inShell) {
-        val version = offeredUpdate ?: return@LaunchedEffect
-        if (!inShell) return@LaunchedEffect
-        delay(UpdateScheduler.POPUP_DELAY_MS)
-        if (updates.shouldPopUp(version)) {
-            updates.popupShown(version)
-            showUpdate = true
-        }
-    }
 
-    // The one-time "Now in Español" card, the language picker it offers, and "What's new" on the
-    // first run of a version with highlights. All three wait for the shell: none of them is for
-    // the tour or the sign in screens.
+    // The one-time "Now in Español" card and the language picker it offers.
     val languageNotice = rememberLanguageNotice(settings)
     var pickingLanguage by remember { mutableStateOf(false) }
-    val whatsNew = rememberWhatsNew(settings, BuildConfig.VERSION_NAME, hold = !inShell)
-    // "Updated to 1.29.0", once, on the first launch after TMPlayer updated itself (HX5). A pill
-    // at the top that takes no focus, so a remote starts where it always does.
-    LaunchedEffect(inShell) {
-        if (!inShell) return@LaunchedEffect
-        val updated = runCatching { com.tmplayer.data.AfterUpdate.onLaunch(context) }.getOrNull() ?: return@LaunchedEffect
-        toast(com.tmplayer.i18n.L.updateUpdatedTo(version = updated))
-    }
+    val whatsNew = rememberWhatsNew(settings, BuildConfig.VERSION_NAME, hold = true)
     var changelogQr by remember { mutableStateOf(false) }
 
-    // The Buy Me a Coffee window: after real use, at most every two weeks, and only at a good
-    // moment (a video watched to the end, a download finished) while this list or Downloads is up,
-    // never in the player or over another window; or at once when its notification is pressed.
-    // The rules and counters are SupportReminder's. [supportRung] is 1 while it is up, else 0.
     var supportRung by remember { mutableStateOf(0) }
     // "New videos in starred chats", offered once, on a phone, just after a chat was starred.
     var newVideoOffer by remember { mutableStateOf(false) }
@@ -838,31 +797,6 @@ private fun Root() {
     }
     var supportCounters by remember { mutableStateOf(SupportReminder.Counters()) }
     var supporting by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(Unit) { runCatching { settings.noteSupportFirstSeen(System.currentTimeMillis()) } }
-    // Finished videos are counted here, in the process, so a watch counts even while a screen is
-    // being rebuilt behind the player.
-    // The notification permission, asked for once, after the first video watched to the end: the
-    // notifications that are on from the start (new episodes, downloads, low storage, updates, the
-    // support ask) can only reach someone who has allowed them, and launch is the wrong moment.
-    val askNotifications = androidx.activity.compose.rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
-    ) { }
-    LaunchedEffect(Unit) {
-        SupportReminder.finished.collect { done ->
-            runCatching { settings.noteSupportCompleted(done.key, done.at) }
-            if (
-                android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU &&
-                !FormFactor.isTv(context) &&
-                !com.tmplayer.data.BackgroundChecks.canNotify(context)
-            ) {
-                val once = context.getSharedPreferences(ONCE_PREFS, android.content.Context.MODE_PRIVATE)
-                if (!once.getBoolean(ASKED_NOTIFICATIONS, false)) {
-                    once.edit().putBoolean(ASKED_NOTIFICATIONS, true).apply()
-                    runCatching { askNotifications.launch(android.Manifest.permission.POST_NOTIFICATIONS) }
-                }
-            }
-        }
-    }
 
     // The downloads an earlier run of the app was in the middle of, back on the Downloads screen
     // as paused rows. Waits for TDLib, because restoring asks it how much of each file is actually
@@ -1036,7 +970,6 @@ private fun Root() {
                 if (auth is AuthState.Ready) {
                     chatsViewModel.load()
                     homeViewModel.refreshInPlace()
-                    updates.checkIfDue()
                 }
             }
             // Online, signed in, and the line to Telegram is down: back from the background, most
@@ -1119,49 +1052,8 @@ private fun Root() {
         screen = Screen.Downloads
         MainActivity.requestedScreen.value = null
     }
-    val supportMoment by SupportReminder.moment.collectAsStateWithLifecycle()
-    val supportScreen = screen is Screen.Chats || screen is Screen.Downloads
-    var supportForcedShown by remember { mutableStateOf(false) }
-    val supportOpenRequested by SupportReminder.openRequested.collectAsStateWithLifecycle()
     val crashAsking = CrashReports.pending.collectAsStateWithLifecycle().value != null
-    // Anything else up: the update, the language notice, the crash question, What's new, the
-    // support page's own codes. The window waits for all of them.
     val otherWindowUp = showUpdate || languageNotice.language != null || crashAsking || whatsNew.showing || supporting != null
-    LaunchedEffect(supportMoment, supportOpenRequested, supportScreen, inShell, otherWindowUp, supportRung) {
-        if (!inShell || !supportScreen || otherWindowUp || supportRung != 0) {
-            return@LaunchedEffect
-        }
-        if (supportOpenRequested) {
-            // The notification was pressed: the window the viewer asked for, counted as an ask.
-            delay(SUPPORT_CARD_DELAY_MS / 4)
-            if (!SupportReminder.takeOpenRequest()) return@LaunchedEffect
-            val now = System.currentTimeMillis()
-            supportCounters = runCatching { settings.supportCountersNow() }.getOrNull() ?: SupportReminder.Counters()
-            runCatching { settings.recordSupportAsk(now) }
-            SupportReminder.sessionShown = true
-            supportRung = 1
-            return@LaunchedEffect
-        }
-        val forced = SupportReminder.forcedRung
-        if (forced > 0) {
-            // A debug build asked for this rung's card: once, after the list has settled.
-            if (supportForcedShown) return@LaunchedEffect
-            delay(SUPPORT_CARD_DELAY_MS)
-            supportForcedShown = true
-            supportCounters = SupportReminder.Counters(completedWatches = 7, watchTimeMs = 11L * 60 * 60 * 1000)
-            supportRung = forced
-            return@LaunchedEffect
-        }
-        if (supportMoment == 0L) return@LaunchedEffect
-        delay(SUPPORT_CARD_DELAY_MS)
-        if (!SupportReminder.takeMoment(System.currentTimeMillis())) return@LaunchedEffect
-        val now = System.currentTimeMillis()
-        val counters = runCatching { settings.supportCountersNow() }.getOrNull() ?: return@LaunchedEffect
-        if (runCatching { SupportReminder.claim(settings, now) }.getOrDefault(false)) {
-            supportCounters = counters
-            supportRung = 1
-        }
-    }
     // Saveable, not just remembered. Playing a video puts a second activity in front of this one
     // and a 1 GB stick will kill what is behind it, so this composable is routinely rebuilt on the
     // way back. Remembered state would come back false, the jump would re-arm, and Back out of the
@@ -2484,10 +2376,6 @@ private fun Root() {
             )
         }
 
-        if (showUpdate) {
-            UpdateDialog(onDismiss = { showUpdate = false; Updates.dismiss() })
-        }
-
         val crashQuestion by CrashReports.pending.collectAsStateWithLifecycle()
         val crashPending = crashQuestion != null
         crashQuestion?.let { question -> if (!showUpdate) CrashQuestion(question, settings) }
@@ -2516,15 +2404,6 @@ private fun Root() {
             TvBrowseHint(
                 keys = remoteKeys,
                 modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 40.dp),
-            )
-        }
-        if (whatsNew.showing && !showUpdate) {
-            WhatsNewDialog(
-                onClose = { whatsNew.showing = false },
-                onChangelog = {
-                    whatsNew.showing = false
-                    if (!openLink(context, WhatsNew.CHANGELOG)) changelogQr = true
-                },
             )
         }
         // The quick tour, offered once to an install that was signed in before it existed (CP69): a
@@ -2571,18 +2450,6 @@ private fun Root() {
                 },
             )
         }
-        if (supportRung > 0 && noticeLanguage == null && (screen is Screen.Chats || screen is Screen.Downloads) && !showUpdate) {
-            CoffeeDialog(
-                counters = supportCounters,
-                asking = true,
-                onLater = { supportRung = 0 },
-                onNever = {
-                    supportRung = 0
-                    if (SupportReminder.forcedRung == 0) scope.launch { runCatching { settings.markSupportNever() } }
-                },
-            )
-        }
-        supporting?.let { from -> SupportDialog(from = from, onClose = { supporting = null }) }
 
         ConnectionStatus(
             notice = connectionNotice,

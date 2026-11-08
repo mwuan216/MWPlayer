@@ -60,8 +60,8 @@ class App : Application() {
         // The clock Home's first paint is timed against (adb logcat -s tm-perf).
         com.tmplayer.data.PerfLog.processStart
         Updates.configureForAndroid(this)
-        Updates.enabled = BuildConfig.UPDATE_CHECK
-        SupportReminder.enabled = BuildConfig.SUPPORT_LINKS
+        Updates.enabled = false
+        SupportReminder.enabled = false
         // The UI language: the Settings choice, else the system's list, else English. Before the
         // promo return, so the screenshot fixture speaks whatever the emulator is set to. Only a
         // debug build may pick the en-XA pseudo-locale.

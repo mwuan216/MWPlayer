@@ -113,11 +113,9 @@ class BackgroundChecks : JobService() {
                     settings.noticeOnNow(Notice.NewEpisodes) ||
                     settings.noticeOnNow(Notice.MissingPieces)
                 )
-            val sponsor = SupportReminder.enabled && settings.sponsorRemindersNow() &&
-                !settings.supportCountersNow().finished
-            val daily = !tv && (sponsor || settings.noticeOnNow(Notice.LowStorage))
-            val updates = !tv && Updates.enabled &&
-                (settings.noticeOnNow(Notice.UpdateReady) || (AutoUpdater.supported && settings.updateAutoInstallNow()))
+            val sponsor = false
+            val daily = !tv && settings.noticeOnNow(Notice.LowStorage)
+            val updates = false
             // Waiting for the battery is Android 8's; on 6 and 7 the checks run on schedule, which
             // a television plugged into the wall does not notice.
             ensure(context, scheduler, JOB_NEW_VIDEOS, chats) { component ->
@@ -218,53 +216,12 @@ class BackgroundChecks : JobService() {
             AppNotices.postLowStorage(context, words.first, words.second)
         }
 
-        /**
-         * A new version: installed by itself where the viewer asked for that (HX5), which ends the
-         * process when it does; else said once, while the app is closed.
-         */
         suspend fun checkUpdate(context: Context) {
-            if (App.inFront) return
-            if (runCatching { AutoUpdater.runIfDue(context) }.getOrDefault(false)) return
-            if (!AppNotices.allowed(context, Notice.UpdateReady)) return
-            val release = UpdateAlerts.check(SettingsStore(context)) { App.inFront } ?: return
-            AppNotices.postUpdate(context, release)
+            return
         }
 
-        /**
-         * The support notification, if it is due and would be seen: first a star on its own, then
-         * "Don't forget to sponsor", with Buy me a coffee, Star on GitHub (until pressed) and Not
-         * now. Pressing it opens the window.
-         */
         suspend fun checkSponsorNudge(context: Context) {
-            if (FormFactor.isTv(context) || App.inFront || !canNotify(context)) return
-            val settings = SettingsStore(context)
-            val rung = SupportReminder.claimNudgeRung(settings, System.currentTimeMillis()) ?: return
-            val counters = settings.supportCountersNow()
-            ensureChannels(context)
-            val star = rung == SupportReminder.NudgeRung.Star
-            val title = if (star) L.notifyStarTitle else L.notifySponsorTitle
-            val body = if (star) L.notifyStarBody else L.notifySponsorBody
-            val builder = notificationBuilder(context, CHANNEL_NEWS, OldAndroid.IMPORTANCE_LOW)
-                .setSmallIcon(R.drawable.ic_stat_support)
-                .setContentTitle(title)
-                .setContentText(body)
-                .setStyle(Notification.BigTextStyle().bigText(body))
-                .setContentIntent(AppNotices.open(context, NOTIFY_SPONSOR) { it.putExtra(MainActivity.EXTRA_OPEN, OPEN_SUPPORT) })
-                .setAutoCancel(true)
-            if (!star) {
-                builder.addAction(
-                    AppNotices.action(context, R.drawable.ic_stat_support, L.supportBuyCoffee, NoticeActions.link(context, NoticeActions.LINK_COFFEE, NOTIFY_SPONSOR)),
-                )
-            }
-            if (SupportReminder.offersStar(counters, rung)) {
-                builder.addAction(
-                    AppNotices.action(context, R.drawable.ic_stat_support, L.supportStarGithub, NoticeActions.link(context, NoticeActions.LINK_STAR, NOTIFY_SPONSOR)),
-                )
-            }
-            builder.addAction(
-                AppNotices.action(context, R.drawable.ic_notify_cancel, L.notifyActionNotNow, NoticeActions.dismiss(context, NOTIFY_SPONSOR)),
-            )
-            runCatching { manager(context).notify(NOTIFY_SPONSOR, builder.build()) }
+            return
         }
 
         private fun postNewVideos(context: Context, alert: NewVideoAlerts.Alert) {

@@ -1443,10 +1443,6 @@ fun SettingsScreen(
                     add(Triple(Notice.NewEpisodes, s.settingsAlertEpisodes, s.settingsAlertEpisodesDetail))
                     add(Triple(Notice.NewVideos, s.settingsNewVideos, s.settingsNewVideosDetail))
                     add(Triple(Notice.MissingPieces, s.settingsAlertPieces, s.settingsAlertPiecesDetail))
-                    if (Updates.enabled) add(Triple(Notice.UpdateReady, s.settingsAlertUpdate, s.settingsAlertUpdateDetail))
-                    if (SupportReminder.enabled && !supportCounters.finished) {
-                        add(Triple(Notice.Support, s.settingsSponsorReminders, s.settingsSponsorRemindersDetail))
-                    }
                 }
                 noticeRows.forEachIndexed { index, (notice, title, detail) ->
                     item(key = "notice-${notice.name}") {
