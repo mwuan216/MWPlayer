@@ -939,7 +939,7 @@ fun OnlinePlayerScreen(
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(24.dp))
-                        .background(Color.Black.copy(alpha = 0.75f))
+                        .background(Color.Black.copy(alpha = 0.22f))
                         .padding(horizontal = 18.dp, vertical = 12.dp)
                 ) {
                     Text(
@@ -960,13 +960,14 @@ fun OnlinePlayerScreen(
                     .statusBarsPadding()
                     .padding(top = 16.dp)
                     .clip(RoundedCornerShape(16.dp))
-                    .background(Tone.accent)
+                    .background(Color.Black.copy(alpha = 0.22f))
+                    .border(0.8.dp, Color.White.copy(alpha = 0.20f), RoundedCornerShape(20.dp))
                     .padding(horizontal = 16.dp, vertical = 6.dp)
             ) {
                 Text(
                     text = "2.0x  ▶▶",
-                    color = Color.Black,
-                    fontSize = 13.sp,
+                    color = Color.White.copy(alpha = 0.90f),
+                    fontSize = 12.sp,
                     fontWeight = FontWeight.Bold
                 )
             }
@@ -1426,7 +1427,7 @@ fun OnlinePlayerScreen(
                                     applySubtitleSelection(null, false)
                                     showSubtitleSheet = false
                                 }
-                                .padding(horizontal = 16.dp, vertical = 10.dp),
+                                .padding(8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
@@ -1455,7 +1456,7 @@ fun OnlinePlayerScreen(
                                         applySubtitleSelection(sub, true)
                                         showSubtitleSheet = false
                                     }
-                                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                                    .padding(8.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
@@ -1620,7 +1621,7 @@ fun OnlinePlayerScreen(
                 Surface(
                     modifier = Modifier
                         .fillMaxHeight()
-                        .fillMaxWidth(0.55f)
+                        .fillMaxWidth(0.4f)
                         .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {},
                     color = Tone.surface,
                     shape = RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp)
@@ -1685,7 +1686,7 @@ fun OnlinePlayerScreen(
                         // Episodes Grid
                         val playerProgress = if (!isAv) MovieStore.getProgress(detail.movie.slug) else null
                         LazyVerticalGrid(
-                            columns = GridCells.Fixed(3),
+                            columns = GridCells.Fixed(4),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                             modifier = Modifier.weight(1f)
@@ -1714,7 +1715,7 @@ fun OnlinePlayerScreen(
                                             OnlinePlayerSession.episodeIndex = i
                                             showEpisodesSheet = false
                                         }
-                                        .padding(vertical = 12.dp),
+                                        .padding(vertical = 8.dp),
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
