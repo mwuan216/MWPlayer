@@ -19,9 +19,14 @@
      ```
 
 ## Quy tắc với Project Android (Mobile App):
-- **Tối ưu thời gian xử lý & Tốc độ thực thi:**
-  - Bỏ qua toàn bộ các bước run test (Unit test, UI/Instrumented test, lint check...), tuyệt đối không chạy các lệnh test tốn thời gian.
-  - Quy trình thực thi tinh gọn: **Analyze (Phân tích) ➔ Sửa code ➔ Build APK ➔ Gửi APK qua Telegram**.
+- **Tối ưu thời gian xử lý & Tốc độ thực thi (Bắt buộc):**
+  - Bỏ qua toàn bộ các bước run test (Unit test, UI/Instrumented test, lint check...), tuyệt đối không chạy các lệnh test tốn thời gian (`-x test -x lint`).
+  - **Gọi công cụ song song (Batch Parallel Tool Calls):**
+    - Tuyệt đối không đọc/sửa từng file nhỏ lẻ qua nhiều vòng lặp (turns).
+    - Trong 1 turn phân tích: phải gom tất cả các lệnh `read_file` cần thiết vào **cùng 1 lượt gọi song song**.
+    - Trong 1 turn chỉnh sửa: phải gom tất cả các lệnh `edit_file` / `write_file` trên các file khác nhau vào **cùng 1 lượt gọi song song**.
+  - **Gộp lệnh Hoàn tất (Single-Command Pipeline):**
+    - Quy trình thực thi tinh gọn: **Analyze (1-2 turns) ➔ Sửa code (1-2 turns) ➔ Build APK ➔ Gộp Copy APK + Git Commit/Push + Gửi Telegram trong 1 lệnh duy nhất**.
 - **Build APK & Gửi Telegram:**
   - Sau khi hoàn thành sửa code, commit và `git push` thành công:
     - Bắt buộc tiến hành build file APK (`./gradlew assembleDebug` hoặc build tool tương ứng của project).
