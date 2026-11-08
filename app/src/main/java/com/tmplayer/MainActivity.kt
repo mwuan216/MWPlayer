@@ -1168,7 +1168,7 @@ private fun Root() {
     var lastChatsKey by rememberSaveable { mutableStateOf("") }
     LaunchedEffect(pickedTab) { if (pickedTab?.onChatsPage == true) lastChatsKey = pickedTabKey }
     val homeLayout by remember { settings.homeLayout }.collectAsStateWithLifecycle(initialValue = null)
-    val homeEnabled = homeLayout?.enabled ?: true
+    val homeEnabled = homeLayout?.enabled ?: false
     // Home's own background work (a post in one of its chats, a retry, the posters looked up
     // ahead) waits while Home is not on screen (HX8).
     val homeOnScreen = shellInFront && homeEnabled && screen is Screen.Chats && (pickedTab == null || pickedTab.isHome)

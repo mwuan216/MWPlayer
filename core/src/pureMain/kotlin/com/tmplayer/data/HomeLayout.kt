@@ -21,7 +21,7 @@ data class HomeLayout(
     val continueWatching: Boolean = true,
     val recentlyAdded: Boolean = true,
     val starredRows: Boolean = true,
-    val enabled: Boolean = true,
+    val enabled: Boolean = false,
 ) {
     /** Whether Recently added's videos are wanted at all: for its row or for the carousel. */
     val needsRecent: Boolean get() = enabled && (carousel || recentlyAdded)
@@ -50,7 +50,7 @@ data class HomeLayout(
             continueWatching = continueWatching ?: true,
             recentlyAdded = recentlyAdded ?: true,
             starredRows = starredRows ?: true,
-            enabled = enabled ?: true,
+            enabled = enabled ?: false,
         )
 
         /**

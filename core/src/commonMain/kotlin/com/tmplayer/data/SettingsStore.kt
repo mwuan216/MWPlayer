@@ -79,7 +79,7 @@ private val DEVICE_HINT_SHOWN = booleanPreferencesKey("device_hint_shown")
 private val TRICKPLAY = booleanPreferencesKey("trickplay")
 private val WATCH_NEXT = booleanPreferencesKey("watch_next")
 private val TV_CHANNELS = booleanPreferencesKey("tv_channels")
-private val HOME_ENABLED = booleanPreferencesKey("home_enabled")
+private val HOME_ENABLED = booleanPreferencesKey("home_enabled_v2")
 private val HOME_CAROUSEL = booleanPreferencesKey("home_carousel")
 private val HOME_CONTINUE = booleanPreferencesKey("home_continue")
 private val HOME_RECENT = booleanPreferencesKey("home_recent")
@@ -1358,7 +1358,7 @@ class SettingsStore(private val prefs: DataStore<Preferences>) : AllowedChatsSou
         prefs.edit { it[TV_CHANNELS] = value }
     }
 
-    val homeEnabled: Flow<Boolean> = read { it[HOME_ENABLED] ?: true }
+    val homeEnabled: Flow<Boolean> = read { it[HOME_ENABLED] ?: false }
 
     suspend fun setHomeEnabled(value: Boolean) {
         prefs.edit { it[HOME_ENABLED] = value }
