@@ -1106,10 +1106,11 @@ private fun AvDetailWithInlinePlayer(
     var isMuted by remember { mutableStateOf(false) }
     var currentPosMs by remember(movie.slug) { mutableLongStateOf(0L) }
     var durationMs by remember(movie.slug) { mutableLongStateOf(0L) }
-    var showPlayerControls by remember { mutableStateOf(true) }
+    var showPlayerControls by remember { mutableStateOf(false) }
     var lastControlTapMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var initialSeekApplied by remember(movie.slug, serverIdx, epIdx) { mutableStateOf(false) }
-    var seekToastLabel by remember { mutableStateOf<String?>(null) }
+    var isQuickSeeking by remember { mutableStateOf(false) }
+    var lastQuickSeekMs by remember { mutableLongStateOf(0L) }
     var streamError by remember(movie.slug, serverIdx, epIdx) { mutableStateOf<String?>(null) }
     var retryTrigger by remember(movie.slug) { mutableIntStateOf(0) }
 
@@ -1211,6 +1212,7 @@ private fun AvDetailWithInlinePlayer(
                 isBuffering = (state == Player.STATE_BUFFERING)
                 if (state == Player.STATE_READY) {
                     isBuffering = false
+                    isQuickSeeking = false
                     streamError = null
                     durationMs = exoPlayer.duration.coerceAtLeast(0L)
                     if (!initialSeekApplied) {
@@ -1222,10 +1224,20 @@ private fun AvDetailWithInlinePlayer(
                         }
                     }
                 }
+                isPlaying = exoPlayer.playWhenReady && state != Player.STATE_ENDED
+            }
+
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                isPlaying = playWhenReady && exoPlayer.playbackState != Player.STATE_ENDED
             }
 
             override fun onIsPlayingChanged(playing: Boolean) {
-                isPlaying = playing
+                if (playing) {
+                    isPlaying = true
+                    isQuickSeeking = false
+                } else if (!exoPlayer.playWhenReady || exoPlayer.playbackState == Player.STATE_ENDED) {
+                    isPlaying = false
+                }
             }
 
             override fun onPlayerError(error: PlaybackException) {
@@ -1318,21 +1330,22 @@ private fun AvDetailWithInlinePlayer(
         }
     }
 
-    // Clear quick-seek toast label
-    LaunchedEffect(seekToastLabel) {
-        if (seekToastLabel != null) {
-            delay(900)
-            seekToastLabel = null
+    // Clear quick-seek buffering suppression after timeout
+    LaunchedEffect(lastQuickSeekMs) {
+        if (lastQuickSeekMs > 0L) {
+            delay(1500)
+            isQuickSeeking = false
         }
     }
 
-    fun seekByDelta(deltaMs: Long, label: String) {
+    fun seekByDelta(deltaMs: Long, @Suppress("UNUSED_PARAMETER") label: String = "") {
         val dur = exoPlayer.duration.takeIf { it > 0L } ?: durationMs.takeIf { it > 0L } ?: Long.MAX_VALUE
         val target = (exoPlayer.currentPosition + deltaMs).coerceIn(0L, dur)
+        isQuickSeeking = true
+        lastQuickSeekMs = System.currentTimeMillis()
+        showPlayerControls = false
         exoPlayer.seekTo(target)
         currentPosMs = target
-        seekToastLabel = label
-        lastControlTapMs = System.currentTimeMillis()
     }
 
     fun launchLandscapeFullscreen() {
@@ -1437,28 +1450,13 @@ private fun AvDetailWithInlinePlayer(
                 )
             }
 
-            // Center Play/Pause or Buffering Spinner or Seek Feedback
+            // Center Play/Pause or Buffering Spinner
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
             ) {
                 when {
-                    seekToastLabel != null -> {
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(20.dp))
-                                .background(Color.Black.copy(alpha = 0.78f))
-                                .padding(horizontal = 16.dp, vertical = 8.dp)
-                        ) {
-                            Text(
-                                text = seekToastLabel!!,
-                                color = Tone.accent,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 15.sp
-                            )
-                        }
-                    }
-                    isLoading || isStreamLoading || isBuffering -> {
+                    isLoading || isStreamLoading || (isBuffering && !isQuickSeeking) -> {
                         CircularProgressIndicator(
                             color = Tone.accent,
                             strokeWidth = 3.dp,
@@ -1489,7 +1487,7 @@ private fun AvDetailWithInlinePlayer(
                             }
                         }
                     }
-                    showPlayerControls || !isPlaying -> {
+                    showPlayerControls -> {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(28.dp)
@@ -1499,14 +1497,15 @@ private fun AvDetailWithInlinePlayer(
                                 modifier = Modifier
                                     .size(44.dp)
                                     .clip(CircleShape)
-                                    .background(Color.Black.copy(alpha = 0.55f))
+                                    .background(Color.Black.copy(alpha = 0.22f))
+                                    .border(0.8.dp, Color.White.copy(alpha = 0.25f), CircleShape)
                                     .clickable {
                                         lastControlTapMs = System.currentTimeMillis()
                                         val eps = currentServer?.episodes ?: emptyList()
                                         if (eps.size > 1 && epIdx > 0) {
                                             epIdx -= 1
                                         } else {
-                                            seekByDelta(-10_000L, "⏪ -10s")
+                                            seekByDelta(-10_000L)
                                         }
                                     },
                                 contentAlignment = Alignment.Center
@@ -1514,20 +1513,21 @@ private fun AvDetailWithInlinePlayer(
                                 Icon(
                                     imageVector = TmIcons.SkipPrevious,
                                     contentDescription = "Tập trước",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(24.dp)
+                                    tint = Color.White.copy(alpha = 0.85f),
+                                    modifier = Modifier.size(22.dp)
                                 )
                             }
 
-                            // Center Play/Pause button
+                            // Center Play/Pause button (Translucent so video beneath remains visible)
                             Box(
                                 modifier = Modifier
                                     .size(54.dp)
                                     .clip(CircleShape)
-                                    .background(Tone.accent.copy(alpha = 0.95f))
+                                    .background(Color.Black.copy(alpha = 0.24f))
+                                    .border(1.dp, Color.White.copy(alpha = 0.30f), CircleShape)
                                     .clickable {
                                         lastControlTapMs = System.currentTimeMillis()
-                                        if (exoPlayer.isPlaying) {
+                                        if (exoPlayer.playWhenReady && exoPlayer.playbackState != Player.STATE_ENDED) {
                                             exoPlayer.pause()
                                         } else {
                                             exoPlayer.play()
@@ -1538,7 +1538,7 @@ private fun AvDetailWithInlinePlayer(
                                 Icon(
                                     imageVector = if (isPlaying) TmIcons.PauseSolid else TmIcons.PlaySolid,
                                     contentDescription = if (isPlaying) "Tạm dừng" else "Phát",
-                                    tint = Color.Black,
+                                    tint = Color.White.copy(alpha = 0.88f),
                                     modifier = Modifier.size(26.dp)
                                 )
                             }
@@ -1548,14 +1548,15 @@ private fun AvDetailWithInlinePlayer(
                                 modifier = Modifier
                                     .size(44.dp)
                                     .clip(CircleShape)
-                                    .background(Color.Black.copy(alpha = 0.55f))
+                                    .background(Color.Black.copy(alpha = 0.22f))
+                                    .border(0.8.dp, Color.White.copy(alpha = 0.25f), CircleShape)
                                     .clickable {
                                         lastControlTapMs = System.currentTimeMillis()
                                         val eps = currentServer?.episodes ?: emptyList()
                                         if (eps.size > 1 && epIdx + 1 < eps.size) {
                                             epIdx += 1
                                         } else {
-                                            seekByDelta(10_000L, "⏩ +10s")
+                                            seekByDelta(10_000L)
                                         }
                                     },
                                 contentAlignment = Alignment.Center
@@ -1563,8 +1564,8 @@ private fun AvDetailWithInlinePlayer(
                                 Icon(
                                     imageVector = TmIcons.SkipNext,
                                     contentDescription = "Tập tiếp",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(24.dp)
+                                    tint = Color.White.copy(alpha = 0.85f),
+                                    modifier = Modifier.size(22.dp)
                                 )
                             }
                         }
@@ -1574,7 +1575,7 @@ private fun AvDetailWithInlinePlayer(
 
             // Top bar overlay inside player: Back button + Server switcher + Fullscreen button
             androidx.compose.animation.AnimatedVisibility(
-                visible = showPlayerControls || !isPlaying,
+                visible = showPlayerControls,
                 enter = fadeIn(),
                 exit = fadeOut(),
                 modifier = Modifier.align(Alignment.TopCenter)
@@ -1584,7 +1585,7 @@ private fun AvDetailWithInlinePlayer(
                         .fillMaxWidth()
                         .background(
                             Brush.verticalGradient(
-                                listOf(Color.Black.copy(alpha = 0.7f), Color.Transparent)
+                                listOf(Color.Black.copy(alpha = 0.35f), Color.Transparent)
                             )
                         )
                         .padding(horizontal = 10.dp, vertical = 8.dp),
@@ -1599,21 +1600,22 @@ private fun AvDetailWithInlinePlayer(
                             modifier = Modifier
                                 .size(34.dp)
                                 .clip(CircleShape)
-                                .background(Color.Black.copy(alpha = 0.6f))
+                                .background(Color.Black.copy(alpha = 0.25f))
+                                .border(0.8.dp, Color.White.copy(alpha = 0.22f), CircleShape)
                                 .clickable(onClick = onBack),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = TmIcons.ArrowBack,
                                 contentDescription = "Quay lại",
-                                tint = Color.White,
+                                tint = Color.White.copy(alpha = 0.88f),
                                 modifier = Modifier.size(18.dp)
                             )
                         }
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(6.dp))
-                                .background(Tone.accent)
+                                .background(Tone.accent.copy(alpha = 0.72f))
                                 .padding(horizontal = 7.dp, vertical = 2.dp)
                         ) {
                             Text(
@@ -1633,13 +1635,13 @@ private fun AvDetailWithInlinePlayer(
                                 Box(
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(12.dp))
-                                        .background(if (active) Tone.accent else Color.Black.copy(alpha = 0.6f))
+                                        .background(if (active) Tone.accent.copy(alpha = 0.72f) else Color.Black.copy(alpha = 0.28f))
                                         .clickable { serverIdx = idx }
                                         .padding(horizontal = 8.dp, vertical = 4.dp)
                                 ) {
                                     Text(
                                         text = srv.serverName,
-                                        color = if (active) Color.Black else Color.White,
+                                        color = if (active) Color.Black else Color.White.copy(alpha = 0.9f),
                                         fontSize = 10.sp,
                                         fontWeight = FontWeight.Bold
                                     )
@@ -1652,7 +1654,7 @@ private fun AvDetailWithInlinePlayer(
 
             // Bottom control bar inside player (matching MissAV screenshot 1: ⏪ ▶ ⏩ [slider] 00:00 🔊 ⛶)
             androidx.compose.animation.AnimatedVisibility(
-                visible = showPlayerControls || !isPlaying,
+                visible = showPlayerControls,
                 enter = fadeIn(),
                 exit = fadeOut(),
                 modifier = Modifier.align(Alignment.BottomCenter)
@@ -1662,7 +1664,7 @@ private fun AvDetailWithInlinePlayer(
                         .fillMaxWidth()
                         .background(
                             Brush.verticalGradient(
-                                listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f))
+                                listOf(Color.Transparent, Color.Black.copy(alpha = 0.42f))
                             )
                         )
                         .padding(horizontal = 10.dp, vertical = 4.dp),
@@ -1674,14 +1676,14 @@ private fun AvDetailWithInlinePlayer(
                         modifier = Modifier
                             .size(30.dp)
                             .clip(CircleShape)
-                            .background(Color.Black.copy(alpha = 0.4f))
+                            .background(Color.Black.copy(alpha = 0.20f))
                             .clickable {
                                 lastControlTapMs = System.currentTimeMillis()
                                 val eps = currentServer?.episodes ?: emptyList()
                                 if (eps.size > 1 && epIdx > 0) {
                                     epIdx -= 1
                                 } else {
-                                    seekByDelta(-10_000L, "⏪ -10s")
+                                    seekByDelta(-10_000L)
                                 }
                             },
                         contentAlignment = Alignment.Center
@@ -1689,7 +1691,7 @@ private fun AvDetailWithInlinePlayer(
                         Icon(
                             imageVector = TmIcons.SkipPrevious,
                             contentDescription = "Tập trước",
-                            tint = Color.White,
+                            tint = Color.White.copy(alpha = 0.85f),
                             modifier = Modifier.size(17.dp)
                         )
                     }
@@ -1699,17 +1701,21 @@ private fun AvDetailWithInlinePlayer(
                         modifier = Modifier
                             .size(30.dp)
                             .clip(CircleShape)
-                            .background(Color.Black.copy(alpha = 0.4f))
+                            .background(Color.Black.copy(alpha = 0.20f))
                             .clickable {
                                 lastControlTapMs = System.currentTimeMillis()
-                                if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                                if (exoPlayer.playWhenReady && exoPlayer.playbackState != Player.STATE_ENDED) {
+                                    exoPlayer.pause()
+                                } else {
+                                    exoPlayer.play()
+                                }
                             },
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = if (isPlaying) TmIcons.PauseSolid else TmIcons.PlaySolid,
                             contentDescription = if (isPlaying) "Tạm dừng" else "Phát",
-                            tint = Tone.accent,
+                            tint = Tone.accent.copy(alpha = 0.88f),
                             modifier = Modifier.size(19.dp)
                         )
                     }
@@ -1719,14 +1725,14 @@ private fun AvDetailWithInlinePlayer(
                         modifier = Modifier
                             .size(30.dp)
                             .clip(CircleShape)
-                            .background(Color.Black.copy(alpha = 0.4f))
+                            .background(Color.Black.copy(alpha = 0.20f))
                             .clickable {
                                 lastControlTapMs = System.currentTimeMillis()
                                 val eps = currentServer?.episodes ?: emptyList()
                                 if (eps.size > 1 && epIdx + 1 < eps.size) {
                                     epIdx += 1
                                 } else {
-                                    seekByDelta(10_000L, "⏩ +10s")
+                                    seekByDelta(10_000L)
                                 }
                             },
                         contentAlignment = Alignment.Center
@@ -1734,7 +1740,7 @@ private fun AvDetailWithInlinePlayer(
                         Icon(
                             imageVector = TmIcons.SkipNext,
                             contentDescription = "Tập tiếp",
-                            tint = Color.White,
+                            tint = Color.White.copy(alpha = 0.85f),
                             modifier = Modifier.size(17.dp)
                         )
                     }
@@ -1752,9 +1758,9 @@ private fun AvDetailWithInlinePlayer(
                             }
                         },
                         colors = SliderDefaults.colors(
-                            thumbColor = Color.White,
-                            activeTrackColor = Tone.accent,
-                            inactiveTrackColor = Color.White.copy(alpha = 0.3f)
+                            thumbColor = Color.White.copy(alpha = 0.9f),
+                            activeTrackColor = Tone.accent.copy(alpha = 0.85f),
+                            inactiveTrackColor = Color.White.copy(alpha = 0.25f)
                         ),
                         modifier = Modifier
                             .weight(1f)
@@ -1764,7 +1770,7 @@ private fun AvDetailWithInlinePlayer(
                     // Time label
                     Text(
                         text = formatAvTime(currentPosMs),
-                        color = Color.White,
+                        color = Color.White.copy(alpha = 0.88f),
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Medium
                     )
@@ -1774,7 +1780,7 @@ private fun AvDetailWithInlinePlayer(
                         modifier = Modifier
                             .size(30.dp)
                             .clip(CircleShape)
-                            .background(Color.Black.copy(alpha = 0.4f))
+                            .background(Color.Black.copy(alpha = 0.20f))
                             .clickable {
                                 isMuted = !isMuted
                                 exoPlayer.volume = if (isMuted) 0f else 1f
@@ -1784,7 +1790,7 @@ private fun AvDetailWithInlinePlayer(
                         Icon(
                             imageVector = if (isMuted) TmIcons.VolumeOff else TmIcons.VolumeUp,
                             contentDescription = if (isMuted) "Bật âm thanh" else "Tắt âm thanh",
-                            tint = Color.White,
+                            tint = Color.White.copy(alpha = 0.85f),
                             modifier = Modifier.size(17.dp)
                         )
                     }
@@ -1794,14 +1800,14 @@ private fun AvDetailWithInlinePlayer(
                         modifier = Modifier
                             .size(30.dp)
                             .clip(CircleShape)
-                            .background(Color.Black.copy(alpha = 0.4f))
+                            .background(Color.Black.copy(alpha = 0.20f))
                             .clickable { launchLandscapeFullscreen() },
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = TmIcons.Fullscreen,
                             contentDescription = "Toàn màn hình",
-                            tint = Color.White,
+                            tint = Color.White.copy(alpha = 0.85f),
                             modifier = Modifier.size(17.dp)
                         )
                     }

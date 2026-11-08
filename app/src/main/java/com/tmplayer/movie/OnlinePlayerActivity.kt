@@ -1071,7 +1071,7 @@ fun OnlinePlayerScreen(
             Box(
                 Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.52f))
+                    .background(Color.Black.copy(alpha = 0.20f))
             ) {
                 // TOP BAR
                 Row(
@@ -1197,12 +1197,13 @@ fun OnlinePlayerScreen(
                         }
                     )
 
-                    // Play / Pause
+                    // Play / Pause (High transparency so video beneath remains visible)
                     Box(
                         modifier = Modifier
-                            .size(68.dp)
+                            .size(64.dp)
                             .clip(CircleShape)
-                            .background(Tone.accent)
+                            .background(Color.Black.copy(alpha = 0.24f))
+                            .border(1.dp, Color.White.copy(alpha = 0.30f), CircleShape)
                             .clickable {
                                 if (isPlaying) exoPlayer.pause() else exoPlayer.play()
                                 lastInteraction = System.currentTimeMillis()
@@ -1212,8 +1213,8 @@ fun OnlinePlayerScreen(
                         Icon(
                             imageVector = if (isPlaying) TmIcons.PauseSolid else TmIcons.PlaySolid,
                             contentDescription = if (isPlaying) "Pause" else "Play",
-                            tint = Color.Black,
-                            modifier = Modifier.size(34.dp)
+                            tint = Color.White.copy(alpha = 0.88f),
+                            modifier = Modifier.size(32.dp)
                         )
                     }
 
@@ -1793,7 +1794,8 @@ private fun ControlButton(
         modifier = modifier
             .size(size)
             .clip(CircleShape)
-            .background(Color.White.copy(alpha = 0.15f))
+            .background(Color.Black.copy(alpha = 0.22f))
+            .border(0.8.dp, Color.White.copy(alpha = 0.22f), CircleShape)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
@@ -1801,14 +1803,14 @@ private fun ControlButton(
             Icon(
                 painter = androidx.compose.ui.res.painterResource(drawableRes),
                 contentDescription = null,
-                tint = tint,
+                tint = tint.copy(alpha = (tint.alpha * 0.88f)),
                 modifier = Modifier.size(size * 0.55f)
             )
         } else if (icon != null) {
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                tint = tint,
+                tint = tint.copy(alpha = (tint.alpha * 0.88f)),
                 modifier = Modifier.size(size * 0.55f)
             )
         }
@@ -1825,7 +1827,8 @@ private fun ControlPill(
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(20.dp))
-            .background(Color.White.copy(alpha = 0.15f))
+            .background(Color.Black.copy(alpha = 0.22f))
+            .border(0.8.dp, Color.White.copy(alpha = 0.20f), RoundedCornerShape(20.dp))
             .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -1835,15 +1838,15 @@ private fun ControlPill(
             Icon(
                 painter = androidx.compose.ui.res.painterResource(drawableRes),
                 contentDescription = null,
-                tint = Color.White,
+                tint = Color.White.copy(alpha = 0.88f),
                 modifier = Modifier.size(16.dp)
             )
         } else if (icon != null) {
-            Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+            Icon(icon, contentDescription = null, tint = Color.White.copy(alpha = 0.88f), modifier = Modifier.size(16.dp))
         }
         Text(
             text = text,
-            color = Color.White,
+            color = Color.White.copy(alpha = 0.90f),
             fontSize = 12.sp,
             fontWeight = FontWeight.Medium,
             maxLines = 1,
