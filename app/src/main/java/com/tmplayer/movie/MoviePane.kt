@@ -519,15 +519,21 @@ fun MoviePane(
         }
     }
 
-    // Fetch movie detail when selected
-    LaunchedEffect(selectedMovieSlug) {
+    // Fetch movie detail when selected or when source changes
+    LaunchedEffect(selectedMovieSlug, activeSource) {
         val slug = selectedMovieSlug
         if (slug != null) {
-            if (movieDetail?.movie?.slug != slug) {
+            if (movieDetail?.movie?.slug != slug || movieDetail?.movie?.source != activeSource) {
                 isDetailLoading = true
                 movieDetail = null
                 try {
-                    movieDetail = MovieRepository.getMovieDetail(activeSource, slug)
+                    val fetched = MovieRepository.getMovieDetail(activeSource, slug)
+                    if (fetched != null) {
+                        movieDetail = fetched
+                    } else {
+                        val fallbackSource = if (activeSource == MovieSource.VSMov) MovieSource.KKPhim else MovieSource.VSMov
+                        movieDetail = MovieRepository.getMovieDetail(fallbackSource, slug)
+                    }
                 } catch (_: Exception) {
                     movieDetail = null
                 } finally {
@@ -582,12 +588,22 @@ fun MoviePane(
                     SourceTabButton(
                         title = "VSMov",
                         isSelected = activeSource == MovieSource.VSMov,
-                        onClick = { activeSource = MovieSource.VSMov }
+                        onClick = {
+                            if (activeSource != MovieSource.VSMov) {
+                                activeSource = MovieSource.VSMov
+                                if (selectedMovieSlug == null) movieDetail = null
+                            }
+                        }
                     )
                     SourceTabButton(
                         title = "KKPhim",
                         isSelected = activeSource == MovieSource.KKPhim,
-                        onClick = { activeSource = MovieSource.KKPhim }
+                        onClick = {
+                            if (activeSource != MovieSource.KKPhim) {
+                                activeSource = MovieSource.KKPhim
+                                if (selectedMovieSlug == null) movieDetail = null
+                            }
+                        }
                     )
                 }
             }
@@ -1386,6 +1402,8 @@ fun MoviePane(
                     MovieDetailContent(
                         detail = detail,
                         onPlayEpisode = { sIdx, eIdx ->
+                            val epName = detail.servers.getOrNull(sIdx)?.episodes?.getOrNull(eIdx)?.name ?: "Tập ${eIdx + 1}"
+                            MovieStore.markEpisodeWatched(context, detail, sIdx, eIdx, epName)
                             OnlinePlayerActivity.launch(context, detail, sIdx, eIdx)
                         }
                     )
@@ -2061,13 +2079,16 @@ private fun MovieDetailContent(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var selectedServerIdx by remember { mutableIntStateOf(0) }
-    var expandedDescription by remember { mutableStateOf(false) }
+    var selectedServerIdx by remember(detail.movie.slug, detail.movie.source) { mutableIntStateOf(0) }
+    var expandedDescription by remember(detail.movie.slug, detail.movie.source) { mutableStateOf(false) }
     var showCloudSheet by remember { mutableStateOf(false) }
     var isCloudMode by remember { mutableStateOf(false) }
     var customRangeInput by remember { mutableStateOf("") }
 
-    val savedProgress = remember(detail.movie.slug) { MovieStore.getProgress(detail.movie.slug) }
+    val continueWatchingList by MovieStore.continueWatchingFlow.collectAsState()
+    val historyList by MovieStore.historyFlow.collectAsState()
+    val savedProgress = continueWatchingList.firstOrNull { it.slug == detail.movie.slug }
+        ?: historyList.firstOrNull { it.slug == detail.movie.slug }
     val watchlist by MovieStore.watchlistFlow.collectAsState()
     val isFollowed = watchlist.any { it.slug == detail.movie.slug }
     val cloudSyncedList by MovieStore.cloudSyncedFlow.collectAsState()
@@ -2312,7 +2333,7 @@ private fun MovieDetailContent(
                     Text(
                         text = when {
                             hasUnpulledNewEps -> "⚡ +$newEpCount tập mới"
-                            cloudSync != null -> "✓ Đã kéo (${cloudSync.pulledUpToEpisode}/${epList.size.coerceAtLeast(cloudSync.pulledUpToEpisode)})"
+                            cloudSync != null -> "✓ Đã kéo (${cloudSync.pulledEpisodesCount(epList.size)}/${epList.size.coerceAtLeast(cloudSync.pulledUpToEpisode)})"
                             else -> "Về Cloud"
                         },
                         color = when {
@@ -2447,8 +2468,46 @@ private fun MovieDetailContent(
                 Spacer(Modifier.height(10.dp))
             }
 
-            // Cloud Sync status banner above episode grid
-            if (cloudSync != null && epList.isNotEmpty()) {
+            // Status banner above episode grid (Watch progress in "Xem online" mode; Cloud Sync status in "Kéo về Cloud" mode)
+            if (!isCloudMode && savedProgress != null && epList.isNotEmpty()) {
+                val watchedCount = savedProgress.watchedEpisodesCount(epList.size)
+                val lastEpLabel = savedProgress.episodeName.ifBlank { "Tập ${savedProgress.episodeIndex + 1}" }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Tone.surfaceHigh)
+                        .border(0.5.dp, Tone.outline.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
+                        .clickable { onPlayEpisode(savedProgress.serverIndex, savedProgress.episodeIndex) }
+                        .padding(horizontal = 12.dp, vertical = 7.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "✓",
+                            color = Tone.accent,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = "Đã xem $watchedCount/${epList.size} tập • Gần nhất: $lastEpLabel",
+                            color = Tone.text,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    Text(
+                        text = "Tiếp tục ›",
+                        color = Tone.accent,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+            } else if (isCloudMode && cloudSync != null && epList.isNotEmpty()) {
+                val pulledCount = cloudSync.pulledEpisodesCount(epList.size)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -2476,14 +2535,14 @@ private fun MovieDetailContent(
                             text = if (hasUnpulledNewEps)
                                 "Có ${epList.size - cloudSync.pulledUpToEpisode} tập mới chưa kéo về Tele"
                             else
-                                "Đã kéo ${cloudSync.pulledUpToEpisode}/${epList.size} tập về Tele Cloud",
+                                "Đã kéo $pulledCount/${epList.size} tập về Tele Cloud",
                             color = if (hasUnpulledNewEps) Tone.accent else Tone.text,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.SemiBold
                         )
                     }
                     Text(
-                        text = "Kéo về Cloud ›",
+                        text = "Tùy chọn kéo ›",
                         color = Tone.accent,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold
@@ -2504,6 +2563,8 @@ private fun MovieDetailContent(
                             rowEps.forEach { ep ->
                                 val eIdx = epList.indexOf(ep)
                                 val epNumber = eIdx + 1
+                                val isWatched = savedProgress?.isEpisodeWatched(eIdx) == true
+                                val isCurrentWatchedEp = savedProgress != null && savedProgress.episodeIndex == eIdx
                                 val isPulledToCloud = cloudSync != null && cloudSync.isEpisodePulled(epNumber)
                                 val isNewUnpulledEp = cloudSync != null && cloudSync.isEpisodeNew(epNumber, epList.size)
                                 Box(
@@ -2511,21 +2572,36 @@ private fun MovieDetailContent(
                                         .weight(1f)
                                         .clip(RoundedCornerShape(8.dp))
                                         .background(
-                                            when {
-                                                isCloudMode -> Tone.accent.copy(alpha = 0.15f)
-                                                isNewUnpulledEp -> Tone.accent.copy(alpha = 0.22f)
-                                                isPulledToCloud -> Tone.surfaceHigh.copy(alpha = 0.9f)
-                                                else -> Tone.surfaceHigh
+                                            if (isCloudMode) {
+                                                when {
+                                                    isNewUnpulledEp -> Tone.accent.copy(alpha = 0.22f)
+                                                    isPulledToCloud -> Tone.surfaceHigh.copy(alpha = 0.9f)
+                                                    else -> Tone.surfaceHigh
+                                                }
+                                            } else {
+                                                when {
+                                                    isCurrentWatchedEp -> Tone.accent.copy(alpha = 0.22f)
+                                                    isWatched -> Tone.surfaceHigh.copy(alpha = 0.9f)
+                                                    else -> Tone.surfaceHigh
+                                                }
                                             }
                                         )
                                         .border(
-                                            if (isNewUnpulledEp) 1.5.dp else 0.5.dp,
-                                            when {
-                                                isCloudMode || isNewUnpulledEp -> Tone.accent
-                                                isPulledToCloud -> Tone.accent.copy(alpha = 0.45f)
-                                                else -> Tone.outline.copy(alpha = 0.5f)
+                                            width = if ((isCloudMode && isNewUnpulledEp) || (!isCloudMode && isCurrentWatchedEp)) 1.5.dp else 0.5.dp,
+                                            color = if (isCloudMode) {
+                                                when {
+                                                    isNewUnpulledEp -> Tone.accent
+                                                    isPulledToCloud -> Tone.accent.copy(alpha = 0.45f)
+                                                    else -> Tone.outline.copy(alpha = 0.5f)
+                                                }
+                                            } else {
+                                                when {
+                                                    isCurrentWatchedEp -> Tone.accent
+                                                    isWatched -> Tone.accent.copy(alpha = 0.45f)
+                                                    else -> Tone.outline.copy(alpha = 0.5f)
+                                                }
                                             },
-                                            RoundedCornerShape(8.dp)
+                                            shape = RoundedCornerShape(8.dp)
                                         )
                                         .clickable {
                                             if (isCloudMode) {
@@ -2550,38 +2626,58 @@ private fun MovieDetailContent(
                                 ) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         if (isCloudMode) {
-                                            Icon(
-                                                imageVector = TmIcons.Download,
-                                                contentDescription = null,
-                                                tint = Tone.accent,
-                                                modifier = Modifier.size(12.dp)
-                                            )
-                                            Spacer(Modifier.width(3.dp))
-                                        } else if (isPulledToCloud) {
+                                            if (isPulledToCloud) {
+                                                Text(
+                                                    text = "✓",
+                                                    color = Tone.accent,
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.ExtraBold
+                                                )
+                                                Spacer(Modifier.width(3.dp))
+                                            } else if (isNewUnpulledEp) {
+                                                Text(
+                                                    text = "⚡",
+                                                    color = Tone.accent,
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                                Spacer(Modifier.width(3.dp))
+                                            } else {
+                                                Icon(
+                                                    imageVector = TmIcons.Download,
+                                                    contentDescription = null,
+                                                    tint = Tone.text.copy(alpha = 0.7f),
+                                                    modifier = Modifier.size(12.dp)
+                                                )
+                                                Spacer(Modifier.width(3.dp))
+                                            }
                                             Text(
-                                                text = "✓",
-                                                color = Tone.accent,
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.ExtraBold
+                                                text = ep.name,
+                                                color = if (isNewUnpulledEp) Tone.accent else Tone.text,
+                                                fontSize = 12.sp,
+                                                fontWeight = if (isPulledToCloud || isNewUnpulledEp) FontWeight.Bold else FontWeight.SemiBold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
                                             )
-                                            Spacer(Modifier.width(3.dp))
-                                        } else if (isNewUnpulledEp) {
+                                        } else {
+                                            if (isWatched) {
+                                                Text(
+                                                    text = "✓",
+                                                    color = Tone.accent,
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.ExtraBold
+                                                )
+                                                Spacer(Modifier.width(3.dp))
+                                            }
                                             Text(
-                                                text = "⚡",
-                                                color = Tone.accent,
-                                                fontSize = 10.sp,
-                                                fontWeight = FontWeight.Bold
+                                                text = ep.name,
+                                                color = if (isCurrentWatchedEp) Tone.accent else Tone.text,
+                                                fontSize = 12.sp,
+                                                fontWeight = if (isWatched) FontWeight.Bold else FontWeight.SemiBold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
                                             )
-                                            Spacer(Modifier.width(3.dp))
                                         }
-                                        Text(
-                                            text = ep.name,
-                                            color = if (isCloudMode || isNewUnpulledEp) Tone.accent else Tone.text,
-                                            fontSize = 12.sp,
-                                            fontWeight = if (isPulledToCloud || isNewUnpulledEp) FontWeight.Bold else FontWeight.SemiBold,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
                                     }
                                 }
                             }
@@ -2778,7 +2874,7 @@ private fun MovieDetailContent(
                             )
                         }
                         if (cloudSync != null) {
-                            val pulledCount = cloudSync.pulledUpToEpisode.coerceAtMost(epList.size)
+                            val pulledCount = cloudSync.pulledEpisodesCount(epList.size)
                             Text(
                                 text = "✓ Đã kéo: $pulledCount/${epList.size}",
                                 color = Tone.accent,

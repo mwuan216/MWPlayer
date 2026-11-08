@@ -273,6 +273,9 @@ fun OnlinePlayerScreen(
             autoRetryCount = 0
         }
         if (currentServer != null && currentEp != null) {
+            if (!isAv) {
+                MovieStore.markEpisodeWatched(context, detail, serverIdx, epIdx, currentEp.name)
+            }
             val resolved = MovieRepository.resolveStreamWithSubtitles(
                 detail.movie.source,
                 detail.movie.name,
@@ -1679,6 +1682,7 @@ fun OnlinePlayerScreen(
                         }
 
                         // Episodes Grid
+                        val playerProgress = if (!isAv) MovieStore.getProgress(detail.movie.slug) else null
                         LazyVerticalGrid(
                             columns = GridCells.Fixed(3),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1687,11 +1691,24 @@ fun OnlinePlayerScreen(
                         ) {
                             itemsIndexed(episodes) { i, ep ->
                                 val isCurrent = (i == epIdx)
+                                val isWatched = isCurrent || (playerProgress?.isEpisodeWatched(i) == true)
                                 Box(
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(8.dp))
-                                        .background(if (isCurrent) Tone.accent else Color.White.copy(alpha = 0.08f))
+                                        .background(
+                                            when {
+                                                isCurrent -> Tone.accent
+                                                isWatched -> Color.White.copy(alpha = 0.14f)
+                                                else -> Color.White.copy(alpha = 0.08f)
+                                            }
+                                        )
+                                        .then(
+                                            if (!isCurrent && isWatched) {
+                                                Modifier.border(0.5.dp, Tone.accent.copy(alpha = 0.55f), RoundedCornerShape(8.dp))
+                                            } else Modifier
+                                        )
                                         .clickable {
+                                            saveCurrentProgress(currentPosition, duration)
                                             epIdx = i
                                             OnlinePlayerSession.episodeIndex = i
                                             showEpisodesSheet = false
@@ -1699,14 +1716,25 @@ fun OnlinePlayerScreen(
                                         .padding(vertical = 12.dp),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Text(
-                                        text = ep.name,
-                                        color = if (isCurrent) Color.Black else Color.White,
-                                        fontSize = 13.sp,
-                                        fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        if (isWatched) {
+                                            Text(
+                                                text = "✓",
+                                                color = if (isCurrent) Color.Black else Tone.accent,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.ExtraBold
+                                            )
+                                            Spacer(Modifier.width(3.dp))
+                                        }
+                                        Text(
+                                            text = ep.name,
+                                            color = if (isCurrent) Color.Black else Color.White,
+                                            fontSize = 13.sp,
+                                            fontWeight = if (isCurrent || isWatched) FontWeight.Bold else FontWeight.Normal,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
                                 }
                             }
                         }

@@ -25,6 +25,7 @@ data class MovieWatchProgress(
     val episodeName: String = "",
     val positionMs: Long = 0L,
     val durationMs: Long = 0L,
+    val watchedEpisodes: Set<Int> = emptySet(),
     val updatedAt: Long = System.currentTimeMillis()
 ) {
     val progressFraction: Float
@@ -32,6 +33,15 @@ data class MovieWatchProgress(
 
     val isFinished: Boolean
         get() = progressFraction >= 0.92f || (durationMs > 0 && durationMs - positionMs < 30_000L)
+
+    fun isEpisodeWatched(epIdx: Int): Boolean {
+        return epIdx == episodeIndex || epIdx in watchedEpisodes
+    }
+
+    fun watchedEpisodesCount(totalEpisodes: Int): Int {
+        val all = (watchedEpisodes + episodeIndex).filter { it >= 0 && (totalEpisodes <= 0 || it < totalEpisodes) }
+        return all.size
+    }
 
     fun toMovieItem(): MovieItem = MovieItem(
         name = name,
@@ -60,6 +70,9 @@ data class MovieWatchProgress(
         put("episodeName", episodeName)
         put("positionMs", positionMs)
         put("durationMs", durationMs)
+        val watchedArr = JSONArray()
+        (watchedEpisodes + episodeIndex).filter { it >= 0 }.sorted().forEach { watchedArr.put(it) }
+        put("watchedEpisodes", watchedArr)
         put("updatedAt", updatedAt)
     }
 
@@ -67,6 +80,16 @@ data class MovieWatchProgress(
         fun fromJson(json: JSONObject): MovieWatchProgress? {
             val slug = json.optString("slug").takeIf { it.isNotBlank() } ?: return null
             val name = json.optString("name").takeIf { it.isNotBlank() } ?: return null
+            val epIdx = json.optInt("episodeIndex", 0)
+            val watchedSet = mutableSetOf<Int>()
+            val watchedArr = json.optJSONArray("watchedEpisodes")
+            if (watchedArr != null) {
+                for (i in 0 until watchedArr.length()) {
+                    val idx = watchedArr.optInt(i, -1)
+                    if (idx >= 0) watchedSet.add(idx)
+                }
+            }
+            if (epIdx >= 0) watchedSet.add(epIdx)
             return MovieWatchProgress(
                 slug = slug,
                 name = name,
@@ -78,10 +101,11 @@ data class MovieWatchProgress(
                 lang = json.optString("lang", "Vietsub"),
                 source = json.optString("source", "kkphim"),
                 serverIndex = json.optInt("serverIndex", 0),
-                episodeIndex = json.optInt("episodeIndex", 0),
+                episodeIndex = epIdx,
                 episodeName = json.optString("episodeName"),
                 positionMs = json.optLong("positionMs", 0L),
                 durationMs = json.optLong("durationMs", 0L),
+                watchedEpisodes = watchedSet,
                 updatedAt = json.optLong("updatedAt", System.currentTimeMillis())
             )
         }
@@ -101,6 +125,7 @@ data class CloudSyncedMovie(
     val source: String = "vsmov",
     val pulledUpToEpisode: Int = 0,
     val pulledEpisodesText: String = "",
+    val pulledEpisodes: Set<Int> = emptySet(),
     val latestKnownEpisodes: Int = 0,
     val autoPullNewEpisodes: Boolean = true,
     val updatedAt: Long = System.currentTimeMillis()
@@ -116,6 +141,7 @@ data class CloudSyncedMovie(
 
     fun isEpisodePulled(episodeNumber: Int): Boolean {
         if (episodeNumber <= 0) return false
+        if (pulledEpisodes.isNotEmpty()) return episodeNumber in pulledEpisodes
         if (pulledUpToEpisode > 0 && episodeNumber <= pulledUpToEpisode) return true
         if (pulledEpisodesText.isBlank()) return false
         val parts = pulledEpisodesText.split(",", ";", " ").map { it.trim() }.filter { it.isNotEmpty() }
@@ -133,8 +159,17 @@ data class CloudSyncedMovie(
         return false
     }
 
+    fun pulledEpisodesCount(totalEpisodes: Int): Int {
+        return if (pulledEpisodes.isNotEmpty()) {
+            if (totalEpisodes > 0) pulledEpisodes.count { it in 1..totalEpisodes } else pulledEpisodes.size
+        } else {
+            if (totalEpisodes > 0) pulledUpToEpisode.coerceAtMost(totalEpisodes) else pulledUpToEpisode
+        }
+    }
+
     fun isEpisodeNew(episodeNumber: Int, totalEpisodes: Int): Boolean {
         if (episodeNumber <= 0) return false
+        if (isEpisodePulled(episodeNumber)) return false
         return pulledUpToEpisode > 0 && episodeNumber > pulledUpToEpisode && episodeNumber <= totalEpisodes
     }
 
@@ -163,6 +198,9 @@ data class CloudSyncedMovie(
         put("source", source)
         put("pulledUpToEpisode", pulledUpToEpisode)
         put("pulledEpisodesText", pulledEpisodesText)
+        val pulledArr = JSONArray()
+        pulledEpisodes.filter { it > 0 }.sorted().forEach { pulledArr.put(it) }
+        put("pulledEpisodes", pulledArr)
         put("latestKnownEpisodes", latestKnownEpisodes)
         put("autoPullNewEpisodes", autoPullNewEpisodes)
         put("updatedAt", updatedAt)
@@ -172,6 +210,14 @@ data class CloudSyncedMovie(
         fun fromJson(json: JSONObject): CloudSyncedMovie? {
             val slug = json.optString("slug").takeIf { it.isNotBlank() } ?: return null
             val name = json.optString("name").takeIf { it.isNotBlank() } ?: return null
+            val pulledSet = mutableSetOf<Int>()
+            val pulledArr = json.optJSONArray("pulledEpisodes")
+            if (pulledArr != null) {
+                for (i in 0 until pulledArr.length()) {
+                    val ep = pulledArr.optInt(i, 0)
+                    if (ep > 0) pulledSet.add(ep)
+                }
+            }
             return CloudSyncedMovie(
                 slug = slug,
                 name = name,
@@ -184,6 +230,7 @@ data class CloudSyncedMovie(
                 source = json.optString("source", "vsmov"),
                 pulledUpToEpisode = json.optInt("pulledUpToEpisode", 0),
                 pulledEpisodesText = json.optString("pulledEpisodesText", ""),
+                pulledEpisodes = pulledSet,
                 latestKnownEpisodes = json.optInt("latestKnownEpisodes", 0),
                 autoPullNewEpisodes = json.optBoolean("autoPullNewEpisodes", true),
                 updatedAt = json.optLong("updatedAt", System.currentTimeMillis())
@@ -474,6 +521,59 @@ object MovieStore {
     }
 
     @Synchronized
+    fun markEpisodeWatched(
+        context: Context,
+        detail: MovieDetail,
+        serverIndex: Int,
+        episodeIndex: Int,
+        episodeName: String
+    ) {
+        init(context)
+        val m = detail.movie
+        val existing = _historyFlow.value.firstOrNull { it.slug == m.slug }
+            ?: _continueWatchingFlow.value.firstOrNull { it.slug == m.slug }
+        val mergedWatched = buildSet {
+            existing?.watchedEpisodes?.let { addAll(it) }
+            existing?.episodeIndex?.takeIf { it >= 0 }?.let { add(it) }
+            if (episodeIndex >= 0) add(episodeIndex)
+        }
+        val isSameEpisode = existing != null && existing.episodeIndex == episodeIndex
+        val record = MovieWatchProgress(
+            slug = m.slug,
+            name = m.name,
+            originName = m.originName,
+            thumbUrl = m.thumbUrl,
+            posterUrl = m.posterUrl,
+            year = m.year,
+            quality = m.quality,
+            lang = m.lang,
+            source = m.source.name.lowercase(),
+            serverIndex = serverIndex,
+            episodeIndex = episodeIndex,
+            episodeName = episodeName,
+            positionMs = if (isSameEpisode) existing!!.positionMs else 0L,
+            durationMs = if (isSameEpisode) existing!!.durationMs else 0L,
+            watchedEpisodes = mergedWatched,
+            updatedAt = System.currentTimeMillis()
+        )
+
+        val histList = _historyFlow.value.toMutableList()
+        histList.removeAll { it.slug == record.slug }
+        histList.add(0, record)
+        val cappedHist = histList.take(50)
+        _historyFlow.value = cappedHist
+        saveHistory(context, cappedHist)
+
+        val contList = _continueWatchingFlow.value.toMutableList()
+        val contIdx = contList.indexOfFirst { it.slug == record.slug }
+        if (contIdx >= 0) {
+            contList[contIdx] = contList[contIdx].copy(watchedEpisodes = mergedWatched)
+            _continueWatchingFlow.value = contList
+            saveContinue(context, contList)
+        }
+    }
+
+    @Synchronized
     fun saveProgress(
         context: Context,
         detail: MovieDetail,
@@ -485,6 +585,13 @@ object MovieStore {
     ) {
         init(context)
         val m = detail.movie
+        val existing = _historyFlow.value.firstOrNull { it.slug == m.slug }
+            ?: _continueWatchingFlow.value.firstOrNull { it.slug == m.slug }
+        val mergedWatched = buildSet {
+            existing?.watchedEpisodes?.let { addAll(it) }
+            existing?.episodeIndex?.takeIf { it >= 0 }?.let { add(it) }
+            if (episodeIndex >= 0) add(episodeIndex)
+        }
         val record = MovieWatchProgress(
             slug = m.slug,
             name = m.name,
@@ -500,6 +607,7 @@ object MovieStore {
             episodeName = episodeName,
             positionMs = positionMs,
             durationMs = durationMs,
+            watchedEpisodes = mergedWatched,
             updatedAt = System.currentTimeMillis()
         )
 
@@ -606,6 +714,30 @@ object MovieStore {
         return maxOf(maxInRange, previousPulled)
     }
 
+    fun parseEpisodesSetFromRange(epRange: String, totalEpisodes: Int, previousPulled: Int): Set<Int> {
+        val trimmed = epRange.trim().lowercase()
+        val maxTotal = maxOf(totalEpisodes, previousPulled, 1)
+        if (trimmed == "all" || trimmed == "full" || trimmed == "remaining") {
+            return (1..maxTotal).toSet()
+        }
+        val result = mutableSetOf<Int>()
+        val parts = trimmed.split(",", ";", " ").map { it.trim() }.filter { it.isNotEmpty() }
+        for (part in parts) {
+            if (part.contains("-") || part.contains("~")) {
+                val sub = part.split("-", "~")
+                val start = sub.getOrNull(0)?.trim()?.toIntOrNull()
+                val end = sub.getOrNull(1)?.trim()?.toIntOrNull()
+                if (start != null && end != null && start > 0 && end >= start) {
+                    for (ep in start..end) result.add(ep)
+                }
+            } else {
+                val num = part.toIntOrNull()
+                if (num != null && num > 0) result.add(num)
+            }
+        }
+        return result
+    }
+
     @Synchronized
     fun markCloudSynced(
         context: Context,
@@ -617,15 +749,30 @@ object MovieStore {
         init(context)
         val currentList = _cloudSyncedFlow.value.toMutableList()
         val existing = currentList.firstOrNull { it.slug == movie.slug }
-        val newPulledUpTo = parseMaxEpisodeFromRange(
+        val existingSet = if (existing != null) {
+            if (existing.pulledEpisodes.isNotEmpty()) existing.pulledEpisodes
+            else if (existing.pulledUpToEpisode > 0) (1..existing.pulledUpToEpisode).toSet()
+            else emptySet()
+        } else emptySet()
+        val newlyPulledSet = parseEpisodesSetFromRange(
             epRange = epRange,
             totalEpisodes = totalEpisodes,
             previousPulled = existing?.pulledUpToEpisode ?: 0
         )
+        val mergedPulledSet = existingSet + newlyPulledSet
+        val newPulledUpTo = if (mergedPulledSet.isNotEmpty()) {
+            mergedPulledSet.maxOrNull() ?: 0
+        } else {
+            parseMaxEpisodeFromRange(
+                epRange = epRange,
+                totalEpisodes = totalEpisodes,
+                previousPulled = existing?.pulledUpToEpisode ?: 0
+            )
+        }
         val latestKnown = maxOf(totalEpisodes, existing?.latestKnownEpisodes ?: 0, newPulledUpTo)
         val rangeText = when (epRange.trim().lowercase()) {
             "all", "full", "remaining" -> if (newPulledUpTo > 1) "1-$newPulledUpTo" else "Full"
-            else -> if (newPulledUpTo > 1) "1-$newPulledUpTo" else epRange.trim()
+            else -> if (mergedPulledSet.size > 1 && mergedPulledSet == (1..newPulledUpTo).toSet()) "1-$newPulledUpTo" else epRange.trim()
         }
         val updated = CloudSyncedMovie(
             slug = movie.slug,
@@ -639,6 +786,7 @@ object MovieStore {
             source = movie.source.name.lowercase(),
             pulledUpToEpisode = newPulledUpTo,
             pulledEpisodesText = rangeText,
+            pulledEpisodes = mergedPulledSet,
             latestKnownEpisodes = latestKnown,
             autoPullNewEpisodes = autoPull ?: (existing?.autoPullNewEpisodes ?: true),
             updatedAt = System.currentTimeMillis()
@@ -667,9 +815,18 @@ object MovieStore {
         val existing = currentList[idx]
         val pulled = newPulledUpTo?.let { maxOf(it, existing.pulledUpToEpisode) } ?: existing.pulledUpToEpisode
         val latest = maxOf(latestEpisodes, existing.latestKnownEpisodes, pulled)
+        val updatedPulledSet = if (newPulledUpTo != null && newPulledUpTo > existing.pulledUpToEpisode) {
+            val baseSet = if (existing.pulledEpisodes.isNotEmpty()) existing.pulledEpisodes
+            else if (existing.pulledUpToEpisode > 0) (1..existing.pulledUpToEpisode).toSet()
+            else emptySet()
+            baseSet + ((existing.pulledUpToEpisode + 1)..newPulledUpTo)
+        } else {
+            existing.pulledEpisodes
+        }
         val updated = existing.copy(
             pulledUpToEpisode = pulled,
             pulledEpisodesText = if (pulled > 1) "1-$pulled" else existing.pulledEpisodesText,
+            pulledEpisodes = updatedPulledSet,
             latestKnownEpisodes = latest,
             updatedAt = if (latest > existing.latestKnownEpisodes || newPulledUpTo != null) System.currentTimeMillis() else existing.updatedAt
         )

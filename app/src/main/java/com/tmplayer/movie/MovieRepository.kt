@@ -293,9 +293,21 @@ object MovieRepository {
                 }
             }
 
+            val cleanContent = mvObj.optString("content", "")
+                .replace(Regex("<[^>]*>"), "")
+                .replace("&quot;", "\"")
+                .replace("&#039;", "'")
+                .replace("&#39;", "'")
+                .replace("&apos;", "'")
+                .replace("&nbsp;", " ")
+                .replace("&amp;", "&")
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .trim()
+
             MovieDetail(
                 movie = item,
-                content = mvObj.optString("content", "").replace(Regex("<[^>]*>"), "").trim(),
+                content = cleanContent,
                 time = mvObj.optString("time", ""),
                 episodeTotal = mvObj.optString("episode_total", ""),
                 director = directors,
