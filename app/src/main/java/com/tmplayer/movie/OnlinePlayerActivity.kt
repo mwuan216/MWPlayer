@@ -1100,7 +1100,7 @@ fun OnlinePlayerScreen(
                     .padding(top = 16.dp)
                     .clip(RoundedCornerShape(16.dp))
                     .background(Color.Black.copy(alpha = 0.22f))
-                    .border(0.8.dp, Color.White.copy(alpha = 0.20f), RoundedCornerShape(20.dp))
+                    .border(0.8.dp, Color.White.copy(alpha = 0.20f), RoundedCornerShape(16.dp))
                     .padding(horizontal = 16.dp, vertical = 6.dp)
             ) {
                 Text(
