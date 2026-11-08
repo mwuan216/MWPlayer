@@ -3061,6 +3061,8 @@ private fun AvPrivacyBottomSheet(
     var newPinInput by remember { mutableStateOf("") }
     var pinMode by remember { mutableStateOf<String?>(null) }
     var pinError by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
+    val isChatsTabVisible by AvStore.isChatsTabVisibleFlow.collectAsState()
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -3074,7 +3076,7 @@ private fun AvPrivacyBottomSheet(
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             Text(
-                text = "🔒 Bảo mật & Ẩn Tab AV 18+",
+                text = "🔒 Bảo mật & Ẩn Tab",
                 color = Tone.text,
                 fontWeight = FontWeight.Bold,
                 fontSize = 18.sp
@@ -3097,7 +3099,7 @@ private fun AvPrivacyBottomSheet(
                         fontSize = 14.sp
                     )
                     Text(
-                        text = "Khi tắt, Tab AV sẽ ẩn khỏi thanh dưới cùng. Nhấn giữ nút Movie hoặc mở từ menu Hồ sơ để vào lại.",
+                        text = "Khi tắt, Tab AV sẽ ẩn khỏi thanh dưới cùng. Nhấn giữ nút Movie 2s để vào lại.",
                         color = Tone.muted,
                         fontSize = 12.sp
                     )
@@ -3105,6 +3107,35 @@ private fun AvPrivacyBottomSheet(
                 Switch(
                     checked = isTabVisible,
                     onCheckedChange = onToggleTabVisible,
+                    colors = SwitchDefaults.colors(checkedThumbColor = Color.Black, checkedTrackColor = Tone.accent)
+                )
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Tone.surfaceHigh)
+                    .padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Hiện Tab Trò chuyện trên thanh điều hướng",
+                        color = Tone.text,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 14.sp
+                    )
+                    Text(
+                        text = "Khi tắt, giao diện giống app xem phim thường. Nhấn giữ nút Menu (tab cuối) 1,5s để bật lại.",
+                        color = Tone.muted,
+                        fontSize = 12.sp
+                    )
+                }
+                Switch(
+                    checked = isChatsTabVisible,
+                    onCheckedChange = { AvStore.setChatsTabVisible(context, it) },
                     colors = SwitchDefaults.colors(checkedThumbColor = Color.Black, checkedTrackColor = Tone.accent)
                 )
             }

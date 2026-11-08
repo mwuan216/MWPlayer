@@ -196,12 +196,13 @@ internal fun PhoneBrowse(
     // The pager while it is on screen, for the bar's highlight to follow a swipe.
     LaunchedEffect(context) { com.tmplayer.av.AvStore.init(context) }
     val avVisible by com.tmplayer.av.AvStore.isTabVisibleFlow.collectAsState()
+    val chatsVisible by com.tmplayer.av.AvStore.isChatsTabVisibleFlow.collectAsState()
     val pagerRef = remember { mutableStateOf<PagerState?>(null) }
-    val barPosition: (() -> Float)? = if (swipePage(tab, homeVisible) != null) {
-        remember(pagerRef, swipePage(tab, homeVisible), avVisible, homeVisible) {
+    val barPosition: (() -> Float)? = if (swipePage(tab, homeVisible, chatsVisible) != null) {
+        remember(pagerRef, swipePage(tab, homeVisible, chatsVisible), avVisible, homeVisible, chatsVisible) {
             {
                 val pager = pagerRef.value
-                val raw = if (pager == null) (swipePage(tab, homeVisible) ?: 0).toFloat() else pager.currentPage + pager.currentPageOffsetFraction
+                val raw = if (pager == null) (swipePage(tab, homeVisible, chatsVisible) ?: 0).toFloat() else pager.currentPage + pager.currentPageOffsetFraction
                 if (homeVisible) {
                     if (avVisible && raw > 1f) 1f + (raw - 1f) * 2f else raw
                 } else {
@@ -281,7 +282,7 @@ internal fun PhoneBrowse(
         AnimatedContent(
             targetState = tab,
             // Home and Chats are one pager, swiped between; only leaving it for another page fades.
-            contentKey = { if (swipePage(it, homeVisible) != null) SWIPE_PAGES else it.navSection },
+            contentKey = { if (swipePage(it, homeVisible, chatsVisible) != null) SWIPE_PAGES else it.navSection },
             transitionSpec = {
                 val from = order.indexOf(initialState.navSection)
                 val to = order.indexOf(targetState.navSection)
@@ -302,14 +303,26 @@ internal fun PhoneBrowse(
                     refresh = refreshOf(section),
                     refreshing = refreshingOf(section),
                     onOpenSearch = openSearch,
+                    chatsVisible = chatsVisible,
+                    onToggleChatsTab = {
+                        if (chatsVisible) {
+                            com.tmplayer.av.AvStore.setChatsTabVisible(context, false)
+                            android.widget.Toast.makeText(context, "Đã ẩn tab Trò chuyện (Nhấn giữ Menu 1,5s để bật lại)", android.widget.Toast.LENGTH_SHORT).show()
+                            onPickTab(BrowseSection.of(BrowseTab.Movie))
+                        } else {
+                            com.tmplayer.av.AvStore.setChatsTabVisible(context, true)
+                            android.widget.Toast.makeText(context, "Đã bật tab Trò chuyện", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    },
                     pane = pane,
                 )
             }
-            if (swipePage(page, homeVisible) != null) {
+            if (swipePage(page, homeVisible, chatsVisible) != null) {
                 HomeChatsPager(
                     tab = tab,
                     chats = chatsSection,
                     homeVisible = homeVisible,
+                    chatsVisible = chatsVisible,
                     onSettle = { section -> if (section != tab) onPickTab(section) },
                     onState = { pagerRef.value = it },
                     page = frame,
@@ -350,18 +363,31 @@ private fun decodeFilters(raw: String): Pair<SearchFilters, SearchSort>? {
 }
 
 /** Which page of the Home and Chats pager [section] is: 0 for Home, 1 for Movie, 2 for Chats or a folder, null for neither. */
-internal fun swipePage(section: BrowseSection, homeVisible: Boolean = true): Int? = if (homeVisible) {
-    when {
-        section.isHome -> HOME_PAGE
-        section.isMovie -> MOVIE_PAGE
-        section.onChatsPage -> CHATS_PAGE
-        else -> null
+internal fun swipePage(section: BrowseSection, homeVisible: Boolean = true, chatsVisible: Boolean = true): Int? {
+    if (!chatsVisible) {
+        return if (homeVisible) {
+            when {
+                section.isHome -> HOME_PAGE
+                section.isMovie -> MOVIE_PAGE
+                else -> null
+            }
+        } else {
+            null
+        }
     }
-} else {
-    when {
-        section.isMovie -> 0
-        section.onChatsPage -> 1
-        else -> null
+    return if (homeVisible) {
+        when {
+            section.isHome -> HOME_PAGE
+            section.isMovie -> MOVIE_PAGE
+            section.onChatsPage -> CHATS_PAGE
+            else -> null
+        }
+    } else {
+        when {
+            section.isMovie -> 0
+            section.onChatsPage -> 1
+            else -> null
+        }
     }
 }
 
@@ -402,18 +428,19 @@ private fun HomeChatsPager(
     tab: BrowseSection,
     chats: BrowseSection,
     homeVisible: Boolean = true,
+    chatsVisible: Boolean = true,
     onSettle: (BrowseSection) -> Unit,
     onState: (PagerState?) -> Unit,
     page: @Composable (BrowseSection) -> Unit,
 ) {
     val reduced = rememberReducedMotion() || Motion.reduced
-    val pageCount = if (homeVisible) SWIPE_PAGE_COUNT else 2
-    val pager = rememberPagerState(initialPage = swipePage(tab, homeVisible) ?: 0) { pageCount }
+    val pageCount = (if (homeVisible) 1 else 0) + 1 + (if (chatsVisible) 1 else 0)
+    val pager = rememberPagerState(initialPage = swipePage(tab, homeVisible, chatsVisible) ?: 0) { pageCount }
     DisposableEffect(pager) {
         onState(pager)
         onDispose { onState(null) }
     }
-    val target = swipePage(tab, homeVisible)
+    val target = swipePage(tab, homeVisible, chatsVisible)
     LaunchedEffect(target) {
         if (target == null || target == pager.currentPage && pager.currentPageOffsetFraction == 0f) return@LaunchedEffect
         // On the bar's own curve and time rather than the pager's default spring, which is soft
@@ -473,6 +500,8 @@ private fun PhonePageFrame(
     /** Whether [refresh] is still fetching. */
     refreshing: Boolean = false,
     onOpenSearch: (() -> Unit)? = null,
+    chatsVisible: Boolean = true,
+    onToggleChatsTab: (() -> Unit)? = null,
     pane: @Composable (BrowseSection) -> Unit,
 ) {
     val s = LocalStrings.current
@@ -490,6 +519,15 @@ private fun PhonePageFrame(
                 TopAppBar(
                     title = { Text(s.browseTabChats, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     actions = {
+                        if (onToggleChatsTab != null) {
+                            androidx.compose.material3.TextButton(onClick = onToggleChatsTab) {
+                                Text(
+                                    text = if (chatsVisible) "Ẩn tab" else "Hiện tab",
+                                    color = Tone.muted,
+                                    style = MaterialTheme.typography.labelMedium,
+                                )
+                            }
+                        }
                         if (onOpenSearch != null) {
                             androidx.compose.material3.IconButton(onClick = onOpenSearch) {
                                 androidx.compose.material3.Icon(

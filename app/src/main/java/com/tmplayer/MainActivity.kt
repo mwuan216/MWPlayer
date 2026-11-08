@@ -1843,6 +1843,12 @@ private fun Root() {
                 autoOpenDecided = true
                 return@LaunchedEffect
             }
+            com.tmplayer.av.AvStore.init(context)
+            if (!com.tmplayer.av.AvStore.isChatsTabVisibleFlow.value) {
+                autoOpened = true
+                autoOpenDecided = true
+                return@LaunchedEffect
+            }
             // The chat list is still arriving, and which chat is in it is the whole question.
             if (chatsState is UiState.Loading) return@LaunchedEffect
 

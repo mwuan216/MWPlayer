@@ -160,18 +160,20 @@ internal fun barHighlightIndex(
     inProfile: Boolean = false,
     avVisible: Boolean = true,
     homeVisible: Boolean = true,
+    chatsVisible: Boolean = true,
 ): Int? {
-    val offset = if (homeVisible) 0 else -1
+    val visibleTabs = buildList {
+        if (homeVisible) add(TouchDestination.Home)
+        add(TouchDestination.Movie)
+        if (avVisible) add(TouchDestination.Av)
+        if (chatsVisible) add(TouchDestination.Chats)
+    }
     if (current != null) {
-        return when (current) {
-            TouchDestination.Home -> 0
-            TouchDestination.Movie -> 1 + offset
-            TouchDestination.Av -> if (avVisible) 2 + offset else null
-            TouchDestination.Chats -> (if (avVisible) 3 else 2) + offset
-        }
+        val idx = visibleTabs.indexOf(current)
+        return if (idx >= 0) idx else null
     }
     if (inProfile) {
-        return (if (avVisible) 4 else 3) + offset
+        return visibleTabs.size
     }
     return null
 }
@@ -711,6 +713,7 @@ private fun FloatingBar(
     val context = LocalContext.current
     LaunchedEffect(context) { com.tmplayer.av.AvStore.init(context) }
     val avVisible by com.tmplayer.av.AvStore.isTabVisibleFlow.collectAsState()
+    val chatsVisible by com.tmplayer.av.AvStore.isChatsTabVisibleFlow.collectAsState()
     val btnWidth = BUTTON_WIDTH
     val reduced = rememberReducedMotion() || Motion.reduced
     val outer = if (vertical) {
@@ -744,7 +747,7 @@ private fun FloatingBar(
           Box(contentAlignment = if (vertical) Alignment.TopCenter else Alignment.CenterStart) {
             // One highlight under the chosen page, sliding to the next one rather than blinking
             // off under one button and on under another, so the bar shows where the page went.
-            val index = barHighlightIndex(current, inProfile, avVisible, homeVisible)
+            val index = barHighlightIndex(current, inProfile, avVisible, homeVisible, chatsVisible)
             val step = with(LocalDensity.current) { ((if (vertical) BUTTON_HEIGHT else btnWidth) + BAR_SPACING).toPx() }
             // Where the highlight stands, in buttons from the start: sprung to the chosen one, or,
             // while Home and Chats are on screen, following the pager (sprung only the first time,
@@ -811,8 +814,30 @@ private fun FloatingBar(
                 if (avVisible) {
                     BarButton(TmIcons.Favorite, "AV 18+", current == TouchDestination.Av, onAv, buttonWidth = btnWidth)
                 }
-                BarButton(TmIcons.Chats, s.browseTabChats, current == TouchDestination.Chats, onChats, buttonWidth = btnWidth)
-                ProfileButton(account, inProfile, badged, onProfile, buttonWidth = btnWidth)
+                if (chatsVisible) {
+                    BarButton(TmIcons.Chats, s.browseTabChats, current == TouchDestination.Chats, onChats, buttonWidth = btnWidth)
+                }
+                ProfileButton(
+                    account = account,
+                    inProfile = inProfile,
+                    badged = badged,
+                    onProfile = onProfile,
+                    onLongPress = {
+                        if (!chatsVisible) {
+                            com.tmplayer.av.AvStore.setChatsTabVisible(context, true)
+                            android.widget.Toast.makeText(context, "Đã bật tab Trò chuyện", android.widget.Toast.LENGTH_SHORT).show()
+                            onChats()
+                        } else {
+                            com.tmplayer.av.AvStore.setChatsTabVisible(context, false)
+                            android.widget.Toast.makeText(context, "Đã ẩn tab Trò chuyện (Nhấn giữ Menu 1,5s để bật lại)", android.widget.Toast.LENGTH_SHORT).show()
+                            if (current == TouchDestination.Chats) {
+                                onMovie()
+                            }
+                        }
+                    },
+                    customLongPressMs = 1500L,
+                    buttonWidth = btnWidth
+                )
             }
             if (vertical) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(BAR_SPACING)) { buttons() }
@@ -826,10 +851,57 @@ private fun FloatingBar(
 
 /** The viewer's picture on the bar, which opens the popover of their own lists. */
 @Composable
-private fun ProfileButton(account: Account?, inProfile: Boolean, badged: Boolean, onProfile: () -> Unit, buttonWidth: Dp = BUTTON_WIDTH) {
+private fun ProfileButton(
+    account: Account?,
+    inProfile: Boolean,
+    badged: Boolean,
+    onProfile: () -> Unit,
+    onLongPress: (() -> Unit)? = null,
+    customLongPressMs: Long? = null,
+    buttonWidth: Dp = BUTTON_WIDTH,
+) {
     val s = LocalStrings.current
     val reduced = rememberReducedMotion() || Motion.reduced
     val profilePress = remember { MutableInteractionSource() }
+    val haptic = LocalHapticFeedback.current
+
+    val clickModifier = if (customLongPressMs != null && onLongPress != null) {
+        Modifier
+            .pointerInput(onProfile, onLongPress, customLongPressMs) {
+                coroutineScope {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        val pressInteraction = PressInteraction.Press(down.position)
+                        this@coroutineScope.launch { profilePress.emit(pressInteraction) }
+                        var longPressed = false
+                        val job = this@coroutineScope.launch {
+                            delay(customLongPressMs)
+                            longPressed = true
+                            try {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            } catch (_: Exception) {}
+                            profilePress.emit(PressInteraction.Release(pressInteraction))
+                            onLongPress()
+                        }
+                        val up = waitForUpOrCancellation()
+                        job.cancel()
+                        if (up != null) {
+                            up.consume()
+                            if (!longPressed) {
+                                this@coroutineScope.launch { profilePress.emit(PressInteraction.Release(pressInteraction)) }
+                                onProfile()
+                            }
+                        } else {
+                            this@coroutineScope.launch { profilePress.emit(PressInteraction.Cancel(pressInteraction)) }
+                        }
+                    }
+                }
+            }
+            .indication(profilePress, ripple())
+    } else {
+        Modifier.clickable(interactionSource = profilePress, indication = ripple(), role = Role.Button, onClick = onProfile)
+    }
+
     // The one button on the bar with no caption under it: its name is in a tooltip.
     com.tmplayer.ui.components.IconTip(s.navProfile) {
         Column(
@@ -837,7 +909,7 @@ private fun ProfileButton(account: Account?, inProfile: Boolean, badged: Boolean
                 .size(buttonWidth, BUTTON_HEIGHT)
                 .pressScale(profilePress)
                 .clip(HIGHLIGHT_SHAPE)
-                .clickable(interactionSource = profilePress, indication = ripple(), role = Role.Button, onClick = onProfile)
+                .then(clickModifier)
                 .semantics {
                     contentDescription = s.navProfile
                     selected = inProfile
@@ -1022,6 +1094,7 @@ private fun ProfilePopover(
     val context = LocalContext.current
     LaunchedEffect(context) { com.tmplayer.av.AvStore.init(context) }
     val avVisible by com.tmplayer.av.AvStore.isTabVisibleFlow.collectAsState()
+    val chatsVisible by com.tmplayer.av.AvStore.isChatsTabVisibleFlow.collectAsState()
     AnimatedVisibility(
         visible = open,
         enter = fadeIn(Motion.standard(if (reduced) 0 else Motion.Fast)),
@@ -1091,7 +1164,7 @@ private fun ProfilePopover(
                 )
                 HorizontalDivider(Modifier.padding(horizontal = 14.dp, vertical = 2.dp))
                 val listRows = buildList<@Composable (Modifier) -> Unit> {
-                    if (onSignInTelegram != null) {
+                    if (onSignInTelegram != null && chatsVisible) {
                         add { m -> PopoverRow(TmIcons.Chats, "🔑 Đăng nhập Telegram", null, ink = Tone.accent, modifier = m, onClick = onSignInTelegram) }
                     }
                     add { m -> PopoverRow(TmIcons.StarOutline, s.browseTabFavourites, favoriteCount.takeIf { it > 0 }?.toString(), modifier = m, onClick = onFavourites) }

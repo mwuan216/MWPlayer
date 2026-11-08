@@ -1330,6 +1330,20 @@ fun SettingsScreen(
                         onToggle = { scope.launch { settings.setHomeEnabled(!homeLayout.enabled) } },
                     )
                 }
+                item(key = "chats_tab_visible") {
+                    val chatsTabVisible by com.tmplayer.av.AvStore.isChatsTabVisibleFlow.collectAsState()
+                    ToggleRow(
+                        title = "Hiện tab Trò chuyện",
+                        subtitle = if (chatsTabVisible) {
+                            "Hiển thị tab Trò chuyện trên thanh điều hướng dưới cùng"
+                        } else {
+                            "Đang ẩn để giao diện như app xem phim thường. Nhấn giữ nút Menu (tab cuối) 1,5 giây để bật lại"
+                        },
+                        icon = TmIcons.Chats,
+                        checked = chatsTabVisible,
+                        onToggle = { com.tmplayer.av.AvStore.setChatsTabVisible(context, !chatsTabVisible) },
+                    )
+                }
                 sectionTitle { s.settingsHomeRows }
                 item(key = "home_carousel") {
                     ToggleRow(

@@ -20,6 +20,7 @@ import org.json.JSONObject
 object AvStore {
     private const val PREFS_NAME = "mwplayer_av_prefs"
     private const val KEY_TAB_VISIBLE = "av_tab_visible"
+    private const val KEY_CHATS_TAB_VISIBLE = "chats_tab_visible"
     private const val KEY_PIN_CODE = "av_pin_code"
     private const val KEY_WATCHLIST = "av_watchlist"
     private const val KEY_HISTORY = "av_history"
@@ -29,6 +30,9 @@ object AvStore {
 
     private val _isTabVisibleFlow = MutableStateFlow(true)
     val isTabVisibleFlow: StateFlow<Boolean> = _isTabVisibleFlow.asStateFlow()
+
+    private val _isChatsTabVisibleFlow = MutableStateFlow(true)
+    val isChatsTabVisibleFlow: StateFlow<Boolean> = _isChatsTabVisibleFlow.asStateFlow()
 
     private val _pinCodeFlow = MutableStateFlow("")
     val pinCodeFlow: StateFlow<String> = _pinCodeFlow.asStateFlow()
@@ -67,6 +71,7 @@ object AvStore {
     private fun loadAll(context: Context) {
         val prefs = getPrefs(context)
         _isTabVisibleFlow.value = prefs.getBoolean(KEY_TAB_VISIBLE, true)
+        _isChatsTabVisibleFlow.value = prefs.getBoolean(KEY_CHATS_TAB_VISIBLE, true)
         val savedPin = prefs.getString(KEY_PIN_CODE, "")?.trim().orEmpty()
         _pinCodeFlow.value = savedPin
         _isSessionUnlockedFlow.value = savedPin.isEmpty()
@@ -190,6 +195,13 @@ object AvStore {
         init(context)
         _isTabVisibleFlow.value = visible
         getPrefs(context).edit().putBoolean(KEY_TAB_VISIBLE, visible).apply()
+    }
+
+    @Synchronized
+    fun setChatsTabVisible(context: Context, visible: Boolean) {
+        init(context)
+        _isChatsTabVisibleFlow.value = visible
+        getPrefs(context).edit().putBoolean(KEY_CHATS_TAB_VISIBLE, visible).apply()
     }
 
     @Synchronized

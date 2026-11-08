@@ -351,13 +351,16 @@ internal fun BrowseScreen(
     }
     // The saved section is matched back against the live folder list, so the rail never highlights
     // a folder deleted elsewhere and the heading never keeps a stale name.
+    val chatsTabVisible by com.tmplayer.av.AvStore.isChatsTabVisibleFlow.collectAsState()
     val defaultTab = if (homeLayout.enabled) BrowseTab.Home else BrowseTab.Movie
     val tab = picked?.let { chosen ->
-        when (chosen) {
-            is BrowseSection.Tab -> if (!homeLayout.enabled && chosen.tab == BrowseTab.Home) BrowseSection.of(BrowseTab.Movie) else chosen
-            is BrowseSection.Folder -> sections.filterIsInstance<BrowseSection.Folder>()
+        when {
+            !chatsTabVisible && chosen.onChatsPage -> BrowseSection.of(defaultTab)
+            chosen is BrowseSection.Tab -> if (!homeLayout.enabled && chosen.tab == BrowseTab.Home) BrowseSection.of(BrowseTab.Movie) else chosen
+            chosen is BrowseSection.Folder -> sections.filterIsInstance<BrowseSection.Folder>()
                 .firstOrNull { it.id == chosen.id }
                 ?: chosen.takeIf { folders.isEmpty() }
+            else -> chosen
         }
     // Home is the first destination on every device when enabled; otherwise Movie.
     } ?: BrowseSection.of(defaultTab)
@@ -740,7 +743,11 @@ internal fun BrowseScreen(
                     )
                     Spacer(Modifier.height(8.dp))
                     M3Text(
-                        text = "Xem kho phim điện ảnh, phim bộ, anime và AV online chất lượng cao không giới hạn. Đăng nhập Telegram khi bạn muốn lưu trữ đám mây hoặc trò chuyện.",
+                        text = if (chatsTabVisible) {
+                            "Xem kho phim điện ảnh, phim bộ, anime và AV online chất lượng cao không giới hạn. Đăng nhập Telegram khi bạn muốn lưu trữ đám mây hoặc trò chuyện."
+                        } else {
+                            "Khám phá kho phim điện ảnh, phim bộ, hoạt hình và TV Shows chất lượng cao cập nhật liên tục mỗi ngày."
+                        },
                         style = M3MaterialTheme.typography.bodyMedium,
                         color = Tone.text.copy(alpha = 0.7f),
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center,
@@ -762,17 +769,19 @@ internal fun BrowseScreen(
                         ) {
                             M3Text("🎬 Xem Phim ngay", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                         }
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(44.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(Tone.surfaceHigh)
-                                .border(1.dp, Tone.accent.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
-                                .clickable { onSignInTelegram() },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            M3Text("🔑 Đăng nhập Tele", color = Tone.accent, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        if (chatsTabVisible) {
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(44.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Tone.surfaceHigh)
+                                    .border(1.dp, Tone.accent.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+                                    .clickable { onSignInTelegram() },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                M3Text("🔑 Đăng nhập Tele", color = Tone.accent, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            }
                         }
                     }
                 }

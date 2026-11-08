@@ -151,6 +151,7 @@ internal fun TvTopBar(
     val context = androidx.compose.ui.platform.LocalContext.current
     LaunchedEffect(context) { com.tmplayer.av.AvStore.init(context) }
     val avVisible by com.tmplayer.av.AvStore.isTabVisibleFlow.collectAsState()
+    val chatsVisible by com.tmplayer.av.AvStore.isChatsTabVisibleFlow.collectAsState()
     var profileOpen by remember { mutableStateOf(false) }
     val ground = Tone.background
     val homeFocus = remember { FocusRequester() }
@@ -223,7 +224,9 @@ internal fun TvTopBar(
                 if (avVisible) {
                     BarTab("AV 18+", TmIcons.Favorite, current == TvBarTab.Av && !searchOpen, onAv, Modifier.focusRequester(focusOf(TvBarTab.Av, avFocus)).tvReturnPoint(focusOf(TvBarTab.Av, avFocus)))
                 }
-                BarTab(s.browseTabChats, TmIcons.Chats, current == TvBarTab.Chats && !searchOpen, onChats, Modifier.focusRequester(focusOf(TvBarTab.Chats, chatsFocus)).tvReturnPoint(focusOf(TvBarTab.Chats, chatsFocus)))
+                if (chatsVisible) {
+                    BarTab(s.browseTabChats, TmIcons.Chats, current == TvBarTab.Chats && !searchOpen, onChats, Modifier.focusRequester(focusOf(TvBarTab.Chats, chatsFocus)).tvReturnPoint(focusOf(TvBarTab.Chats, chatsFocus)))
+                }
             }
             Spacer(Modifier.width(18.dp))
             // The app's own mark and its name, the way a television's home screen signs itself:
