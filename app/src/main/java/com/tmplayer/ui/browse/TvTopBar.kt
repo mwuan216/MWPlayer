@@ -32,6 +32,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -146,6 +148,9 @@ internal fun TvTopBar(
     profileFocus: FocusRequester? = null,
 ) {
     val s = LocalStrings.current
+    val context = androidx.compose.ui.platform.LocalContext.current
+    LaunchedEffect(context) { com.tmplayer.av.AvStore.init(context) }
+    val avVisible by com.tmplayer.av.AvStore.isTabVisibleFlow.collectAsState()
     var profileOpen by remember { mutableStateOf(false) }
     val ground = Tone.background
     val homeFocus = remember { FocusRequester() }
@@ -215,7 +220,9 @@ internal fun TvTopBar(
                     BarTab(s.browseTabHome, TmIcons.Home, current == TvBarTab.Home && !searchOpen, onHome, Modifier.focusRequester(focusOf(TvBarTab.Home, homeFocus)).tvReturnPoint(focusOf(TvBarTab.Home, homeFocus)))
                 }
                 BarTab("Movie", TmIcons.Trailer, current == TvBarTab.Movie && !searchOpen, onMovie, Modifier.focusRequester(focusOf(TvBarTab.Movie, movieFocus)).tvReturnPoint(focusOf(TvBarTab.Movie, movieFocus)))
-                BarTab("AV 18+", TmIcons.Favorite, current == TvBarTab.Av && !searchOpen, onAv, Modifier.focusRequester(focusOf(TvBarTab.Av, avFocus)).tvReturnPoint(focusOf(TvBarTab.Av, avFocus)))
+                if (avVisible) {
+                    BarTab("AV 18+", TmIcons.Favorite, current == TvBarTab.Av && !searchOpen, onAv, Modifier.focusRequester(focusOf(TvBarTab.Av, avFocus)).tvReturnPoint(focusOf(TvBarTab.Av, avFocus)))
+                }
                 BarTab(s.browseTabChats, TmIcons.Chats, current == TvBarTab.Chats && !searchOpen, onChats, Modifier.focusRequester(focusOf(TvBarTab.Chats, chatsFocus)).tvReturnPoint(focusOf(TvBarTab.Chats, chatsFocus)))
             }
             Spacer(Modifier.width(18.dp))

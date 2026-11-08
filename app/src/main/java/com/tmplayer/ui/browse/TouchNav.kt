@@ -1019,6 +1019,9 @@ private fun ProfilePopover(
     onSignInTelegram: (() -> Unit)? = null,
 ) {
     val s = LocalStrings.current
+    val context = LocalContext.current
+    LaunchedEffect(context) { com.tmplayer.av.AvStore.init(context) }
+    val avVisible by com.tmplayer.av.AvStore.isTabVisibleFlow.collectAsState()
     AnimatedVisibility(
         visible = open,
         enter = fadeIn(Motion.standard(if (reduced) 0 else Motion.Fast)),
@@ -1087,7 +1090,7 @@ private fun ProfilePopover(
                     onStarred = onFavourites,
                 )
                 HorizontalDivider(Modifier.padding(horizontal = 14.dp, vertical = 2.dp))
-                val rows = buildList<@Composable (Modifier) -> Unit> {
+                val listRows = buildList<@Composable (Modifier) -> Unit> {
                     if (onSignInTelegram != null) {
                         add { m -> PopoverRow(TmIcons.Chats, "🔑 Đăng nhập Telegram", null, ink = Tone.accent, modifier = m, onClick = onSignInTelegram) }
                     }
@@ -1095,16 +1098,20 @@ private fun ProfilePopover(
                     add { m -> PopoverRow(TmIcons.Download, s.navDownloads, downloadCount.takeIf { it > 0 }?.toString(), modifier = m, onClick = onDownloads) }
                     add { m -> PopoverRow(TmIcons.History, s.browseTabHistory, null, modifier = m, onClick = onHistory) }
                     add { m -> PopoverRow(TmIcons.Clock, s.browseTabWatchLater, null, modifier = m, onClick = onWatchLater) }
-                    add { m -> PopoverRow(TmIcons.Favorite, "Kho Phim AV 18+", null, modifier = m, onClick = onAv) }
+                    if (avVisible) {
+                        add { m -> PopoverRow(TmIcons.Favorite, "Kho Phim AV 18+", null, modifier = m, onClick = onAv) }
+                    }
+                }
+                val footerRows = buildList<@Composable (Modifier) -> Unit> {
                     add { m -> PopoverRow(TmIcons.Settings, s.navSettings, null, modifier = m, onClick = onSettings) }
                     if (updateVersion != null) {
                         // Amber, as on the television's rail and the desktop's side bar: the one row that is news.
                         add { m -> PopoverRow(TmIcons.Refresh, s.navUpdate, updateVersion, ink = Tone.caution, modifier = m, onClick = onUpdate) }
                     }
                 }
-                rows.take(POPOVER_LISTS).forEach { it(Modifier) }
+                listRows.forEach { it(Modifier) }
                 HorizontalDivider(Modifier.padding(horizontal = 14.dp, vertical = 2.dp))
-                rows.drop(POPOVER_LISTS).forEach { it(Modifier) }
+                footerRows.forEach { it(Modifier) }
             }
         }
     }
