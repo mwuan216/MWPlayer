@@ -24,6 +24,8 @@ import java.text.Normalizer
 
 object MovieRepository {
 
+    val episodeCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+
     private const val USER_AGENT =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
@@ -74,7 +76,7 @@ object MovieRepository {
     suspend fun getLatestMovies(source: MovieSource, page: Int = 1): List<MovieItem> {
         if (source.isAv) return com.tmplayer.av.AvRepository.getLatest(source, page)
         val url = when (source) {
-            MovieSource.KKPhim -> "https://phimapi.com/danh-sach/phim-moi-cap-nhat?page=$page"
+            MovieSource.KKPhim -> "https://phimapi.com/v1/api/danh-sach/phim-moi-cap-nhat?page=$page"
             else -> "https://vsmov.com/api/danh-sach/phim-moi-cap-nhat?page=$page"
         }
         val referer = if (source == MovieSource.VSMov) "https://vsmov.com/" else "https://phimapi.com/"
@@ -103,7 +105,47 @@ object MovieRepository {
         }
         val referer = if (source == MovieSource.VSMov) "https://vsmov.com/" else "https://phimapi.com/"
         val jsonStr = fetchJson(url, referer) ?: return emptyList()
-        return parseMovieList(jsonStr, source)
+        val defaultType = when (categorySlug) {
+            "phim-bo" -> "series"
+            "phim-le", "phim-chieu-rap" -> "single"
+            else -> ""
+        }
+        val list = parseMovieList(jsonStr, source, defaultType)
+        return if (source == MovieSource.VSMov && categorySlug == "phim-bo") {
+            enrichEpisodesInParallel(list)
+        } else {
+            list
+        }
+    }
+
+    private suspend fun fetchEpisodeCurrentQuick(slug: String): String = withContext(Dispatchers.IO) {
+        if (slug.isBlank()) return@withContext ""
+        try {
+            val url = "https://vsmov.com/api/phim/$slug"
+            val json = fetchJson(url, "https://vsmov.com/") ?: return@withContext ""
+            val root = JSONObject(json)
+            val mvObj = root.optJSONObject("movie") ?: return@withContext ""
+            mvObj.optString("episode_current", "").trim()
+        } catch (e: Exception) {
+            ""
+        }
+    }
+
+    private suspend fun enrichEpisodesInParallel(list: List<MovieItem>): List<MovieItem> = coroutineScope {
+        list.map { item ->
+            async {
+                val cached = episodeCache[item.slug]
+                if (cached != null && cached.isNotBlank()) {
+                    item.copy(episodeCurrent = cached)
+                } else if (item.isSeries && item.episodeCurrent.isBlank() && item.slug.isNotBlank()) {
+                    val ep = fetchEpisodeCurrentQuick(item.slug)
+                    if (ep.isNotBlank()) {
+                        episodeCache[item.slug] = ep
+                        item.copy(episodeCurrent = ep)
+                    } else item
+                } else item
+            }
+        }.map { it.await() }
     }
 
     suspend fun getGenreMovies(source: MovieSource, genreSlug: String, page: Int = 1): List<MovieItem> {
@@ -525,6 +567,12 @@ object MovieRepository {
             msvSlug = msvDetail?.movie?.slug.orEmpty()
         )
 
+        if (mergedMovie.episodeCurrent.isNotBlank()) {
+            episodeCache[mergedMovie.slug] = mergedMovie.episodeCurrent
+            if (mergedMovie.kkSlug.isNotBlank()) episodeCache[mergedMovie.kkSlug] = mergedMovie.episodeCurrent
+            if (mergedMovie.msvSlug.isNotBlank()) episodeCache[mergedMovie.msvSlug] = mergedMovie.episodeCurrent
+        }
+
         MovieDetail(
             movie = mergedMovie,
             content = primaryDetail.content.ifBlank { secondaryDetail?.content.orEmpty() },
@@ -698,7 +746,7 @@ object MovieRepository {
     // JSON PARSING HELPERS
     // =========================================================================
 
-    private fun parseMovieList(jsonStr: String, source: MovieSource): List<MovieItem> {
+    private fun parseMovieList(jsonStr: String, source: MovieSource, defaultType: String = ""): List<MovieItem> {
         return try {
             val root = JSONObject(jsonStr)
             val dObj = root.optJSONObject("data")
@@ -723,19 +771,37 @@ object MovieRepository {
                 val tmdb = obj.optJSONObject("tmdb")
                 val vote = tmdb?.optDouble("vote_average", 0.0) ?: 0.0
                 val rating = if (vote > 0.0) String.format(java.util.Locale.US, "%.1f", vote) else ""
+                val tmdbType = tmdb?.optString("type", "").orEmpty()
+
+                val rawType = obj.optString("type", "").ifBlank { tmdbType }.ifBlank { defaultType }
+                val normalizedType = when (rawType.lowercase().trim()) {
+                    "tv", "series", "tvshows" -> "series"
+                    "movie", "single" -> "single"
+                    "hoathinh" -> if (tmdbType == "movie") "single" else if (tmdbType == "tv") "series" else rawType
+                    else -> rawType
+                }
+
+                val epCurrent = obj.optString("episode_current", "").trim().ifBlank {
+                    obj.optJSONArray("last_episodes")?.optJSONObject(0)?.optString("name", "").orEmpty().trim()
+                }
+
+                val slug = obj.optString("slug", "")
+                if (epCurrent.isNotBlank() && slug.isNotBlank()) {
+                    episodeCache[slug] = epCurrent
+                }
 
                 list.add(
                     MovieItem(
                         name = obj.optString("name", "Phim"),
                         originName = obj.optString("origin_name", ""),
-                        slug = obj.optString("slug", ""),
+                        slug = slug,
                         thumbUrl = thumb,
                         posterUrl = poster,
                         year = obj.optString("year", ""),
                         quality = obj.optString("quality").ifBlank { "HD" },
                         lang = obj.optString("lang").ifBlank { "Vietsub" },
-                        type = obj.optString("type", ""),
-                        episodeCurrent = obj.optString("episode_current", ""),
+                        type = normalizedType,
+                        episodeCurrent = epCurrent,
                         rating = rating,
                         source = source
                     )

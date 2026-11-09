@@ -1581,8 +1581,16 @@ private fun MovieHeroCarousel(
                             .padding(14.dp)
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (movie.isSeries) {
+                                val epText = if (movie.episodeCurrent.isNotBlank()) movie.episodeCurrent else "Phim bộ"
+                                BadgePill(text = epText, bg = Tone.accent, textColor = Color.Black)
+                                Spacer(Modifier.width(6.dp))
+                            } else {
+                                BadgePill(text = "Phim lẻ", bg = Color.White.copy(alpha = 0.2f), textColor = Color.White)
+                                Spacer(Modifier.width(6.dp))
+                            }
                             if (movie.rating.isNotBlank()) {
-                                BadgePill(text = "⭐ ${movie.rating}", bg = Tone.accent, textColor = Color.Black)
+                                BadgePill(text = "⭐ ${movie.rating}", bg = Color.Black.copy(alpha = 0.6f), textColor = Tone.accent)
                                 Spacer(Modifier.width(6.dp))
                             }
                             if (movie.quality.isNotBlank()) {
@@ -1906,6 +1914,9 @@ private fun MoviePosterCard(
 ) {
     val cloudSyncedList by MovieStore.cloudSyncedFlow.collectAsState()
     val cloudRecord = cloudSyncedList.firstOrNull { it.slug == movie.slug }
+    val isSeries = movie.isSeries
+    val epCached = MovieRepository.episodeCache[movie.slug].orEmpty()
+    val effectiveEpisode = movie.episodeCurrent.ifBlank { epCached }
 
     Column(
         modifier = Modifier
@@ -1929,7 +1940,53 @@ private fun MoviePosterCard(
                 modifier = Modifier.fillMaxSize()
             )
 
-            // Top-right selection checkbox or quick remove button (for History screen)
+            // Top-left badge: Type & Episode ("Phim lẻ" vs "Tập 12" / "Phim bộ")
+            if (isSeries) {
+                val label = when {
+                    effectiveEpisode.isNotBlank() && effectiveEpisode.contains("tập", ignoreCase = true) -> effectiveEpisode
+                    effectiveEpisode.isNotBlank() && effectiveEpisode.equals("full", ignoreCase = true) -> "Full bộ"
+                    effectiveEpisode.isNotBlank() && effectiveEpisode.contains("hoàn tất", ignoreCase = true) -> effectiveEpisode
+                    effectiveEpisode.isNotBlank() && Regex("""^\d+""").containsMatchIn(effectiveEpisode) -> "Tập $effectiveEpisode"
+                    effectiveEpisode.isNotBlank() -> effectiveEpisode
+                    else -> "Phim bộ"
+                }
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(4.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Tone.accent)
+                        .padding(horizontal = 5.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = label,
+                        color = Color.Black,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1
+                    )
+                }
+            } else {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(4.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color.Black.copy(alpha = 0.75f))
+                        .border(0.5.dp, Color.White.copy(alpha = 0.35f), RoundedCornerShape(4.dp))
+                        .padding(horizontal = 5.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = "Phim lẻ",
+                        color = Color.White,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1
+                    )
+                }
+            }
+
+            // Top-right badge: Selection checkbox, quick remove OR Rating (⭐ 8.2)
             if (isSelectionMode) {
                 Box(
                     modifier = Modifier
@@ -1968,13 +2025,10 @@ private fun MoviePosterCard(
                         modifier = Modifier.size(13.dp)
                     )
                 }
-            }
-
-            // Top-left badge: Rating or Episode
-            if (movie.rating.isNotBlank()) {
+            } else if (movie.rating.isNotBlank()) {
                 Box(
                     modifier = Modifier
-                        .align(Alignment.TopStart)
+                        .align(Alignment.TopEnd)
                         .padding(4.dp)
                         .clip(RoundedCornerShape(4.dp))
                         .background(Color.Black.copy(alpha = 0.75f))
@@ -1984,23 +2038,8 @@ private fun MoviePosterCard(
                         text = "⭐ ${movie.rating}",
                         color = Tone.accent,
                         fontSize = 9.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            } else if (movie.episodeCurrent.isNotBlank()) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(4.dp)
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(Tone.accent)
-                        .padding(horizontal = 5.dp, vertical = 2.dp)
-                ) {
-                    Text(
-                        text = movie.episodeCurrent,
-                        color = Color.Black,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1
                     )
                 }
             }
@@ -2079,11 +2118,30 @@ private fun MoviePosterCard(
             overflow = TextOverflow.Ellipsis
         )
 
+        val metaSubtitle = buildString {
+            if (isSeries) {
+                if (effectiveEpisode.isNotBlank()) {
+                    append(if (effectiveEpisode.contains("tập", ignoreCase = true)) effectiveEpisode else "Tập $effectiveEpisode")
+                } else {
+                    append("Phim bộ")
+                }
+            } else {
+                append("Phim lẻ")
+            }
+            if (movie.year.isNotBlank()) {
+                append(" • ").append(movie.year)
+            }
+            if (movie.quality.isNotBlank()) {
+                append(" • ").append(movie.quality)
+            }
+        }
+
         Text(
-            text = if (movie.year.isNotBlank()) "${movie.year} • ${movie.quality}" else movie.quality,
-            color = Tone.text.copy(alpha = 0.5f),
+            text = metaSubtitle,
+            color = Tone.text.copy(alpha = 0.55f),
             fontSize = 11.sp,
-            maxLines = 1
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }
@@ -2174,8 +2232,14 @@ private fun MovieDetailContent(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    if (detail.movie.isSeries) {
+                        val epText = if (detail.movie.episodeCurrent.isNotBlank()) detail.movie.episodeCurrent else "Phim bộ"
+                        BadgePill(epText, bg = Tone.accent, textColor = Color.Black)
+                    } else {
+                        BadgePill("Phim lẻ", bg = Tone.surfaceHigh, textColor = Tone.text)
+                    }
                     if (detail.movie.rating.isNotBlank()) {
-                        BadgePill("⭐ ${detail.movie.rating}", bg = Tone.accent, textColor = Color.Black)
+                        BadgePill("⭐ ${detail.movie.rating}", bg = Tone.accent.copy(alpha = 0.2f), textColor = Tone.accent)
                     }
                     if (detail.movie.year.isNotBlank()) {
                         BadgePill(detail.movie.year, bg = Tone.surfaceHigh, textColor = Tone.text)
