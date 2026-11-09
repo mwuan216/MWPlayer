@@ -341,6 +341,9 @@ class MainActivity : ComponentActivity() {
             com.tmplayer.ui.browse.DebugFakeChats.on = intent.getBooleanExtra("fakechats", false)
         }
         Td.start(this)
+        lifecycleScope.launch(Dispatchers.IO) {
+            com.tmplayer.data.AppCacheManager.checkAutoClearOnLaunch(applicationContext)
+        }
         // A debug or promo build can force the support card on, to check it by eye:
         // `adb shell am start -n com.tmplayer/.MainActivity --ez support_reminder true`.
         if (BuildConfig.DEBUG && intent?.getBooleanExtra(EXTRA_SUPPORT_REMINDER, false) == true) {

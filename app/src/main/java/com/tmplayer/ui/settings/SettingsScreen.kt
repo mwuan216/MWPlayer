@@ -77,10 +77,12 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
+import com.tmplayer.data.AppCacheManager
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
@@ -412,6 +414,10 @@ fun SettingsScreen(
     // Filled by the first refresh, never read during composition: reading it is a blocking
     // statvfs().
     var disk by remember { mutableStateOf(DiskInfo.EMPTY) }
+    var appCacheBytes by remember { mutableLongStateOf(0L) }
+    var autoClearDays by remember { mutableIntStateOf(AppCacheManager.getAutoClearDays(context)) }
+    var showClearCacheConfirm by remember { mutableStateOf(false) }
+    var showAutoClearPicker by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf<String?>(null) }
     var prompt by remember { mutableStateOf<Prompt?>(null) }
     val backup = rememberBackupActions(onPlan = { prompt = Prompt.Restore(it) }, say = { toast(it) })
@@ -496,10 +502,13 @@ fun SettingsScreen(
             val readDisk = DiskSpace.read(context)
             val readSplit = runCatching { StorageSplit.measure(context) }
                 .getOrDefault(StorageSplit.EMPTY)
-            readDisk to readSplit
+            val readCache = runCatching { AppCacheManager.getCacheSizeBytes(context) }.getOrDefault(0L)
+            Triple(readDisk, readSplit, readCache)
         }
         disk = measured.first
         split = measured.second
+        appCacheBytes = measured.third
+        autoClearDays = AppCacheManager.getAutoClearDays(context)
         splitRead = true
     }
 
@@ -1482,6 +1491,25 @@ fun SettingsScreen(
                 // television's remote can reach too. Left out entirely when there is nothing but
                 // internal storage to choose between.
                 item { DownloadLocationRow(onMoved = { scope.launch { refresh() } }) }
+
+                // Quản lý bộ nhớ đệm (Cache)
+                sectionTitle { "Bộ nhớ đệm (Cache)" }
+                item {
+                    ActionRow(
+                        title = "Bộ nhớ đệm ứng dụng",
+                        subtitle = "Đang sử dụng: ${AppCacheManager.formatBytes(appCacheBytes)} • Nhấn để xóa bộ nhớ đệm",
+                        icon = TmIcons.Delete,
+                        onClick = { showClearCacheConfirm = true },
+                    )
+                }
+                item {
+                    ActionRow(
+                        title = "Tự động xóa bộ nhớ đệm",
+                        subtitle = AppCacheManager.getAutoClearOptionLabel(autoClearDays),
+                        icon = TmIcons.Archive,
+                        onClick = { showAutoClearPicker = true },
+                    )
+                }
                 // Here rather than among the downloads it acts on: it is a setting, and the
                 // Downloads page is the list. Turning it on is asked first; off deletes nothing.
                 item {
@@ -1947,6 +1975,68 @@ fun SettingsScreen(
     }
 
     qrLink?.let { (url, what) -> LinkQrDialog(url = url, what = what, onClose = { qrLink = null }) }
+    if (showClearCacheConfirm) {
+        val first = remember { FocusRequester() }
+        ChoiceSheet(
+            title = "Xóa toàn bộ bộ nhớ đệm?",
+            note = "Thao tác này sẽ dọn dẹp ${AppCacheManager.formatBytes(appCacheBytes)} dữ liệu đệm (ảnh bìa, poster, phụ đề, tệp tạm). Lịch sử xem và các phim tải về sẽ không bị ảnh hưởng.",
+            onDismiss = { showClearCacheConfirm = false },
+            onClose = { showClearCacheConfirm = false },
+        ) {
+            ChoiceList {
+                ChoiceLine(
+                    title = "Xóa toàn bộ ngay",
+                    icon = TmIcons.Delete,
+                    modifier = Modifier.focusRequester(first),
+                ) {
+                    showClearCacheConfirm = false
+                    scope.launch {
+                        val freed = AppCacheManager.clearAllCache(context)
+                        refresh()
+                        android.widget.Toast.makeText(
+                            context,
+                            "Đã xóa ${AppCacheManager.formatBytes(freed)} bộ nhớ đệm thành công!",
+                            android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
+                ChoiceLine(
+                    title = "Hủy bỏ",
+                    icon = TmIcons.Close,
+                ) {
+                    showClearCacheConfirm = false
+                }
+            }
+            FocusOnOpen(first)
+        }
+    }
+
+    if (showAutoClearPicker) {
+        val first = remember { FocusRequester() }
+        ChoiceSheet(
+            title = "Tự động xóa bộ nhớ đệm",
+            note = "Tự động dọn dẹp các tệp bộ nhớ đệm cũ (poster phim, phụ đề, đệm tạm) theo định kỳ đã chọn.",
+            onDismiss = { showAutoClearPicker = false },
+            onClose = { showAutoClearPicker = false },
+        ) {
+            ChoiceList {
+                AppCacheManager.AUTO_CLEAR_OPTIONS.forEachIndexed { index, days ->
+                    val selected = days == autoClearDays
+                    ChoiceLine(
+                        title = AppCacheManager.getAutoClearOptionLabel(days),
+                        selected = if (touch) null else selected,
+                        icon = if (selected) TmIcons.Check else null,
+                        modifier = if (index == 0) Modifier.focusRequester(first) else Modifier,
+                    ) {
+                        AppCacheManager.setAutoClearDays(context, days)
+                        autoClearDays = days
+                        showAutoClearPicker = false
+                    }
+                }
+            }
+            FocusOnOpen(first)
+        }
+    }
     if (supporting) SupportDialog(from = "settings", onClose = { supporting = false })
     if (pickingLanguage) LanguageDialog(settings, onClose = { pickingLanguage = false })
     if (showingLearnt) {

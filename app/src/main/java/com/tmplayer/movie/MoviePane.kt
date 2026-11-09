@@ -44,6 +44,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -56,6 +57,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -63,6 +65,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -211,6 +218,15 @@ fun MoviePane(
     var selectedMovieItem by catalogState::selectedMovieItem
     var movieDetail by catalogState::movieDetail
     var isDetailLoading by catalogState::isDetailLoading
+
+    var lastSheetDismissTime by remember { mutableLongStateOf(0L) }
+    val openMovieDetail: (MovieItem) -> Unit = { item ->
+        val now = System.currentTimeMillis()
+        if (now - lastSheetDismissTime > 500L && selectedMovieSlug == null) {
+            selectedMovieItem = item
+            selectedMovieSlug = item.slug
+        }
+    }
 
     val watchlist by MovieStore.watchlistFlow.collectAsState()
     val history by MovieStore.historyFlow.collectAsState()
@@ -1043,8 +1059,7 @@ fun MoviePane(
                                             selectedHistorySlugs + item.slug
                                         }
                                     } else {
-                                        selectedMovieItem = item
-                                        selectedMovieSlug = item.slug
+                                        openMovieDetail(item)
                                     }
                                 }
                             )
@@ -1095,10 +1110,7 @@ fun MoviePane(
                             item(key = "featured_hero_carousel") {
                                 MovieHeroCarousel(
                                     movies = latestMovies.take(6),
-                                    onMovieClick = {
-                                        selectedMovieItem = it
-                                        selectedMovieSlug = it.slug
-                                    }
+                                    onMovieClick = { openMovieDetail(it) }
                                 )
                             }
                         }
@@ -1110,10 +1122,7 @@ fun MoviePane(
                                     title = "⭐ Phim Đang Theo Dõi",
                                     movies = watchlist,
                                     onViewAll = { selectedCategory = "watchlist" },
-                                    onMovieClick = {
-                                        selectedMovieItem = it
-                                        selectedMovieSlug = it.slug
-                                    }
+                                    onMovieClick = { openMovieDetail(it) }
                                 )
                             }
                         }
@@ -1125,10 +1134,7 @@ fun MoviePane(
                                     title = "🎬 Phim Xem Gần Đây",
                                     records = history,
                                     onViewAll = { selectedCategory = "history" },
-                                    onRecordClick = { rec ->
-                                        selectedMovieItem = rec.toMovieItem()
-                                        selectedMovieSlug = rec.slug
-                                    },
+                                    onRecordClick = { rec -> openMovieDetail(rec.toMovieItem()) },
                                     onRemoveRecord = { rec -> MovieStore.removeFromHistory(context, rec.slug) }
                                 )
                             }
@@ -1141,10 +1147,7 @@ fun MoviePane(
                                     title = "🌟 Phim Mới Cập Nhật",
                                     movies = latestMovies.drop(6),
                                     onViewAll = { viewAllCategory = "latest" to "Phim Mới Cập Nhật" },
-                                    onMovieClick = {
-                                        selectedMovieItem = it
-                                        selectedMovieSlug = it.slug
-                                    }
+                                    onMovieClick = { openMovieDetail(it) }
                                 )
                             }
                         }
@@ -1156,10 +1159,7 @@ fun MoviePane(
                                     title = "🎬 Phim Chiếu Rạp",
                                     movies = cinemaMovies,
                                     onViewAll = { viewAllCategory = "phim-chieu-rap" to "Phim Chiếu Rạp" },
-                                    onMovieClick = {
-                                        selectedMovieItem = it
-                                        selectedMovieSlug = it.slug
-                                    }
+                                    onMovieClick = { openMovieDetail(it) }
                                 )
                             }
                         }
@@ -1171,10 +1171,7 @@ fun MoviePane(
                                     title = "🍿 Phim Bộ Đang Hot",
                                     movies = seriesMovies,
                                     onViewAll = { viewAllCategory = "phim-bo" to "Phim Bộ" },
-                                    onMovieClick = {
-                                        selectedMovieItem = it
-                                        selectedMovieSlug = it.slug
-                                    }
+                                    onMovieClick = { openMovieDetail(it) }
                                 )
                             }
                         }
@@ -1186,10 +1183,7 @@ fun MoviePane(
                                     title = "🎥 Phim Lẻ Đặc Sắc",
                                     movies = singleMovies,
                                     onViewAll = { viewAllCategory = "phim-le" to "Phim Lẻ" },
-                                    onMovieClick = {
-                                        selectedMovieItem = it
-                                        selectedMovieSlug = it.slug
-                                    }
+                                    onMovieClick = { openMovieDetail(it) }
                                 )
                             }
                         }
@@ -1201,10 +1195,7 @@ fun MoviePane(
                                     title = "🏮 Phim Cổ Trang",
                                     movies = costumeMovies,
                                     onViewAll = { viewAllCategory = "co-trang" to "Phim Cổ Trang" },
-                                    onMovieClick = {
-                                        selectedMovieItem = it
-                                        selectedMovieSlug = it.slug
-                                    }
+                                    onMovieClick = { openMovieDetail(it) }
                                 )
                             }
                         }
@@ -1216,10 +1207,7 @@ fun MoviePane(
                                     title = "🇰🇷 Phim Hàn Quốc",
                                     movies = koreaMovies,
                                     onViewAll = { viewAllCategory = "han-quoc" to "Phim Hàn Quốc" },
-                                    onMovieClick = {
-                                        selectedMovieItem = it
-                                        selectedMovieSlug = it.slug
-                                    }
+                                    onMovieClick = { openMovieDetail(it) }
                                 )
                             }
                         }
@@ -1231,10 +1219,7 @@ fun MoviePane(
                                     title = "🏮 Phim Trung Quốc",
                                     movies = chinaMovies,
                                     onViewAll = { viewAllCategory = "trung-quoc" to "Phim Trung Quốc" },
-                                    onMovieClick = {
-                                        selectedMovieItem = it
-                                        selectedMovieSlug = it.slug
-                                    }
+                                    onMovieClick = { openMovieDetail(it) }
                                 )
                             }
                         }
@@ -1246,10 +1231,7 @@ fun MoviePane(
                                     title = "🎌 Hoạt Hình & Anime",
                                     movies = animeMovies,
                                     onViewAll = { viewAllCategory = "hoat-hinh" to "Hoạt Hình & Anime" },
-                                    onMovieClick = {
-                                        selectedMovieItem = it
-                                        selectedMovieSlug = it.slug
-                                    }
+                                    onMovieClick = { openMovieDetail(it) }
                                 )
                             }
                         }
@@ -1261,10 +1243,7 @@ fun MoviePane(
                                     title = "👥 Phim Thuyết Minh & Subteam",
                                     movies = subteamMovies,
                                     onViewAll = { viewAllCategory = "subteam" to "Subteam" },
-                                    onMovieClick = {
-                                        selectedMovieItem = it
-                                        selectedMovieSlug = it.slug
-                                    }
+                                    onMovieClick = { openMovieDetail(it) }
                                 )
                             }
                         }
@@ -1387,7 +1366,10 @@ fun MoviePane(
     // =========================================================================
     if (selectedMovieSlug != null) {
         ModalBottomSheet(
-            onDismissRequest = { selectedMovieSlug = null },
+            onDismissRequest = {
+                selectedMovieSlug = null
+                lastSheetDismissTime = System.currentTimeMillis()
+            },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
             containerColor = Tone.surface,
             scrimColor = Color.Black.copy(alpha = 0.65f)
@@ -1409,6 +1391,10 @@ fun MoviePane(
                             val epName = detail.servers.getOrNull(sIdx)?.episodes?.getOrNull(eIdx)?.name ?: "Tập ${eIdx + 1}"
                             MovieStore.markEpisodeWatched(context, detail, sIdx, eIdx, epName)
                             OnlinePlayerActivity.launch(context, detail, sIdx, eIdx)
+                        },
+                        onClose = {
+                            selectedMovieSlug = null
+                            lastSheetDismissTime = System.currentTimeMillis()
                         }
                     )
                 } else {
@@ -2150,7 +2136,8 @@ private fun MoviePosterCard(
 @Composable
 private fun MovieDetailContent(
     detail: MovieDetail,
-    onPlayEpisode: (serverIdx: Int, epIdx: Int) -> Unit
+    onPlayEpisode: (serverIdx: Int, epIdx: Int) -> Unit,
+    onClose: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -2180,14 +2167,39 @@ private fun MovieDetailContent(
         }
     }
 
+    val nestedScrollConnection = remember {
+        object : NestedScrollConnection {
+            override fun onPostScroll(
+                consumed: Offset,
+                available: Offset,
+                source: NestedScrollSource
+            ): Offset {
+                // Consume unconsumed vertical deltas so it doesn't drag/bounce the bottom sheet
+                return available
+            }
+
+            override suspend fun onPostFling(
+                consumed: Velocity,
+                available: Velocity
+            ): Velocity {
+                // Consume unconsumed fling velocity so fast swipes don't dismiss or jitter the bottom sheet
+                return available
+            }
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .nestedScroll(nestedScrollConnection)
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 8.dp)
     ) {
         // TOP HEADER: Poster + Info
-        Row(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.Top
+        ) {
             Box(
                 modifier = Modifier
                     .width(105.dp)
@@ -2289,6 +2301,18 @@ private fun MovieDetailContent(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
+            }
+
+            IconButton(
+                onClick = onClose,
+                modifier = Modifier.size(36.dp)
+            ) {
+                Icon(
+                    imageVector = TmIcons.Close,
+                    contentDescription = "Đóng",
+                    tint = Tone.text.copy(alpha = 0.7f),
+                    modifier = Modifier.size(20.dp)
+                )
             }
         }
 

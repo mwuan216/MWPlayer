@@ -147,6 +147,8 @@ data class StorageSplit(
 
             val unfinishedBytes = unfinished.sumOf { it.downloadedBytes }
             val posters = runCatching { com.tmplayer.online.OnlineMetadata.current?.imageBytes() ?: 0L }.getOrDefault(0L)
+            val appCache = runCatching { AppCacheManager.getCacheSizeBytes(context) }.getOrDefault(0L)
+            cached += appCache
 
             StorageSplit(
                 downloadBytes = downloads,
@@ -155,7 +157,7 @@ data class StorageSplit(
                 // The remainder, floored: TDLib's total and a walk of the disk are taken a moment
                 // apart, and a negative band is worse than a missing one.
                 otherBytes = (total - legacyDownloads - cached - unfinishedBytes).coerceAtLeast(0L),
-                totalBytes = maxOf(total, legacyDownloads + cached + unfinishedBytes) + indexedBytes + posters,
+                totalBytes = maxOf(total, legacyDownloads + cached + unfinishedBytes) + indexedBytes + posters + appCache,
                 strays = strays,
                 unfinishedBytes = unfinishedBytes,
                 unfinishedCount = unfinished.size,

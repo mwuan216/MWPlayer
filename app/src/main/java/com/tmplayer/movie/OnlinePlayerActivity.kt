@@ -492,7 +492,26 @@ fun OnlinePlayerScreen(
         val defaultDataSourceFactory = DefaultDataSource.Factory(context, cleanHttpFactory)
         val mediaSourceFactory = DefaultMediaSourceFactory(defaultDataSourceFactory, extractorsFactory)
 
+        // Tối ưu bộ đệm (LoadControl):
+        // - Đệm trước tối thiểu 30s và tối đa lên tới 120s (2 phút video) giúp xem mượt ngay cả khi mạng lag
+        // - Giảm thời gian chờ phát ban đầu xuống 1.5s để bấm xem là chạy tức thì
+        // - Lưu 60s phân đoạn đã xem (back-buffer) để tua lại tức thì không cần tải lại từ server
+        val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                /* minBufferMs = */ 30_000,
+                /* maxBufferMs = */ 120_000,
+                /* bufferForPlaybackMs = */ 1_500,
+                /* bufferForPlaybackAfterRebufferMs = */ 3_000
+            )
+            .setBackBuffer(
+                /* backBufferDurationMs = */ 60_000,
+                /* retainBackBufferFromKeyframe = */ true
+            )
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .build()
+
         ExoPlayer.Builder(context)
+            .setLoadControl(loadControl)
             .setMediaSourceFactory(mediaSourceFactory)
             .build().also {
                 activity.exoPlayerInstance = it
