@@ -84,6 +84,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import com.tmplayer.data.AppCacheManager
+import com.tmplayer.data.TelegramBackupItem
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
@@ -421,7 +422,12 @@ fun SettingsScreen(
     var showAutoClearPicker by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf<String?>(null) }
     var prompt by remember { mutableStateOf<Prompt?>(null) }
-    val backup = rememberBackupActions(onPlan = { prompt = Prompt.Restore(it) }, say = { toast(it) })
+    var telegramBackupsToPick by remember { mutableStateOf<List<TelegramBackupItem>?>(null) }
+    val backup = rememberBackupActions(
+        onPlan = { prompt = Prompt.Restore(it) },
+        onChooseTelegramBackup = { telegramBackupsToPick = it },
+        say = { toast(it) },
+    )
     val saveLogs = rememberSaveLogs(say = { toast(it) })
     val saveNameCheck = rememberSaveNameCheck(say = { toast(it) })
     val developerOptions by settings.developerOptions.collectAsStateWithLifecycle(initialValue = false)
@@ -1704,14 +1710,33 @@ fun SettingsScreen(
             }
 
             SettingsPage.About -> {
-                // ---- backup ----------------------------------------------------------------------------
-                sectionTitle { s.backupSection }
+                // ---- telegram cloud backup -------------------------------------------------------------
+                sectionTitle { "Sao lưu Telegram Cloud" }
+                item {
+                    ActionRow(
+                        title = "Sao lưu lên tài khoản Telegram",
+                        subtitle = "Lưu toàn bộ cài đặt, phim yêu thích, lịch sử đã xem và tiến trình xem lên Saved Messages",
+                        icon = TmIcons.Send,
+                        modifier = Modifier.focusRequester(landing),
+                        onClick = backup.backUpToTelegram,
+                    )
+                }
+                item {
+                    ActionRow(
+                        title = "Khôi phục từ tài khoản Telegram",
+                        subtitle = "Xem danh sách và khôi phục dữ liệu từ các bản sao lưu đã lưu trên Telegram",
+                        icon = TmIcons.Refresh,
+                        onClick = backup.restoreFromTelegram,
+                    )
+                }
+
+                // ---- local file backup -----------------------------------------------------------------
+                sectionTitle { "Sao lưu tệp thiết bị" }
                 item {
                     ActionRow(
                         title = s.backupBackUp,
                         subtitle = "Lưu toàn bộ cài đặt, phim yêu thích, lịch sử đã xem và tiến trình xem (Movie, AV, Telegram) ra tệp sao lưu",
                         icon = TmIcons.Download,
-                        modifier = Modifier.focusRequester(landing),
                         onClick = backup.backUp,
                     )
                 }
@@ -2032,6 +2057,31 @@ fun SettingsScreen(
                         AppCacheManager.setAutoClearDays(context, days)
                         autoClearDays = days
                         showAutoClearPicker = false
+                    }
+                }
+            }
+            FocusOnOpen(first)
+        }
+    }
+
+    telegramBackupsToPick?.let { backups ->
+        val first = remember { FocusRequester() }
+        ChoiceSheet(
+            title = "Chọn bản sao lưu Telegram",
+            note = "Chọn một bản sao lưu từ Saved Messages để khôi phục dữ liệu.",
+            onDismiss = { telegramBackupsToPick = null },
+            onClose = { telegramBackupsToPick = null },
+        ) {
+            ChoiceList {
+                backups.forEachIndexed { index, item ->
+                    ChoiceLine(
+                        title = item.displayDate,
+                        detail = "${item.fileName} • ${item.displaySize}",
+                        icon = TmIcons.Download,
+                        modifier = if (index == 0) Modifier.focusRequester(first) else Modifier,
+                    ) {
+                        telegramBackupsToPick = null
+                        backup.applyTelegramBackup(item)
                     }
                 }
             }

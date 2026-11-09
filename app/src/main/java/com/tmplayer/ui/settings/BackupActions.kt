@@ -34,6 +34,9 @@ internal class BackupActions(
     val restore: () -> Unit,
     /** Merges a backup in, once the viewer has confirmed the [RestorePlan] they were shown. */
     val apply: (Backup) -> Unit,
+    val backUpToTelegram: () -> Unit,
+    val restoreFromTelegram: () -> Unit,
+    val applyTelegramBackup: (com.tmplayer.data.TelegramBackupItem) -> Unit,
 )
 
 /**
@@ -50,6 +53,7 @@ internal class BackupActions(
 @Composable
 internal fun rememberBackupActions(
     onPlan: (RestorePlan) -> Unit,
+    onChooseTelegramBackup: (List<com.tmplayer.data.TelegramBackupItem>) -> Unit = {},
     say: (String) -> Unit,
 ): BackupActions {
     val context = LocalContext.current
@@ -149,6 +153,53 @@ internal fun rememberBackupActions(
                     }.onFailure { Logger.w(TAG, "Restore failed", it) }.isSuccess
                 }
                 say(if (done) L.backupRestored else L.backupReadFailed)
+            }
+        },
+        backUpToTelegram = {
+            scope.launch {
+                if (!com.tmplayer.data.TelegramBackupManager.isTelegramSignedIn()) {
+                    say("Vui lòng đăng nhập tài khoản Telegram để sao lưu")
+                    return@launch
+                }
+                say("Đang sao lưu lên Telegram...")
+                val text = withContext(Dispatchers.IO) { exportFullBackup() }
+                val fileName = service.fileName()
+                val result = com.tmplayer.data.TelegramBackupManager.backupToTelegram(context, text, fileName)
+                result.onSuccess {
+                    say("Đã sao lưu lên Telegram (Saved Messages) thành công!")
+                }.onFailure { err ->
+                    say("Sao lưu lên Telegram thất bại: ${err.message}")
+                }
+            }
+        },
+        restoreFromTelegram = {
+            scope.launch {
+                if (!com.tmplayer.data.TelegramBackupManager.isTelegramSignedIn()) {
+                    say("Vui lòng đăng nhập tài khoản Telegram để khôi phục")
+                    return@launch
+                }
+                say("Đang tìm các bản sao lưu từ Telegram...")
+                val result = com.tmplayer.data.TelegramBackupManager.listBackupsFromTelegram()
+                result.onSuccess { list ->
+                    if (list.isEmpty()) {
+                        say("Không tìm thấy bản sao lưu nào trong Saved Messages")
+                    } else {
+                        onChooseTelegramBackup(list)
+                    }
+                }.onFailure { err ->
+                    say("Không thể lấy danh sách sao lưu: ${err.message}")
+                }
+            }
+        },
+        applyTelegramBackup = { item ->
+            scope.launch {
+                say("Đang tải bản sao lưu từ Telegram...")
+                val result = com.tmplayer.data.TelegramBackupManager.downloadBackup(item)
+                result.onSuccess { text ->
+                    offer(text)
+                }.onFailure { err ->
+                    say("Tải bản sao lưu thất bại: ${err.message}")
+                }
             }
         },
     )
