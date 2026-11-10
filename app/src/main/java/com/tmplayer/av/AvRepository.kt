@@ -68,6 +68,23 @@ object AvRepository {
     private val allDetailsBySlug = ConcurrentHashMap<String, MovieDetail>()
     private val resolvedStreamCache = ConcurrentHashMap<String, Pair<Long, MovieStream>>()
 
+    private val DIACRITICS_REGEX = Regex("\\p{InCombiningDiacriticalMarks}+")
+    private val WHITESPACE_REGEX = Regex("\\s+")
+    private val FC2_CODE_REGEX = Regex("""FC2-PPV-\d{5,8}""")
+    private val STD_JAV_CODE_REGEX = Regex("""\b[A-Z]{2,7}-\d{2,6}\b""")
+    private val HTML_TAG_REGEX = Regex("<[^>]*>")
+    private val DFPLAYER_DID_REGEX = Regex("""[?&]did=([^&#]+)""")
+    private val DFPLAYER_ID_REGEX = Regex("""[?&]id=([^&#]+)""")
+    private val SURRIT_URL_REGEX = Regex("""https?://surrit\.com/[0-9a-fA-F-]{36}/playlist\.m3u8""")
+    private val PACKER_EVAL_REGEX = Regex(
+        """eval\(function\(p,a,c,k,e,[dr]\)\{.*?\}\(\s*'((?:\\.|[^'])*)'\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*'((?:\\.|[^'])*)'\.split\('\|'\)""",
+        RegexOption.DOT_MATCHES_ALL
+    )
+    private val WORD_BOUNDARY_REGEX = Regex("""\b\w+\b""")
+    private val UUID_REGEX = Regex("""[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}""")
+    private val PLAYER_CONFIG_REGEX = Regex("""window\.PLAYER_CONFIG\s*=\s*(\{.*?\});""", RegexOption.DOT_MATCHES_ALL)
+    private val M3U8_JSON_REGEX = Regex(""""m3u8"\s*:\s*"([^"]+)"""")
+
     fun invalidateStreamCache(episode: MovieEpisode?) {
         if (episode == null) {
             resolvedStreamCache.clear()
@@ -135,21 +152,21 @@ object AvRepository {
         if (input.isBlank()) return ""
         val nfd = Normalizer.normalize(input.lowercase(), Normalizer.Form.NFD)
         return nfd
-            .replace(Regex("\\p{InCombiningDiacriticalMarks}+"), "")
+            .replace(DIACRITICS_REGEX, "")
             .replace('đ', 'd')
             .replace('[', ' ')
             .replace(']', ' ')
             .replace('_', ' ')
             .replace('-', ' ')
-            .replace(Regex("\\s+"), " ")
+            .replace(WHITESPACE_REGEX, " ")
             .trim()
     }
 
     private fun extractJavCode(query: String): String? {
         val clean = query.uppercase().replace('_', '-')
-        val fc2Match = Regex("""FC2-PPV-\d{5,8}""").find(clean)
+        val fc2Match = FC2_CODE_REGEX.find(clean)
         if (fc2Match != null) return fc2Match.value
-        val stdMatch = Regex("""\b[A-Z]{2,7}-\d{2,6}\b""").find(clean)
+        val stdMatch = STD_JAV_CODE_REGEX.find(clean)
         return stdMatch?.value
     }
 
@@ -839,7 +856,7 @@ object AvRepository {
         )
 
         val content = decodeHtmlEntities(obj.optString("content", ""))
-            .replace(Regex("<[^>]*>"), "")
+            .replace(HTML_TAG_REGEX, "")
             .trim()
             .ifBlank { cleanName }
 
@@ -865,11 +882,11 @@ object AvRepository {
         } catch (_: Exception) {
             "https://a.dfplayer.cc"
         }
-        val didMatch = Regex("""[?&]did=([^&#]+)""").find(link)
+        val didMatch = DFPLAYER_DID_REGEX.find(link)
         if (didMatch != null) {
             return "$host/v2/s/${didMatch.groupValues[1]}.m3u8"
         }
-        val idMatch = Regex("""[?&]id=([^&#]+)""").find(link)
+        val idMatch = DFPLAYER_ID_REGEX.find(link)
         if (idMatch != null) {
             // /v1/s/ points to dead TikTok CDN segments (403 Forbidden); /v2/s/ uses the same numeric ID on self-hosted CDN (200 OK)
             return "$host/v2/s/${idMatch.groupValues[1]}.m3u8"
@@ -886,19 +903,15 @@ object AvRepository {
      * để trích xuất trực tiếp link HLS https://surrit.com/{uuid}/playlist.m3u8 từ trang web nhúng.
      */
     fun unpackDeanEdwards(html: String): String? {
-        val directSurrit = Regex("""https?://surrit\.com/[0-9a-fA-F-]{36}/playlist\.m3u8""").find(html)
+        val directSurrit = SURRIT_URL_REGEX.find(html)
         if (directSurrit != null) return directSurrit.value
 
-        val packerRegex = Regex(
-            """eval\(function\(p,a,c,k,e,[dr]\)\{.*?\}\(\s*'((?:\\.|[^'])*)'\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*'((?:\\.|[^'])*)'\.split\('\|'\)""",
-            RegexOption.DOT_MATCHES_ALL
-        )
-        for (m in packerRegex.findAll(html)) {
+        for (m in PACKER_EVAL_REGEX.findAll(html)) {
             val payload = m.groupValues[1]
             val radix = m.groupValues[2].toIntOrNull() ?: 36
             val symtab = m.groupValues[4].split('|')
 
-            val unpacked = Regex("""\b\w+\b""").replace(payload) { wordMatch ->
+            val unpacked = WORD_BOUNDARY_REGEX.replace(payload) { wordMatch ->
                 val word = wordMatch.value
                 val idx = word.toIntOrNull(radix)
                 if (idx != null && idx in symtab.indices && symtab[idx].isNotEmpty()) {
@@ -907,10 +920,10 @@ object AvRepository {
                     word
                 }
             }
-            val surritMatch = Regex("""https?://surrit\.com/[0-9a-fA-F-]{36}/playlist\.m3u8""").find(unpacked.replace("\\/", "/"))
+            val surritMatch = SURRIT_URL_REGEX.find(unpacked.replace("\\/", "/"))
             if (surritMatch != null) return surritMatch.value
 
-            val uuidMatch = Regex("""[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}""").find(unpacked)
+            val uuidMatch = UUID_REGEX.find(unpacked)
             if (uuidMatch != null) {
                 return "https://surrit.com/${uuidMatch.value}/playlist.m3u8"
             }
@@ -980,7 +993,7 @@ object AvRepository {
     // =========================================================================
 
     private fun extractM3u8FromUpload18Html(html: String): String {
-        val cfgMatch = Regex("""window\.PLAYER_CONFIG\s*=\s*(\{.*?\});""", RegexOption.DOT_MATCHES_ALL).find(html)
+        val cfgMatch = PLAYER_CONFIG_REGEX.find(html)
         if (cfgMatch != null) {
             try {
                 val cfg = JSONObject(cfgMatch.groupValues[1])
@@ -991,7 +1004,7 @@ object AvRepository {
                 if (m3u8.isNotBlank()) return m3u8
             } catch (_: Exception) {}
         }
-        val regexFallback = Regex(""""m3u8"\s*:\s*"([^"]+)"""").find(html)
+        val regexFallback = M3U8_JSON_REGEX.find(html)
         if (regexFallback != null) {
             return regexFallback.groupValues[1]
                 .replace("\\/", "/")

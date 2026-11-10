@@ -3,9 +3,13 @@ package com.tmplayer.movie
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.compose.runtime.Immutable
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -306,6 +310,9 @@ object MovieStore {
     private val _pullFormatFlow = MutableStateFlow("token")
     val pullFormatFlow: StateFlow<String> = _pullFormatFlow.asStateFlow()
 
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val DIGITS_REGEX = Regex("""\d+""")
+
     private var initialized = false
 
     fun init(context: Context) {
@@ -491,24 +498,28 @@ object MovieStore {
     }
 
     private fun saveWatchlist(context: Context, list: List<MovieItem>) {
-        try {
-            val array = JSONArray()
-            list.forEach { m ->
-                val obj = JSONObject().apply {
-                    put("name", m.name)
-                    put("originName", m.originName)
-                    put("slug", m.slug)
-                    put("thumbUrl", m.thumbUrl)
-                    put("posterUrl", m.posterUrl)
-                    put("year", m.year)
-                    put("quality", m.quality)
-                    put("lang", m.lang)
-                    put("source", m.source.name.lowercase())
+        val appCtx = context.applicationContext
+        val snapshot = list.toList()
+        ioScope.launch {
+            try {
+                val array = JSONArray()
+                snapshot.forEach { m ->
+                    val obj = JSONObject().apply {
+                        put("name", m.name)
+                        put("originName", m.originName)
+                        put("slug", m.slug)
+                        put("thumbUrl", m.thumbUrl)
+                        put("posterUrl", m.posterUrl)
+                        put("year", m.year)
+                        put("quality", m.quality)
+                        put("lang", m.lang)
+                        put("source", m.source.name.lowercase())
+                    }
+                    array.put(obj)
                 }
-                array.put(obj)
-            }
-            getPrefs(context).edit().putString(KEY_WATCHLIST, array.toString()).apply()
-        } catch (_: Exception) {}
+                getPrefs(appCtx).edit().putString(KEY_WATCHLIST, array.toString()).apply()
+            } catch (_: Exception) {}
+        }
     }
 
     // =========================================================================
@@ -681,19 +692,27 @@ object MovieStore {
     }
 
     private fun saveContinue(context: Context, list: List<MovieWatchProgress>) {
-        try {
-            val array = JSONArray()
-            list.forEach { array.put(it.toJson()) }
-            getPrefs(context).edit().putString(KEY_CONTINUE, array.toString()).apply()
-        } catch (_: Exception) {}
+        val appCtx = context.applicationContext
+        val snapshot = list.toList()
+        ioScope.launch {
+            try {
+                val array = JSONArray()
+                snapshot.forEach { array.put(it.toJson()) }
+                getPrefs(appCtx).edit().putString(KEY_CONTINUE, array.toString()).apply()
+            } catch (_: Exception) {}
+        }
     }
 
     private fun saveHistory(context: Context, list: List<MovieWatchProgress>) {
-        try {
-            val array = JSONArray()
-            list.forEach { array.put(it.toJson()) }
-            getPrefs(context).edit().putString(KEY_HISTORY, array.toString()).apply()
-        } catch (_: Exception) {}
+        val appCtx = context.applicationContext
+        val snapshot = list.toList()
+        ioScope.launch {
+            try {
+                val array = JSONArray()
+                snapshot.forEach { array.put(it.toJson()) }
+                getPrefs(appCtx).edit().putString(KEY_HISTORY, array.toString()).apply()
+            } catch (_: Exception) {}
+        }
     }
 
     // =========================================================================
@@ -709,7 +728,7 @@ object MovieStore {
         if (trimmed == "all" || trimmed == "full" || trimmed == "remaining") {
             return maxOf(totalEpisodes, previousPulled, 1)
         }
-        val nums = Regex("""\d+""").findAll(trimmed).mapNotNull { it.value.toIntOrNull() }.toList()
+        val nums = DIGITS_REGEX.findAll(trimmed).mapNotNull { it.value.toIntOrNull() }.toList()
         val maxInRange = nums.maxOrNull() ?: totalEpisodes
         return maxOf(maxInRange, previousPulled)
     }
@@ -861,11 +880,15 @@ object MovieStore {
     }
 
     private fun saveCloudSynced(context: Context, list: List<CloudSyncedMovie>) {
-        try {
-            val array = JSONArray()
-            list.forEach { array.put(it.toJson()) }
-            getPrefs(context).edit().putString(KEY_CLOUD_SYNCED, array.toString()).apply()
-        } catch (_: Exception) {}
+        val appCtx = context.applicationContext
+        val snapshot = list.toList()
+        ioScope.launch {
+            try {
+                val array = JSONArray()
+                snapshot.forEach { array.put(it.toJson()) }
+                getPrefs(appCtx).edit().putString(KEY_CLOUD_SYNCED, array.toString()).apply()
+            } catch (_: Exception) {}
+        }
     }
 
     // =========================================================================

@@ -6,9 +6,13 @@ import com.tmplayer.movie.MovieDetail
 import com.tmplayer.movie.MovieItem
 import com.tmplayer.movie.MovieSource
 import com.tmplayer.movie.MovieWatchProgress
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -54,6 +58,9 @@ object AvStore {
 
     private val _preferredCategoriesFlow = MutableStateFlow<List<String>>(emptyList())
     val preferredCategoriesFlow: StateFlow<List<String>> = _preferredCategoriesFlow.asStateFlow()
+
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val CODE_PREFIX_REGEX = Regex("""\b([A-Z]{2,7})-\d{2,7}\b""")
 
     private var initialized = false
 
@@ -138,11 +145,15 @@ object AvStore {
     }
 
     private fun saveStringList(context: Context, key: String, list: List<String>) {
-        try {
-            val arr = JSONArray()
-            list.forEach { arr.put(it) }
-            getPrefs(context).edit().putString(key, arr.toString()).apply()
-        } catch (_: Exception) {}
+        val appCtx = context.applicationContext
+        val snapshot = list.toList()
+        ioScope.launch {
+            try {
+                val arr = JSONArray()
+                snapshot.forEach { arr.put(it) }
+                getPrefs(appCtx).edit().putString(key, arr.toString()).apply()
+            } catch (_: Exception) {}
+        }
     }
 
     @Synchronized
@@ -181,8 +192,8 @@ object AvStore {
         val upperSlug = slug.uppercase()
         if (upperSlug.startsWith("FC2-PPV")) return "FC2-PPV"
         if (upperSlug.startsWith("FC2")) return "FC2"
-        val codeMatch = Regex("""\b([A-Z]{2,7})-\d{2,7}\b""").find(upperSlug)
-            ?: Regex("""\b([A-Z]{2,7})-\d{2,7}\b""").find(title.uppercase())
+        val codeMatch = CODE_PREFIX_REGEX.find(upperSlug)
+            ?: CODE_PREFIX_REGEX.find(title.uppercase())
         return codeMatch?.groupValues?.get(1).orEmpty()
     }
 
@@ -266,26 +277,30 @@ object AvStore {
     }
 
     private fun saveWatchlist(context: Context, list: List<MovieItem>) {
-        try {
-            val array = JSONArray()
-            list.forEach { item ->
-                array.put(
-                    JSONObject().apply {
-                        put("name", item.name)
-                        put("originName", item.originName)
-                        put("slug", item.slug)
-                        put("thumbUrl", item.thumbUrl)
-                        put("posterUrl", item.posterUrl)
-                        put("year", item.year)
-                        put("quality", item.quality)
-                        put("lang", item.lang)
-                        put("episodeCurrent", item.episodeCurrent)
-                        put("source", item.source.name.lowercase())
-                    }
-                )
-            }
-            getPrefs(context).edit().putString(KEY_WATCHLIST, array.toString()).apply()
-        } catch (_: Exception) {}
+        val appCtx = context.applicationContext
+        val snapshot = list.toList()
+        ioScope.launch {
+            try {
+                val array = JSONArray()
+                snapshot.forEach { item ->
+                    array.put(
+                        JSONObject().apply {
+                            put("name", item.name)
+                            put("originName", item.originName)
+                            put("slug", item.slug)
+                            put("thumbUrl", item.thumbUrl)
+                            put("posterUrl", item.posterUrl)
+                            put("year", item.year)
+                            put("quality", item.quality)
+                            put("lang", item.lang)
+                            put("episodeCurrent", item.episodeCurrent)
+                            put("source", item.source.name.lowercase())
+                        }
+                    )
+                }
+                getPrefs(appCtx).edit().putString(KEY_WATCHLIST, array.toString()).apply()
+            } catch (_: Exception) {}
+        }
     }
 
     // =========================================================================
@@ -363,11 +378,15 @@ object AvStore {
     }
 
     private fun saveHistory(context: Context, list: List<MovieWatchProgress>) {
-        try {
-            val array = JSONArray()
-            list.forEach { array.put(it.toJson()) }
-            getPrefs(context).edit().putString(KEY_HISTORY, array.toString()).apply()
-        } catch (_: Exception) {}
+        val appCtx = context.applicationContext
+        val snapshot = list.toList()
+        ioScope.launch {
+            try {
+                val array = JSONArray()
+                snapshot.forEach { array.put(it.toJson()) }
+                getPrefs(appCtx).edit().putString(KEY_HISTORY, array.toString()).apply()
+            } catch (_: Exception) {}
+        }
     }
 
     // =========================================================================

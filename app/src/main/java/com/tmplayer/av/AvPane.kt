@@ -86,6 +86,7 @@ private enum class AvMode {
     Home, ForYou, Category, Search, Watchlist, History
 }
 
+@Immutable
 private data class AvHomeShelf(
     val title: String,
     val slug: String,

@@ -52,6 +52,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -89,6 +90,7 @@ import com.tmplayer.ui.theme.Tone
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+@Immutable
 data class SourceHomeCache(
     val latestMovies: List<MovieItem> = emptyList(),
     val cinemaMovies: List<MovieItem> = emptyList(),
@@ -101,6 +103,7 @@ data class SourceHomeCache(
     val subteamMovies: List<MovieItem> = emptyList()
 )
 
+@Immutable
 data class GridCacheEntry(
     val movies: List<MovieItem>,
     val page: Int,

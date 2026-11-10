@@ -58,6 +58,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -204,11 +205,17 @@ class OnlinePlayerActivity : ComponentActivity() {
     }
 }
 
+@Immutable
 data class ServerSwitchTarget(
     val serverIndex: Int,
     val episodeIndex: Int,
     val server: MovieServer
 )
+
+private val EP_NAME_PREFIX_REGEX = Regex("""(?:tập|ep|tap)?\s*0*(\d+)""", RegexOption.IGNORE_CASE)
+private val EP_BOUNDARY_DIGIT_REGEX = Regex("""\b0*(\d+)\b""")
+private val EP_ANY_DIGIT_REGEX = Regex("""(\d+)""")
+private val EP_SLUG_PREFIX_REGEX = Regex("""(?:tap|ep)?-?0*(\d+)""", RegexOption.IGNORE_CASE)
 
 internal fun extractEpisodeKey(name: String, slug: String): String {
     val cleanName = name.trim().lowercase()
@@ -216,14 +223,14 @@ internal fun extractEpisodeKey(name: String, slug: String): String {
     if (cleanName.contains("full") || cleanSlug.contains("full")) {
         return "full"
     }
-    val digitFromName = Regex("""(?:tập|ep|tap)?\s*0*(\d+)""", RegexOption.IGNORE_CASE).find(cleanName)?.groupValues?.get(1)
-        ?: Regex("""\b0*(\d+)\b""").find(cleanName)?.groupValues?.get(1)
-        ?: Regex("""(\d+)""").find(cleanName)?.groupValues?.get(1)
+    val digitFromName = EP_NAME_PREFIX_REGEX.find(cleanName)?.groupValues?.get(1)
+        ?: EP_BOUNDARY_DIGIT_REGEX.find(cleanName)?.groupValues?.get(1)
+        ?: EP_ANY_DIGIT_REGEX.find(cleanName)?.groupValues?.get(1)
     if (!digitFromName.isNullOrEmpty()) {
         return digitFromName.trimStart('0').ifEmpty { "0" }
     }
-    val digitFromSlug = Regex("""(?:tap|ep)?-?0*(\d+)""", RegexOption.IGNORE_CASE).find(cleanSlug)?.groupValues?.get(1)
-        ?: Regex("""(\d+)""").find(cleanSlug)?.groupValues?.get(1)
+    val digitFromSlug = EP_SLUG_PREFIX_REGEX.find(cleanSlug)?.groupValues?.get(1)
+        ?: EP_ANY_DIGIT_REGEX.find(cleanSlug)?.groupValues?.get(1)
     if (!digitFromSlug.isNullOrEmpty()) {
         return digitFromSlug.trimStart('0').ifEmpty { "0" }
     }

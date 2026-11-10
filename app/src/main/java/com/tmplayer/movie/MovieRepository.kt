@@ -25,6 +25,16 @@ import java.text.Normalizer
 object MovieRepository {
 
     val episodeCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val detailCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, MovieDetail>>()
+    private val singleSourceDetailCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, MovieDetail>>()
+    private const val DETAIL_CACHE_TTL_MS = 10 * 60 * 1000L // 10 minutes
+
+    private val DIACRITICS_REGEX = Regex("\\p{InCombiningDiacriticalMarks}+")
+    private val NON_ALPHANUM_REGEX = Regex("[^a-z0-9]+")
+    private val WHITESPACE_REGEX = Regex("\\s+")
+    private val HTML_TAG_REGEX = Regex("<[^>]*>")
+    private val SUBTITLES_JSON_REGEX = Regex("""subtitles\s*:\s*(\[[^\]]*\])""")
+    private val VTT_TIMESTAMP_REGEX = Regex("""(\d{2}:\d{2}(?::\d{2})?),(\d{3})""")
 
     private const val USER_AGENT =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -268,9 +278,9 @@ object MovieRepository {
         if (raw.isBlank()) return ""
         val nfd = Normalizer.normalize(raw.lowercase().trim(), Normalizer.Form.NFD)
         return nfd
-            .replace(Regex("\\p{InCombiningDiacriticalMarks}+"), "")
+            .replace(DIACRITICS_REGEX, "")
             .replace('đ', 'd')
-            .replace(Regex("[^a-z0-9]+"), " ")
+            .replace(NON_ALPHANUM_REGEX, " ")
             .trim()
     }
 
@@ -387,6 +397,11 @@ object MovieRepository {
 
     private suspend fun fetchSingleSourceDetail(source: MovieSource, slug: String): MovieDetail? {
         if (slug.isBlank()) return null
+        val cacheKey = "${source.name}:$slug"
+        val now = System.currentTimeMillis()
+        singleSourceDetailCache[cacheKey]?.let { (ts, cached) ->
+            if (now - ts < DETAIL_CACHE_TTL_MS) return cached
+        }
         val url = when (source) {
             MovieSource.KKPhim -> "https://phimapi.com/phim/$slug"
             else -> "https://vsmov.com/api/phim/$slug"
@@ -444,7 +459,7 @@ object MovieRepository {
             if (epArr != null) {
                 for (sIdx in 0 until epArr.length()) {
                     val sObj = epArr.optJSONObject(sIdx) ?: continue
-                    val sName = sObj.optString("server_name", "Server ${sIdx + 1}").replace(Regex("\\s+"), " ").trim()
+                    val sName = sObj.optString("server_name", "Server ${sIdx + 1}").replace(WHITESPACE_REGEX, " ").trim()
                     val dataArr = sObj.optJSONArray("server_data")
                     val eps = mutableListOf<MovieEpisode>()
                     if (dataArr != null) {
@@ -476,7 +491,7 @@ object MovieRepository {
             }
 
             val cleanContent = mvObj.optString("content", "")
-                .replace(Regex("<[^>]*>"), "")
+                .replace(HTML_TAG_REGEX, "")
                 .replace("&quot;", "\"")
                 .replace("&#039;", "'")
                 .replace("&#39;", "'")
@@ -497,7 +512,9 @@ object MovieRepository {
                 categories = cats,
                 countries = countries,
                 servers = servers
-            )
+            ).also {
+                singleSourceDetailCache[cacheKey] = System.currentTimeMillis() to it
+            }
         } catch (e: Exception) {
             null
         }
@@ -512,6 +529,11 @@ object MovieRepository {
 
         val kkSlugCandidate = hintItem?.kkSlug?.takeIf { it.isNotBlank() } ?: slug
         val msvSlugCandidate = hintItem?.msvSlug?.takeIf { it.isNotBlank() } ?: slug
+        val combinedKey = "$slug|$kkSlugCandidate|$msvSlugCandidate"
+        val now = System.currentTimeMillis()
+        detailCache[combinedKey]?.let { (ts, cached) ->
+            if (now - ts < DETAIL_CACHE_TTL_MS) return@coroutineScope cached
+        }
 
         val kkDeferred = async { fetchSingleSourceDetail(MovieSource.KKPhim, kkSlugCandidate) }
         val msvDeferred = async { fetchSingleSourceDetail(MovieSource.VSMov, msvSlugCandidate) }
@@ -583,7 +605,9 @@ object MovieRepository {
             categories = primaryDetail.categories.ifEmpty { secondaryDetail?.categories.orEmpty() },
             countries = primaryDetail.countries.ifEmpty { secondaryDetail?.countries.orEmpty() },
             servers = combinedServers
-        )
+        ).also {
+            detailCache[combinedKey] = System.currentTimeMillis() to it
+        }
     }
 
     // =========================================================================
@@ -663,7 +687,7 @@ object MovieRepository {
     private suspend fun parseSubtitlesFromEmbed(embedUrl: String): List<MovieSubtitleTrack> {
         return try {
             val html = fetchJson(embedUrl, "https://vsmov.com/") ?: return emptyList()
-            val match = Regex("""subtitles\s*:\s*(\[[^\]]*\])""").find(html) ?: return emptyList()
+            val match = SUBTITLES_JSON_REGEX.find(html) ?: return emptyList()
             val jsonArray = JSONArray(match.groupValues[1])
             val host = try {
                 val uri = URI(embedUrl)
@@ -724,7 +748,7 @@ object MovieRepository {
             val trimmed = rawText.trimStart('\uFEFF', ' ', '\t', '\r', '\n')
             val header = if (trimmed.startsWith("WEBVTT")) "" else "WEBVTT\n\n"
             // 2. Fix comma in timestamps: 00:01:30,780 --> 00:01:34,371 => 00:01:30.780 --> 00:01:34.371
-            val fixedText = header + trimmed.replace(Regex("""(\d{2}:\d{2}(?::\d{2})?),(\d{3})"""), "$1.$2")
+            val fixedText = header + trimmed.replace(VTT_TIMESTAMP_REGEX, "$1.$2")
             file.writeText(fixedText, Charsets.UTF_8)
             Uri.fromFile(file)
         } catch (e: Exception) {
@@ -862,28 +886,63 @@ object MovieRepository {
 /** Trình tải và cache ảnh poster nhẹ, siêu mượt cho Movie screen */
 object MovieImageLoader {
 
-    private val memoryCache = object : LruCache<String, ImageBitmap>(40 * 1024 * 1024) {
+    private val memoryCache = object : LruCache<String, ImageBitmap>(48 * 1024 * 1024) {
         override fun sizeOf(key: String, value: ImageBitmap): Int {
-            // Estimating size in bytes (width * height * 4)
-            return value.width * value.height * 4
+            // RGB_565 uses 2 bytes per pixel
+            return value.width * value.height * 2
         }
     }
 
-    fun peek(url: String): ImageBitmap? {
-        if (url.isBlank()) return null
-        return memoryCache.get(url)
+    private val inFlightRequests = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Deferred<ImageBitmap?>>()
+    private val diskPruned = java.util.concurrent.atomic.AtomicBoolean(false)
+    private const val MAX_DISK_CACHE_BYTES = 80L * 1024L * 1024L // 80 MB
+
+    private fun cacheKey(url: String, targetWidth: Int): String {
+        val bucket = if (targetWidth > 420) "hd" else "sd"
+        return "$url|$bucket"
     }
 
-    suspend fun load(context: Context, url: String, targetWidth: Int = 360): ImageBitmap? = withContext(Dispatchers.IO) {
-        if (url.isBlank()) return@withContext null
+    fun peek(url: String, targetWidth: Int = 360): ImageBitmap? {
+        if (url.isBlank()) return null
+        return memoryCache.get(cacheKey(url, targetWidth))
+            ?: memoryCache.get("$url|hd")
+            ?: memoryCache.get("$url|sd")
+    }
 
-        memoryCache.get(url)?.let { return@withContext it }
+    suspend fun load(context: Context, url: String, targetWidth: Int = 360): ImageBitmap? = coroutineScope {
+        if (url.isBlank()) return@coroutineScope null
 
-        val cacheDir = File(context.cacheDir, "movie_posters").apply { if (!exists()) mkdirs() }
+        val key = cacheKey(url, targetWidth)
+        memoryCache.get(key)?.let { return@coroutineScope it }
+        if (targetWidth <= 420) {
+            memoryCache.get("$url|hd")?.let { return@coroutineScope it }
+        }
+
+        val deferred = inFlightRequests.getOrPut(key) {
+            async(Dispatchers.IO) {
+                try {
+                    loadInternal(context.applicationContext, url, key, targetWidth)
+                } finally {
+                    inFlightRequests.remove(key)
+                }
+            }
+        }
+        deferred.await()
+    }
+
+    private fun loadInternal(appContext: Context, url: String, key: String, targetWidth: Int): ImageBitmap? {
+        memoryCache.get(key)?.let { return it }
+
+        val cacheDir = File(appContext.cacheDir, "movie_posters").apply { if (!exists()) mkdirs() }
+        if (diskPruned.compareAndSet(false, true)) {
+            pruneDiskCacheIfNeeded(cacheDir)
+        }
+
         val hash = md5(url)
         val file = File(cacheDir, "$hash.img")
 
         if (!file.exists() || file.length() == 0L) {
+            val tmpFile = File(cacheDir, "$hash.tmp.${Thread.currentThread().id}")
             var conn: HttpURLConnection? = null
             try {
                 val u = URI(url).toURL()
@@ -893,13 +952,18 @@ object MovieImageLoader {
                     setRequestProperty("User-Agent", "Mozilla/5.0")
                 }
                 if (conn.responseCode in 200..299) {
-                    file.outputStream().use { fos ->
+                    tmpFile.outputStream().use { fos ->
                         conn.inputStream.use { fis -> fis.copyTo(fos) }
+                    }
+                    if (tmpFile.length() > 0L) {
+                        tmpFile.renameTo(file)
+                    } else {
+                        tmpFile.delete()
                     }
                 }
             } catch (e: Exception) {
-                file.delete()
-                return@withContext null
+                tmpFile.delete()
+                return null
             } finally {
                 conn?.disconnect()
             }
@@ -920,14 +984,34 @@ object MovieImageLoader {
                 val bitmap = BitmapFactory.decodeFile(file.absolutePath, opts)
                 if (bitmap != null) {
                     val img = bitmap.asImageBitmap()
-                    memoryCache.put(url, img)
-                    return@withContext img
+                    memoryCache.put(key, img)
+                    return img
                 }
             } catch (e: Exception) {
                 // Ignore decode failure
             }
         }
-        null
+        return null
+    }
+
+    private fun pruneDiskCacheIfNeeded(cacheDir: File) {
+        try {
+            val files = cacheDir.listFiles() ?: return
+            var totalSize = 0L
+            for (f in files) {
+                totalSize += f.length()
+            }
+            if (totalSize <= MAX_DISK_CACHE_BYTES) return
+            val sorted = files.sortedBy { it.lastModified() }
+            val targetSize = (MAX_DISK_CACHE_BYTES * 0.7).toLong()
+            for (f in sorted) {
+                val len = f.length()
+                if (f.delete()) {
+                    totalSize -= len
+                    if (totalSize <= targetSize) break
+                }
+            }
+        } catch (_: Exception) {}
     }
 
     private fun md5(s: String): String {

@@ -54,12 +54,16 @@ data class MovieItem(
             if (episodeCurrent.isNotBlank()) {
                 val epLower = episodeCurrent.lowercase().trim()
                 if (epLower.contains("tập") || epLower.contains("ep") || epLower.contains("hoàn tất") || epLower.contains("/")) return true
-                val epNum = Regex("""\d+""").find(epLower)?.value
+                val epNum = DIGITS_REGEX.find(epLower)?.value
                 if (epNum != null && epLower != "full") return true
             }
             if (name.contains("phần ", ignoreCase = true) || name.contains("season ", ignoreCase = true)) return true
             return false
         }
+
+    companion object {
+        private val DIGITS_REGEX = Regex("""\d+""")
+    }
 }
 
 /** Chi tiết bộ phim */
